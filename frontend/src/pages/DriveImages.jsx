@@ -320,6 +320,36 @@ function DriveImages() {
                     </div>
                   </div>
                 )}
+
+                {selectedImage.photo_taken_at && (
+                  <div className="modal-section">
+                    <label>📸 Foto aufgenommen</label>
+                    <div className="detail-text">
+                      {new Date(selectedImage.photo_taken_at).toLocaleString('de-DE', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {selectedImage.created_at && (
+                  <div className="modal-section">
+                    <label>📅 Hochgeladen am</label>
+                    <div className="detail-text">
+                      {new Date(selectedImage.created_at).toLocaleString('de-DE', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

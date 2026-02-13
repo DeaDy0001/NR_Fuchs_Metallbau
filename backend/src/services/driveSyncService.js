@@ -1,6 +1,7 @@
 const db = require('../config/database');
 const path = require('path');
 const fs = require('fs-extra');
+const exifr = require('exifr');
 const {
   extractFolderId,
   listFilesInFolder,
@@ -124,6 +125,26 @@ const syncDrivePath = async (drivePathId) => {
 
         await generateThumbnail(finalPath, thumbnailPath);
 
+        // Extract EXIF data (photo taken date)
+        let photoTakenAt = null;
+        try {
+          const exifData = await exifr.parse(finalPath, {
+            pick: ['DateTimeOriginal', 'DateTime', 'CreateDate']
+          });
+
+          if (exifData) {
+            // Try multiple EXIF date fields (in order of preference)
+            const dateValue = exifData.DateTimeOriginal || exifData.DateTime || exifData.CreateDate;
+            if (dateValue) {
+              // Convert to ISO string
+              photoTakenAt = new Date(dateValue).toISOString();
+              console.log(`📸 Photo taken at: ${photoTakenAt}`);
+            }
+          }
+        } catch (err) {
+          console.warn(`Could not extract EXIF data from ${file.name}:`, err.message);
+        }
+
         // Save to database
         const localPath = `/uploads/drive/${sanitizeFilename(drivePath.name)}/${path.basename(finalPath)}`;
         const thumbnailUrl = `/uploads/thumbnails/${thumbnailFilename}`;
@@ -131,8 +152,8 @@ const syncDrivePath = async (drivePathId) => {
         db.prepare(`
           INSERT INTO drive_images
           (drive_path_id, name, original_name, file_url, local_path, thumbnail_url,
-           file_size, mime_type, width, height, is_compressed, drive_file_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           file_size, mime_type, width, height, is_compressed, drive_file_id, photo_taken_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           drivePathId,
           fileBaseName,
@@ -145,7 +166,8 @@ const syncDrivePath = async (drivePathId) => {
           file.width,
           file.height,
           isCompressed ? 1 : 0,
-          file.id
+          file.id,
+          photoTakenAt
         );
 
         addedCount++;

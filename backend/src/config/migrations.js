@@ -71,6 +71,22 @@ const migrations = [
 
       console.log('✓ Migration add_drive_images_columns completed');
     }
+  },
+  {
+    id: 3,
+    name: 'add_photo_taken_at_column',
+    up: () => {
+      console.log('Running migration: add_photo_taken_at_column');
+
+      const tableInfo = db.pragma('table_info(drive_images)');
+      const existingColumns = tableInfo.map(col => col.name);
+
+      if (!existingColumns.includes('photo_taken_at')) {
+        db.exec('ALTER TABLE drive_images ADD COLUMN photo_taken_at TEXT');
+      }
+
+      console.log('✓ Migration add_photo_taken_at_column completed');
+    }
   }
 ];
 
