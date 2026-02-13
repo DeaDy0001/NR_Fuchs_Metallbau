@@ -82,6 +82,26 @@ const syncDrivePath = async (drivePathId) => {
         console.log(`Downloading: ${file.name}`);
         await downloadFile(file.id, tempFilePath);
 
+        // Extract EXIF data BEFORE compression (original file still exists!)
+        let photoTakenAt = null;
+        try {
+          const exifData = await exifr.parse(tempFilePath, {
+            pick: ['DateTimeOriginal', 'DateTime', 'CreateDate']
+          });
+
+          if (exifData) {
+            // Try multiple EXIF date fields (in order of preference)
+            const dateValue = exifData.DateTimeOriginal || exifData.DateTime || exifData.CreateDate;
+            if (dateValue) {
+              // Convert to ISO string
+              photoTakenAt = new Date(dateValue).toISOString();
+              console.log(`📸 Photo taken at: ${photoTakenAt}`);
+            }
+          }
+        } catch (err) {
+          console.warn(`Could not extract EXIF data from ${file.name}:`, err.message);
+        }
+
         let finalPath = tempFilePath;
         let finalSize = file.size;
         let isCompressed = false;
@@ -125,27 +145,8 @@ const syncDrivePath = async (drivePathId) => {
 
         await generateThumbnail(finalPath, thumbnailPath);
 
-        // Extract EXIF data (photo taken date)
-        let photoTakenAt = null;
-        try {
-          const exifData = await exifr.parse(finalPath, {
-            pick: ['DateTimeOriginal', 'DateTime', 'CreateDate']
-          });
-
-          if (exifData) {
-            // Try multiple EXIF date fields (in order of preference)
-            const dateValue = exifData.DateTimeOriginal || exifData.DateTime || exifData.CreateDate;
-            if (dateValue) {
-              // Convert to ISO string
-              photoTakenAt = new Date(dateValue).toISOString();
-              console.log(`📸 Photo taken at: ${photoTakenAt}`);
-            }
-          }
-        } catch (err) {
-          console.warn(`Could not extract EXIF data from ${file.name}:`, err.message);
-        }
-
         // Save to database
+        // (photoTakenAt was already extracted from original file before compression)
         const localPath = `/uploads/drive/${sanitizeFilename(drivePath.name)}/${path.basename(finalPath)}`;
         const thumbnailUrl = `/uploads/thumbnails/${thumbnailFilename}`;
 

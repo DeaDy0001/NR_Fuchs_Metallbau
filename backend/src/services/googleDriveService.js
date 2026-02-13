@@ -125,6 +125,9 @@ const compressImage = async (inputPath, outputPath, options = {}) => {
 
     let image = sharp(inputPath);
 
+    // WICHTIG: Automatisch EXIF-Rotation anwenden!
+    image = image.rotate();
+
     // Get image metadata
     const metadata = await image.metadata();
 
@@ -181,6 +184,7 @@ const generateThumbnail = async (imagePath, thumbnailPath, size = 300) => {
     await fs.ensureDir(path.dirname(thumbnailPath));
 
     await sharp(imagePath)
+      .rotate() // Automatisch EXIF-Rotation anwenden!
       .resize(size, size, {
         fit: 'cover',
         position: 'center'
