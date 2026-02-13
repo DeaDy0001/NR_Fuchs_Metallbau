@@ -21,7 +21,9 @@ function ImageEditor({ image, onClose }) {
 
   // Drag drawing state
   const [dragStart, setDragStart] = useState(null);
+  const [dragStartTime, setDragStartTime] = useState(null);
   const [tempObject, setTempObject] = useState(null);
+  const [activeFreehandPath, setActiveFreehandPath] = useState(null);
 
   // Tool colors and settings
   const [strokeColor, setStrokeColor] = useState('#ff0000');
@@ -70,7 +72,13 @@ function ImageEditor({ image, onClose }) {
     canvas.on('object:modified', updateLayers);
     canvas.on('selection:created', handleSelection);
     canvas.on('selection:updated', handleSelection);
-    canvas.on('selection:cleared', () => setSelectedLayer(null));
+    canvas.on('selection:cleared', () => {
+      setSelectedLayer(null);
+      // Clear active freehand path when deselected
+      if (activeTool === 'freehand') {
+        setActiveFreehandPath(null);
+      }
+    });
 
     return () => {
       canvas.dispose();
@@ -121,9 +129,13 @@ function ImageEditor({ image, onClose }) {
 
   // Handle selection
   const handleSelection = (e) => {
-    const obj = e.selected[0];
+    const obj = e.selected ? e.selected[0] : e.target;
     if (obj) {
-      setSelectedLayer(obj.id || obj);
+      // Find the layer ID by matching the object
+      const layer = layers.find(l => l.object === obj);
+      if (layer) {
+        setSelectedLayer(layer.id);
+      }
     }
   };
 
@@ -132,6 +144,11 @@ function ImageEditor({ image, onClose }) {
     setActiveTool(tool);
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
+
+    // Clear active freehand path when switching tools
+    if (tool !== 'freehand') {
+      setActiveFreehandPath(null);
+    }
 
     canvas.isDrawingMode = tool === 'freehand';
     canvas.selection = tool === 'select';
@@ -155,6 +172,63 @@ function ImageEditor({ image, onClose }) {
     canvas.freeDrawingBrush.color = strokeColor;
     canvas.freeDrawingBrush.width = strokeWidth;
   }, [strokeColor, strokeWidth, activeTool]);
+
+  // Handle freehand drawing - keep one active layer
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    const handlePathCreated = (e) => {
+      const path = e.path;
+
+      if (!path) return;
+
+      // Set custom properties
+      path.customType = 'freehand';
+      path.customName = 'Freihand';
+
+      // If there's an active freehand path and it's selected, add to that group
+      if (activeFreehandPath && activeFreehandPath.type === 'group') {
+        // Remove the newly created path from canvas
+        canvas.remove(path);
+
+        // Add to existing group
+        activeFreehandPath.addWithUpdate(path);
+        canvas.renderAll();
+      } else if (activeFreehandPath && activeFreehandPath.type === 'path') {
+        // Convert single path to group
+        const oldPath = activeFreehandPath;
+        canvas.remove(oldPath);
+        canvas.remove(path);
+
+        const group = new fabric.Group([oldPath, path], {
+          customType: 'freehand',
+          customName: 'Freihand',
+          selectable: true
+        });
+
+        canvas.add(group);
+        canvas.setActiveObject(group);
+        setActiveFreehandPath(group);
+        setSelectedLayer(group.id || group);
+      } else {
+        // New freehand path - set as active
+        setActiveFreehandPath(path);
+        canvas.setActiveObject(path);
+        setSelectedLayer(path.id || path);
+      }
+
+      canvas.renderAll();
+    };
+
+    if (activeTool === 'freehand') {
+      canvas.on('path:created', handlePathCreated);
+    }
+
+    return () => {
+      canvas.off('path:created', handlePathCreated);
+    };
+  }, [activeTool, activeFreehandPath]);
 
   // Zoom with Shift + Mouse Wheel
   useEffect(() => {
@@ -195,6 +269,30 @@ function ImageEditor({ image, onClose }) {
     };
   }, []);
 
+  // Delete selected object with Delete or Backspace key
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        const canvas = fabricCanvasRef.current;
+        if (!canvas) return;
+
+        const activeObject = canvas.getActiveObject();
+        if (activeObject) {
+          canvas.remove(activeObject);
+          canvas.renderAll();
+          setSelectedLayer(null);
+          e.preventDefault();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
   // Drag drawing for shapes
   useEffect(() => {
     const canvas = fabricCanvasRef.current;
@@ -209,6 +307,7 @@ function ImageEditor({ image, onClose }) {
 
       const pointer = canvas.getPointer(e.e);
       setDragStart(pointer);
+      setDragStartTime(Date.now());
       setIsDrawing(true);
 
       // For text tool, create immediately
@@ -226,6 +325,7 @@ function ImageEditor({ image, onClose }) {
         canvas.setActiveObject(text);
         setIsDrawing(false);
         setDragStart(null);
+        setDragStartTime(null);
       }
     };
 
@@ -272,6 +372,10 @@ function ImageEditor({ image, onClose }) {
       if (!isDrawing || !dragStart) return;
 
       const pointer = canvas.getPointer(e.e);
+      const dragDuration = Date.now() - dragStartTime;
+      const dragDistance = Math.sqrt(
+        Math.pow(pointer.x - dragStart.x, 2) + Math.pow(pointer.y - dragStart.y, 2)
+      );
 
       // Remove temp object
       if (tempObject) {
@@ -279,27 +383,31 @@ function ImageEditor({ image, onClose }) {
         setTempObject(null);
       }
 
-      // Create final object
-      switch (activeTool) {
-        case 'line':
-          createFinalLine(dragStart, pointer);
-          break;
-        case 'measurement':
-          createFinalMeasurement(dragStart, pointer);
-          break;
-        case 'arrow':
-          createFinalArrow(dragStart, pointer);
-          break;
-        case 'rectangle':
-          createFinalRectangle(dragStart, pointer);
-          break;
-        case 'circle':
-          createFinalCircle(dragStart, pointer);
-          break;
+      // Only create object if drag duration > 500ms OR drag distance > 10px
+      if (dragDuration > 500 || dragDistance > 10) {
+        // Create final object
+        switch (activeTool) {
+          case 'line':
+            createFinalLine(dragStart, pointer);
+            break;
+          case 'measurement':
+            createFinalMeasurement(dragStart, pointer);
+            break;
+          case 'arrow':
+            createFinalArrow(dragStart, pointer);
+            break;
+          case 'rectangle':
+            createFinalRectangle(dragStart, pointer);
+            break;
+          case 'circle':
+            createFinalCircle(dragStart, pointer);
+            break;
+        }
       }
 
       setIsDrawing(false);
       setDragStart(null);
+      setDragStartTime(null);
       canvas.renderAll();
     };
 
@@ -435,6 +543,72 @@ function ImageEditor({ image, onClose }) {
     });
   };
 
+  // Helper function to add line controls
+  const addLineControls = (line) => {
+    // Custom control for line start point
+    line.controls = {
+      p0: new fabric.Control({
+        positionHandler: function(dim, finalMatrix, fabricObject) {
+          return fabric.util.transformPoint(
+            { x: fabricObject.x1 - fabricObject.pathOffset.x, y: fabricObject.y1 - fabricObject.pathOffset.y },
+            fabricObject.calcTransformMatrix()
+          );
+        },
+        actionHandler: function(eventData, transform, x, y) {
+          const line = transform.target;
+          const pointer = line.canvas.getPointer(eventData.e);
+          const localPointer = fabric.util.transformPoint(
+            pointer,
+            fabric.util.invertTransform(line.calcTransformMatrix())
+          );
+          line.set({ x1: localPointer.x, y1: localPointer.y });
+          return true;
+        },
+        cursorStyle: 'pointer',
+        actionName: 'modifyLine',
+        render: function(ctx, left, top, styleOverride, fabricObject) {
+          ctx.save();
+          ctx.fillStyle = strokeColor;
+          ctx.beginPath();
+          ctx.arc(left, top, 5, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.restore();
+        }
+      }),
+      p1: new fabric.Control({
+        positionHandler: function(dim, finalMatrix, fabricObject) {
+          return fabric.util.transformPoint(
+            { x: fabricObject.x2 - fabricObject.pathOffset.x, y: fabricObject.y2 - fabricObject.pathOffset.y },
+            fabricObject.calcTransformMatrix()
+          );
+        },
+        actionHandler: function(eventData, transform, x, y) {
+          const line = transform.target;
+          const pointer = line.canvas.getPointer(eventData.e);
+          const localPointer = fabric.util.transformPoint(
+            pointer,
+            fabric.util.invertTransform(line.calcTransformMatrix())
+          );
+          line.set({ x2: localPointer.x, y2: localPointer.y });
+          return true;
+        },
+        cursorStyle: 'pointer',
+        actionName: 'modifyLine',
+        render: function(ctx, left, top, styleOverride, fabricObject) {
+          ctx.save();
+          ctx.fillStyle = strokeColor;
+          ctx.beginPath();
+          ctx.arc(left, top, 5, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.restore();
+        }
+      })
+    };
+
+    line.hasBorders = false;
+    line.hasControls = true;
+  };
+
   // Final object creation
   const createFinalLine = (start, end) => {
     const canvas = fabricCanvasRef.current;
@@ -444,9 +618,11 @@ function ImageEditor({ image, onClose }) {
       stroke: strokeColor,
       strokeWidth: strokeWidth,
       customType: 'line',
-      customName: 'Linie'
+      customName: 'Linie',
+      objectCaching: false
     });
 
+    addLineControls(line);
     canvas.add(line);
   };
 
@@ -510,8 +686,14 @@ function ImageEditor({ image, onClose }) {
       customType: 'measurement',
       customName: defaultText,
       editable: true,
-      selectable: true
+      selectable: true,
+      subTargetCheck: true,
+      objectCaching: false
     });
+
+    // Store original coordinates for editing
+    group.measurementStart = { x: start.x, y: start.y };
+    group.measurementEnd = { x: end.x, y: end.y };
 
     canvas.add(group);
   };
@@ -523,7 +705,8 @@ function ImageEditor({ image, onClose }) {
     const line = new fabric.Line([start.x, start.y, end.x, end.y], {
       stroke: strokeColor,
       strokeWidth: strokeWidth,
-      selectable: false
+      selectable: false,
+      objectCaching: false
     });
 
     const angle = Math.atan2(end.y - start.y, end.x - start.x);
@@ -536,14 +719,21 @@ function ImageEditor({ image, onClose }) {
       angle: (angle * 180 / Math.PI) + 90,
       originX: 'center',
       originY: 'center',
-      selectable: false
+      selectable: false,
+      objectCaching: false
     });
 
     const group = new fabric.Group([line, arrowHead], {
       customType: 'arrow',
       customName: 'Pfeil',
-      selectable: true
+      selectable: true,
+      subTargetCheck: true,
+      objectCaching: false
     });
+
+    // Store original coordinates for editing
+    group.arrowStart = { x: start.x, y: start.y };
+    group.arrowEnd = { x: end.x, y: end.y };
 
     canvas.add(group);
   };
@@ -566,7 +756,8 @@ function ImageEditor({ image, onClose }) {
       stroke: strokeColor,
       strokeWidth: strokeWidth,
       customType: 'rectangle',
-      customName: 'Rechteck'
+      customName: 'Rechteck',
+      objectCaching: false
     });
 
     canvas.add(rect);
@@ -588,7 +779,8 @@ function ImageEditor({ image, onClose }) {
       stroke: strokeColor,
       strokeWidth: strokeWidth,
       customType: 'circle',
-      customName: 'Kreis'
+      customName: 'Kreis',
+      objectCaching: false
     });
 
     canvas.add(circle);
@@ -628,6 +820,11 @@ function ImageEditor({ image, onClose }) {
       canvas.setActiveObject(obj);
       canvas.renderAll();
       setSelectedLayer(layerId);
+
+      // If it's a freehand path and freehand tool is active, set as active path
+      if (activeTool === 'freehand' && obj.customType === 'freehand') {
+        setActiveFreehandPath(obj);
+      }
     }
   };
 
