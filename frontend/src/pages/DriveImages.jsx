@@ -2,6 +2,23 @@ import { useState, useEffect } from 'react';
 import { Grid, List, RefreshCw, Search, Maximize2, Edit2, X, Play, Pause } from 'lucide-react';
 import './DriveImages.css';
 
+// Helper function to format SQLite timestamps (which are in UTC)
+const formatSQLiteDate = (dateString) => {
+  if (!dateString) return null;
+
+  // SQLite datetime('now') returns: YYYY-MM-DD HH:MM:SS (UTC)
+  // We need to append 'Z' to tell JavaScript it's UTC
+  const utcDate = dateString.endsWith('Z') ? dateString : `${dateString}Z`;
+
+  return new Date(utcDate).toLocaleString('de-DE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
 function DriveImages() {
   const [images, setImages] = useState([]);
   const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'list'
@@ -126,7 +143,13 @@ function DriveImages() {
   };
 
   const handleRename = async () => {
-    if (!editingName || editingName === selectedImage.name) {
+    if (!editingName || editingName.trim() === '') {
+      alert('Bitte gib einen gültigen Namen ein');
+      return;
+    }
+
+    if (editingName === selectedImage.name) {
+      // No change
       return;
     }
 
@@ -134,18 +157,23 @@ function DriveImages() {
       const response = await fetch(`/api/drive/images/${selectedImage.id}/rename`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: editingName })
+        body: JSON.stringify({ name: editingName.trim() })
       });
 
       if (response.ok) {
+        const updatedImage = await response.json();
+        // Update the selected image with new data
+        setSelectedImage(updatedImage);
+        // Reload images list
         loadImages();
-        setSelectedImage(null);
+        alert('✅ Erfolgreich umbenannt!');
       } else {
-        alert('Fehler beim Umbenennen');
+        const error = await response.json();
+        alert(`Fehler beim Umbenennen: ${error.error || 'Unbekannter Fehler'}`);
       }
     } catch (error) {
       console.error('Error renaming image:', error);
-      alert('Fehler beim Umbenennen');
+      alert(`Fehler beim Umbenennen: ${error.message}`);
     }
   };
 
@@ -325,13 +353,7 @@ function DriveImages() {
                   <div className="modal-section">
                     <label>📸 Foto aufgenommen</label>
                     <div className="detail-text">
-                      {new Date(selectedImage.photo_taken_at).toLocaleString('de-DE', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}
+                      {formatSQLiteDate(selectedImage.photo_taken_at)}
                     </div>
                   </div>
                 )}
@@ -340,13 +362,7 @@ function DriveImages() {
                   <div className="modal-section">
                     <label>📅 Hochgeladen am</label>
                     <div className="detail-text">
-                      {new Date(selectedImage.created_at).toLocaleString('de-DE', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}
+                      {formatSQLiteDate(selectedImage.created_at)}
                     </div>
                   </div>
                 )}

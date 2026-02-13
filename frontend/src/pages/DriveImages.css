@@ -285,6 +285,7 @@
   height: auto;
   max-height: 80vh;
   object-fit: contain;
+  image-orientation: from-image; /* Respektiert EXIF-Rotation */
 }
 
 .modal-details {

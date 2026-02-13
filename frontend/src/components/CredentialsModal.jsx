@@ -46,11 +46,16 @@ function CredentialsModal({ isOpen, onClose, onSave }) {
 
       setSuccess(true);
 
-      // Call onSave callback after 1 second
+      // Show message about server restart
+      setTimeout(() => {
+        alert('✅ Credentials gespeichert!\n\n⚠️ WICHTIG: Falls der Login nicht funktioniert, starte den Backend-Server einmal neu:\nnpm run dev');
+      }, 500);
+
+      // Call onSave callback after 2 seconds
       setTimeout(() => {
         onSave?.();
         onClose();
-      }, 1500);
+      }, 2500);
     } catch (err) {
       setError(err.message);
     } finally {
