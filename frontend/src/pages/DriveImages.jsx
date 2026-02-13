@@ -53,6 +53,100 @@ function DriveImages() {
   const [selectedSubfolders, setSelectedSubfolders] = useState([]); // Ausgewählte Ordner-Badges
   const [showProjectModal, setShowProjectModal] = useState(false); // Projekt-Auswahl Modal
   const [projectSearchQuery, setProjectSearchQuery] = useState(''); // Suchfeld im Projekt-Modal
+  const prevImagesCountRef = useRef(0); // Für Auto-Refresh Benachrichtigungen
+
+  // Load images function (defined before useEffects to avoid TDZ error)
+  const loadImages = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+    }
+
+    try {
+      const params = new URLSearchParams({
+        limit: pagination.limit,
+        offset: pagination.offset,
+        search: searchQuery
+      });
+
+      // Add filters
+      if (selectedProjectsFilter.length > 0) {
+        params.append('projectIds', selectedProjectsFilter.join(','));
+      }
+      if (photoDateFrom) {
+        params.append('photoDateFrom', photoDateFrom);
+      }
+      if (photoDateTo) {
+        params.append('photoDateTo', photoDateTo);
+      }
+      if (uploadDateFrom) {
+        params.append('uploadDateFrom', uploadDateFrom);
+      }
+      if (uploadDateTo) {
+        params.append('uploadDateTo', uploadDateTo);
+      }
+      if (selectedSubfolders.length > 0) {
+        params.append('subfolders', selectedSubfolders.join(','));
+      }
+
+      // Image project filter (mutually exclusive)
+      if (showAllImages) {
+        params.append('showAllImages', 'true');
+      } else if (showOnlyWithProjects) {
+        params.append('onlyWithProjects', 'true');
+      } else if (showOnlyUnassigned) {
+        params.append('onlyUnassigned', 'true');
+      }
+
+      const response = await fetch(`/api/drive/images?${params}`);
+      if (response.ok) {
+        const data = await response.json();
+
+        // Prüfe ob neue Bilder vorhanden sind
+        if (silent && data.images.length > prevImagesCountRef.current) {
+          const newCount = data.images.length - prevImagesCountRef.current;
+          setNewImagesCount(newCount);
+
+          // Toast-Benachrichtigung
+          showNewImagesNotification(newCount);
+        }
+
+        prevImagesCountRef.current = data.images.length;
+        setImages(data.images);
+        setPagination(prev => ({ ...prev, total: data.total }));
+      }
+    } catch (error) {
+      console.error('Error loading images:', error);
+    } finally {
+      if (!silent) {
+        setLoading(false);
+      }
+    }
+  }, [
+    pagination.limit,
+    pagination.offset,
+    searchQuery,
+    selectedProjectsFilter,
+    photoDateFrom,
+    photoDateTo,
+    uploadDateFrom,
+    uploadDateTo,
+    selectedSubfolders,
+    showAllImages,
+    showOnlyWithProjects,
+    showOnlyUnassigned
+  ]);
+
+  const loadProjects = async () => {
+    try {
+      const response = await fetch('/api/projects?limit=1000');
+      if (response.ok) {
+        const data = await response.json();
+        setProjects(data.projects);
+      }
+    } catch (error) {
+      console.error('Error loading projects:', error);
+    }
+  };
 
   // Initial load (only once)
   useEffect(() => {
@@ -100,99 +194,7 @@ function DriveImages() {
     }, 5 * 60 * 1000); // 5 Minuten
 
     return () => clearInterval(syncInterval);
-  }, [autoRefresh]);
-
-  const loadImages = useCallback(async (silent = false) => {
-    if (!silent) {
-      setLoading(true);
-    }
-
-    try {
-      const params = new URLSearchParams({
-        limit: pagination.limit,
-        offset: pagination.offset,
-        search: searchQuery
-      });
-
-      // Add filters
-      if (selectedProjectsFilter.length > 0) {
-        params.append('projectIds', selectedProjectsFilter.join(','));
-      }
-      if (photoDateFrom) {
-        params.append('photoDateFrom', photoDateFrom);
-      }
-      if (photoDateTo) {
-        params.append('photoDateTo', photoDateTo);
-      }
-      if (uploadDateFrom) {
-        params.append('uploadDateFrom', uploadDateFrom);
-      }
-      if (uploadDateTo) {
-        params.append('uploadDateTo', uploadDateTo);
-      }
-      if (selectedSubfolders.length > 0) {
-        params.append('subfolders', selectedSubfolders.join(','));
-      }
-
-      // Image project filter (mutually exclusive)
-      if (showAllImages) {
-        params.append('showAllImages', 'true');
-      } else if (showOnlyWithProjects) {
-        params.append('onlyWithProjects', 'true');
-      } else if (showOnlyUnassigned) {
-        params.append('onlyUnassigned', 'true');
-      }
-
-      const response = await fetch(`/api/drive/images?${params}`);
-      if (response.ok) {
-        const data = await response.json();
-
-        // Prüfe ob neue Bilder vorhanden sind
-        if (silent && data.images.length > images.length) {
-          const newCount = data.images.length - images.length;
-          setNewImagesCount(newCount);
-
-          // Toast-Benachrichtigung
-          showNewImagesNotification(newCount);
-        }
-
-        setImages(data.images);
-        setPagination(prev => ({ ...prev, total: data.total }));
-      }
-    } catch (error) {
-      console.error('Error loading images:', error);
-    } finally {
-      if (!silent) {
-        setLoading(false);
-      }
-    }
-  }, [
-    pagination.limit,
-    pagination.offset,
-    searchQuery,
-    selectedProjectsFilter,
-    photoDateFrom,
-    photoDateTo,
-    uploadDateFrom,
-    uploadDateTo,
-    selectedSubfolders,
-    showAllImages,
-    showOnlyWithProjects,
-    showOnlyUnassigned,
-    images.length
-  ]);
-
-  const loadProjects = async () => {
-    try {
-      const response = await fetch('/api/projects?limit=1000');
-      if (response.ok) {
-        const data = await response.json();
-        setProjects(data.projects);
-      }
-    } catch (error) {
-      console.error('Error loading projects:', error);
-    }
-  };
+  }, [autoRefresh, loadImages]);
 
   const showNewImagesNotification = (count) => {
     console.log(`🔔 ${count} neue Bilder gefunden!`);
