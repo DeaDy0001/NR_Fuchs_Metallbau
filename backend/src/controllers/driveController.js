@@ -2,6 +2,7 @@ const db = require('../config/database');
 const path = require('path');
 const fs = require('fs-extra');
 const { syncDrivePath, startAutoSync, stopAutoSync } = require('../services/driveSyncService');
+const { deleteFile } = require('../services/googleDriveService');
 
 // Get drive settings (all configured paths)
 const getDriveSettings = (req, res) => {
@@ -378,6 +379,83 @@ const syncDrive = async (req, res) => {
   }
 };
 
+// Delete an image
+const deleteImage = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { deleteFromDrive = false } = req.query; // Query parameter: deleteFromDrive=true/false
+
+    // Get current image info
+    const image = db.prepare('SELECT * FROM drive_images WHERE id = ?').get(id);
+
+    if (!image) {
+      return res.status(404).json({ error: 'Image not found' });
+    }
+
+    // Delete from Google Drive if requested
+    if (deleteFromDrive === 'true' && image.drive_file_id) {
+      try {
+        await deleteFile(image.drive_file_id);
+        console.log(`✓ Deleted file from Google Drive: ${image.name}`);
+      } catch (err) {
+        console.error('Error deleting from Google Drive:', err);
+        return res.status(500).json({ error: 'Failed to delete from Google Drive' });
+      }
+    } else if (deleteFromDrive !== 'true' && image.drive_file_id) {
+      // Soft delete: Add to ignored_files so it won't be re-downloaded
+      try {
+        db.prepare(`
+          INSERT OR IGNORE INTO ignored_files (drive_file_id, original_name, reason)
+          VALUES (?, ?, ?)
+        `).run(image.drive_file_id, image.original_name, 'user_deleted');
+        console.log(`✓ Added file to ignore list: ${image.name}`);
+      } catch (err) {
+        console.error('Error adding to ignore list:', err);
+      }
+    }
+
+    // Delete local files
+    if (image.local_path) {
+      try {
+        const localPath = path.join(__dirname, '../../../', image.local_path);
+        if (await fs.pathExists(localPath)) {
+          await fs.remove(localPath);
+          console.log(`✓ Deleted local file: ${image.local_path}`);
+        }
+      } catch (err) {
+        console.error('Error deleting local file:', err);
+      }
+    }
+
+    // Delete thumbnail
+    if (image.thumbnail_url) {
+      try {
+        const thumbPath = path.join(__dirname, '../../../', image.thumbnail_url);
+        if (await fs.pathExists(thumbPath)) {
+          await fs.remove(thumbPath);
+          console.log(`✓ Deleted thumbnail: ${image.thumbnail_url}`);
+        }
+      } catch (err) {
+        console.error('Error deleting thumbnail:', err);
+      }
+    }
+
+    // Delete from database
+    db.prepare('DELETE FROM drive_images WHERE id = ?').run(id);
+
+    res.json({
+      success: true,
+      deletedFromDrive: deleteFromDrive === 'true',
+      message: deleteFromDrive === 'true'
+        ? 'Image deleted from software and Google Drive'
+        : 'Image deleted from software only (will not be re-downloaded)'
+    });
+  } catch (error) {
+    console.error('Error deleting image:', error);
+    res.status(500).json({ error: 'Failed to delete image' });
+  }
+};
+
 // Refresh all images (legacy - triggers sync for all paths)
 const refreshImages = async (req, res) => {
   try {
@@ -419,6 +497,7 @@ module.exports = {
   getImages,
   getImageById,
   renameImage,
+  deleteImage,
   syncDrive,
   refreshImages
 };

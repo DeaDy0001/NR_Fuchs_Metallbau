@@ -13,6 +13,7 @@ router.post('/settings/path/:id/sync', driveController.syncDrive);
 router.get('/images', driveController.getImages);
 router.get('/images/:id', driveController.getImageById);
 router.put('/images/:id/rename', driveController.renameImage);
+router.delete('/images/:id', driveController.deleteImage);
 router.post('/images/refresh', driveController.refreshImages);
 
 module.exports = router;

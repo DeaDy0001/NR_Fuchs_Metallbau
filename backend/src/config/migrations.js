@@ -87,6 +87,43 @@ const migrations = [
 
       console.log('✓ Migration add_photo_taken_at_column completed');
     }
+  },
+  {
+    id: 4,
+    name: 'create_ignored_files_table',
+    up: () => {
+      console.log('Running migration: create_ignored_files_table');
+
+      // Create table for ignored files (soft-deleted from software only)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ignored_files (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          drive_file_id TEXT NOT NULL UNIQUE,
+          original_name TEXT,
+          ignored_at TEXT DEFAULT (datetime('now')),
+          reason TEXT DEFAULT 'user_deleted'
+        )
+      `);
+
+      console.log('✓ Migration create_ignored_files_table completed');
+    }
+  },
+  {
+    id: 5,
+    name: 'add_subfolder_column',
+    up: () => {
+      console.log('Running migration: add_subfolder_column');
+
+      const tableInfo = db.pragma('table_info(drive_images)');
+      const existingColumns = tableInfo.map(col => col.name);
+
+      // Add subfolder column to store first-level subfolder name
+      if (!existingColumns.includes('subfolder')) {
+        db.exec('ALTER TABLE drive_images ADD COLUMN subfolder TEXT');
+      }
+
+      console.log('✓ Migration add_subfolder_column completed');
+    }
   }
 ];
 

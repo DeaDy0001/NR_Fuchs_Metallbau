@@ -85,6 +85,73 @@ const listFilesInFolder = async (folderId) => {
   }
 };
 
+// List all files recursively in folder and subfolders
+const listFilesInFolderRecursive = async (folderId, parentSubfolder = null) => {
+  try {
+    // Check if authenticated
+    if (!await isAuthenticated()) {
+      throw new Error('Not authenticated. Please login with Google first: http://localhost:3001/api/auth/google');
+    }
+
+    // Get authenticated Drive client
+    const drive = await getDriveClient();
+
+    let allFiles = [];
+
+    // List all items in folder (both files and folders)
+    const response = await drive.files.list({
+      q: `'${folderId}' in parents and trashed=false`,
+      fields: 'files(id,name,mimeType,size,webContentLink,thumbnailLink,imageMediaMetadata)',
+      pageSize: 1000
+    });
+
+    const items = response.data.files;
+
+    // Process image files
+    const imageFiles = items.filter(file =>
+      file.mimeType && file.mimeType.startsWith('image/')
+    );
+
+    // Add images with subfolder info (only first-level subfolder)
+    imageFiles.forEach(file => {
+      allFiles.push({
+        id: file.id,
+        name: file.name,
+        mimeType: file.mimeType,
+        size: parseInt(file.size) || 0,
+        downloadUrl: `https://drive.google.com/uc?export=download&id=${file.id}`,
+        thumbnailUrl: file.thumbnailLink,
+        width: file.imageMediaMetadata?.width || null,
+        height: file.imageMediaMetadata?.height || null,
+        subfolder: parentSubfolder // Only first-level subfolder name
+      });
+    });
+
+    // Find subfolders
+    const subfolders = items.filter(item =>
+      item.mimeType === 'application/vnd.google-apps.folder'
+    );
+
+    // Recursively process subfolders
+    for (const subfolder of subfolders) {
+      // Keep only the first-level subfolder name
+      const subfolderName = parentSubfolder || subfolder.name;
+
+      const subfolderFiles = await listFilesInFolderRecursive(
+        subfolder.id,
+        subfolderName
+      );
+
+      allFiles = allFiles.concat(subfolderFiles);
+    }
+
+    return allFiles;
+  } catch (error) {
+    console.error('Error listing files recursively:', error.message);
+    throw error;
+  }
+};
+
 
 // Download a file from Google Drive
 const downloadFile = async (fileId, destinationPath) => {
@@ -239,8 +306,10 @@ const deleteFileFromDrive = async (fileId) => {
 module.exports = {
   extractFolderId,
   listFilesInFolder,
+  listFilesInFolderRecursive,
   downloadFile,
   compressImage,
   generateThumbnail,
-  deleteFileFromDrive
+  deleteFileFromDrive,
+  deleteFile: deleteFileFromDrive // Alias for consistency
 };

@@ -5,6 +5,7 @@ const exifr = require('exifr');
 const {
   extractFolderId,
   listFilesInFolder,
+  listFilesInFolderRecursive,
   downloadFile,
   compressImage,
   generateThumbnail,
@@ -46,9 +47,9 @@ const syncDrivePath = async (drivePathId) => {
       throw new Error('Invalid Google Drive folder URL');
     }
 
-    // List all files in Drive folder
-    const driveFiles = await listFilesInFolder(folderId);
-    console.log(`Found ${driveFiles.length} images in Drive folder`);
+    // List all files in Drive folder (including subfolders)
+    const driveFiles = await listFilesInFolderRecursive(folderId);
+    console.log(`Found ${driveFiles.length} images in Drive folder (including subfolders)`);
 
     // Get existing images in database
     const existingImages = db.prepare(
@@ -56,6 +57,10 @@ const syncDrivePath = async (drivePathId) => {
     ).all(drivePathId);
 
     const existingFileIds = new Set(existingImages.map(img => img.drive_file_id));
+
+    // Get ignored files (soft-deleted)
+    const ignoredFiles = db.prepare('SELECT drive_file_id FROM ignored_files').all();
+    const ignoredFileIds = new Set(ignoredFiles.map(f => f.drive_file_id));
 
     let addedCount = 0;
     let errors = [];
@@ -66,6 +71,12 @@ const syncDrivePath = async (drivePathId) => {
         // Skip if already synced
         if (existingFileIds.has(file.id)) {
           console.log(`Skipping already synced file: ${file.name}`);
+          continue;
+        }
+
+        // Skip if in ignore list (soft-deleted by user)
+        if (ignoredFileIds.has(file.id)) {
+          console.log(`Skipping ignored file: ${file.name}`);
           continue;
         }
 
@@ -153,8 +164,8 @@ const syncDrivePath = async (drivePathId) => {
         db.prepare(`
           INSERT INTO drive_images
           (drive_path_id, name, original_name, file_url, local_path, thumbnail_url,
-           file_size, mime_type, width, height, is_compressed, drive_file_id, photo_taken_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           file_size, mime_type, width, height, is_compressed, drive_file_id, photo_taken_at, subfolder)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           drivePathId,
           fileBaseName,
@@ -168,7 +179,8 @@ const syncDrivePath = async (drivePathId) => {
           file.height,
           isCompressed ? 1 : 0,
           file.id,
-          photoTakenAt
+          photoTakenAt,
+          file.subfolder || null // Store first-level subfolder name (null if in root)
         );
 
         addedCount++;

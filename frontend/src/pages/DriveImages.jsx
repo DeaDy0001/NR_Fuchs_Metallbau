@@ -29,6 +29,7 @@ function DriveImages() {
   const [autoRefresh, setAutoRefresh] = useState(true); // Auto-refresh aktiviert
   const [newImagesCount, setNewImagesCount] = useState(0);
   const [zoomLevel, setZoomLevel] = useState(1); // Zoom level (1 = 100%)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false); // Delete confirmation dialog
   const [pagination, setPagination] = useState({
     total: 0,
     limit: 100,
@@ -156,21 +157,32 @@ function DriveImages() {
     setZoomLevel(1);
   };
 
-  const handleDelete = async () => {
-    if (!confirm(`Möchtest du das Bild "${selectedImage.name}" wirklich löschen?`)) {
-      return;
-    }
+  // Open delete confirmation dialog
+  const handleDelete = () => {
+    setShowDeleteDialog(true);
+  };
+
+  // Perform actual delete operation
+  const performDelete = async (deleteFromDrive) => {
+    setShowDeleteDialog(false);
 
     try {
-      const response = await fetch(`/api/drive/images/${selectedImage.id}`, {
+      const url = `/api/drive/images/${selectedImage.id}?deleteFromDrive=${deleteFromDrive}`;
+      const response = await fetch(url, {
         method: 'DELETE'
       });
 
       if (response.ok) {
+        const result = await response.json();
         // Close modal and reload images
         setSelectedImage(null);
         loadImages();
-        alert('✅ Bild erfolgreich gelöscht!');
+
+        if (deleteFromDrive) {
+          alert('✅ Bild erfolgreich aus Software UND Google Drive gelöscht!');
+        } else {
+          alert('✅ Bild aus Software gelöscht (wird nicht erneut heruntergeladen)');
+        }
       } else {
         const error = await response.json();
         alert(`Fehler beim Löschen: ${error.error || 'Unbekannter Fehler'}`);
@@ -377,6 +389,42 @@ function DriveImages() {
         </div>
       )}
 
+      {/* Delete Confirmation Dialog */}
+      {showDeleteDialog && selectedImage && (
+        <div className="modal-overlay" onClick={() => setShowDeleteDialog(false)}>
+          <div className="delete-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>Bild löschen</h3>
+            <p>Möchtest du das Bild <strong>"{selectedImage.name}"</strong> löschen?</p>
+            <div className="delete-options">
+              <button
+                className="delete-option-btn software-only"
+                onClick={() => performDelete(false)}
+              >
+                <div className="option-title">🗑️ Nur aus Software</div>
+                <div className="option-description">
+                  Bleibt auf Google Drive, wird aber nicht mehr heruntergeladen
+                </div>
+              </button>
+              <button
+                className="delete-option-btn full-delete"
+                onClick={() => performDelete(true)}
+              >
+                <div className="option-title">🔥 Auch von Google Drive</div>
+                <div className="option-description">
+                  Wird permanent von Google Drive gelöscht
+                </div>
+              </button>
+            </div>
+            <button
+              className="delete-cancel-btn"
+              onClick={() => setShowDeleteDialog(false)}
+            >
+              Abbrechen
+            </button>
+          </div>
+        </div>
+      )}
+
       {selectedImage && (
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -456,6 +504,13 @@ function DriveImages() {
                   <label>Originalname</label>
                   <div className="detail-text">{selectedImage.original_name}</div>
                 </div>
+
+                {selectedImage.subfolder && (
+                  <div className="modal-section">
+                    <label>Unterordner</label>
+                    <div className="subfolder-badge">{selectedImage.subfolder}</div>
+                  </div>
+                )}
 
                 {selectedImage.file_size && (
                   <div className="modal-section">
