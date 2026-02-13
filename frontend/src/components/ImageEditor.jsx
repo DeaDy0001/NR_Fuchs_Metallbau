@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { fabric } from 'fabric';
 import {
   X, Save, FileDown, XCircle, Minus, Square, Circle, Type,
@@ -14,15 +14,15 @@ function ImageEditor({ image, onClose }) {
   const [activeTool, setActiveTool] = useState('select');
   const [layers, setLayers] = useState([]);
   const [selectedLayer, setSelectedLayer] = useState(null);
-  const [isDrawing, setIsDrawing] = useState(false);
   const [measurementPoints, setMeasurementPoints] = useState([]);
   const [editingLayerId, setEditingLayerId] = useState(null);
   const [editingText, setEditingText] = useState('');
 
-  // Drag drawing state
-  const [dragStart, setDragStart] = useState(null);
-  const [dragStartTime, setDragStartTime] = useState(null);
-  const [tempObject, setTempObject] = useState(null);
+  // Drag drawing state (use ref to avoid useEffect re-runs)
+  const dragStartRef = useRef(null);
+  const dragStartTimeRef = useRef(null);
+  const tempObjectRef = useRef(null);
+  const isDrawingRef = useRef(false);
   const [activeFreehandPath, setActiveFreehandPath] = useState(null);
 
   // Tool colors and settings
@@ -306,9 +306,9 @@ function ImageEditor({ image, onClose }) {
       if (!['measurement', 'arrow', 'rectangle', 'circle', 'text', 'line'].includes(activeTool)) return;
 
       const pointer = canvas.getPointer(e.e);
-      setDragStart(pointer);
-      setDragStartTime(Date.now());
-      setIsDrawing(true);
+      dragStartRef.current = pointer;
+      dragStartTimeRef.current = Date.now();
+      isDrawingRef.current = true;
 
       // For text tool, create immediately
       if (activeTool === 'text') {
@@ -323,39 +323,40 @@ function ImageEditor({ image, onClose }) {
         });
         canvas.add(text);
         canvas.setActiveObject(text);
-        setIsDrawing(false);
-        setDragStart(null);
-        setDragStartTime(null);
+        isDrawingRef.current = false;
+        dragStartRef.current = null;
+        dragStartTimeRef.current = null;
       }
     };
 
     const handleMouseMove = (e) => {
-      if (!isDrawing || !dragStart) return;
+      if (!isDrawingRef.current || !dragStartRef.current) return;
 
       const pointer = canvas.getPointer(e.e);
 
       // Remove previous temp object
-      if (tempObject) {
-        canvas.remove(tempObject);
+      if (tempObjectRef.current) {
+        canvas.remove(tempObjectRef.current);
+        tempObjectRef.current = null;
       }
 
       let newTempObject = null;
 
       switch (activeTool) {
         case 'line':
-          newTempObject = createTempLine(dragStart, pointer);
+          newTempObject = createTempLine(dragStartRef.current, pointer);
           break;
         case 'measurement':
-          newTempObject = createTempMeasurement(dragStart, pointer);
+          newTempObject = createTempMeasurement(dragStartRef.current, pointer);
           break;
         case 'arrow':
-          newTempObject = createTempArrow(dragStart, pointer);
+          newTempObject = createTempArrow(dragStartRef.current, pointer);
           break;
         case 'rectangle':
-          newTempObject = createTempRectangle(dragStart, pointer);
+          newTempObject = createTempRectangle(dragStartRef.current, pointer);
           break;
         case 'circle':
-          newTempObject = createTempCircle(dragStart, pointer);
+          newTempObject = createTempCircle(dragStartRef.current, pointer);
           break;
       }
 
@@ -363,24 +364,24 @@ function ImageEditor({ image, onClose }) {
         newTempObject.selectable = false;
         newTempObject.evented = false;
         canvas.add(newTempObject);
-        setTempObject(newTempObject);
+        tempObjectRef.current = newTempObject;
         canvas.renderAll();
       }
     };
 
     const handleMouseUp = (e) => {
-      if (!isDrawing || !dragStart) return;
+      if (!isDrawingRef.current || !dragStartRef.current) return;
 
       const pointer = canvas.getPointer(e.e);
-      const dragDuration = Date.now() - dragStartTime;
+      const dragDuration = Date.now() - dragStartTimeRef.current;
       const dragDistance = Math.sqrt(
-        Math.pow(pointer.x - dragStart.x, 2) + Math.pow(pointer.y - dragStart.y, 2)
+        Math.pow(pointer.x - dragStartRef.current.x, 2) + Math.pow(pointer.y - dragStartRef.current.y, 2)
       );
 
       // Remove temp object
-      if (tempObject) {
-        canvas.remove(tempObject);
-        setTempObject(null);
+      if (tempObjectRef.current) {
+        canvas.remove(tempObjectRef.current);
+        tempObjectRef.current = null;
       }
 
       // Only create object if drag duration > 500ms OR drag distance > 10px
@@ -388,26 +389,26 @@ function ImageEditor({ image, onClose }) {
         // Create final object
         switch (activeTool) {
           case 'line':
-            createFinalLine(dragStart, pointer);
+            createFinalLine(dragStartRef.current, pointer);
             break;
           case 'measurement':
-            createFinalMeasurement(dragStart, pointer);
+            createFinalMeasurement(dragStartRef.current, pointer);
             break;
           case 'arrow':
-            createFinalArrow(dragStart, pointer);
+            createFinalArrow(dragStartRef.current, pointer);
             break;
           case 'rectangle':
-            createFinalRectangle(dragStart, pointer);
+            createFinalRectangle(dragStartRef.current, pointer);
             break;
           case 'circle':
-            createFinalCircle(dragStart, pointer);
+            createFinalCircle(dragStartRef.current, pointer);
             break;
         }
       }
 
-      setIsDrawing(false);
-      setDragStart(null);
-      setDragStartTime(null);
+      isDrawingRef.current = false;
+      dragStartRef.current = null;
+      dragStartTimeRef.current = null;
       canvas.renderAll();
     };
 
@@ -420,7 +421,7 @@ function ImageEditor({ image, onClose }) {
       canvas.off('mouse:move', handleMouseMove);
       canvas.off('mouse:up', handleMouseUp);
     };
-  }, [activeTool, isDrawing, dragStart, tempObject, strokeColor, strokeWidth, fontSize]);
+  }, [activeTool, strokeColor, strokeWidth, fontSize]);
 
   // Temporary object creation for drag preview
   const createTempLine = (start, end) => {

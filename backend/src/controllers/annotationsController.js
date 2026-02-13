@@ -143,14 +143,16 @@ const exportImageNew = async (req, res) => {
     // Insert new image into database
     const insertStmt = db.prepare(`
       INSERT INTO drive_images (
-        name, drive_file_id, thumbnail_url, local_path, mime_type,
+        name, original_name, file_url, drive_file_id, thumbnail_url, local_path, mime_type,
         photo_taken_at, is_compressed, subfolder, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     `);
 
     const newImageName = image.name.replace(/(\.\w+)$/, '_annotated$1');
     const result = insertStmt.run(
       newImageName,
+      newImageName, // original_name = same as name for annotated images
+      `/uploads/${newFileName}`, // file_url for accessing the file
       null, // No drive_file_id for local images
       image.thumbnail_url,
       newLocalPath,
