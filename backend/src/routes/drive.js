@@ -7,6 +7,7 @@ router.get('/settings', driveController.getDriveSettings);
 router.post('/settings/path', driveController.addDrivePath);
 router.delete('/settings/path/:id', driveController.removeDrivePath);
 router.put('/settings/path/:id', driveController.updateDrivePath);
+router.post('/settings/path/:id/sync', driveController.syncDrive);
 
 // Drive images routes
 router.get('/images', driveController.getImages);

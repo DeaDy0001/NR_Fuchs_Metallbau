@@ -1,15 +1,23 @@
 const db = require('../config/database');
-const axios = require('axios');
-const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs-extra');
+const { syncDrivePath, startAutoSync, stopAutoSync } = require('../services/driveSyncService');
 
 // Get drive settings (all configured paths)
 const getDriveSettings = (req, res) => {
   try {
     const stmt = db.prepare('SELECT * FROM drive_paths ORDER BY created_at DESC');
     const result = stmt.all();
-    res.json(result);
+
+    // Convert SQLite integers to booleans for boolean fields
+    const formatted = result.map(path => ({
+      ...path,
+      compression_enabled: !!path.compression_enabled,
+      delete_after_sync: !!path.delete_after_sync,
+      auto_sync_enabled: !!path.auto_sync_enabled
+    }));
+
+    res.json(formatted);
   } catch (error) {
     console.error('Error getting drive settings:', error);
     res.status(500).json({ error: 'Failed to get drive settings' });
@@ -19,18 +27,57 @@ const getDriveSettings = (req, res) => {
 // Add a new drive path
 const addDrivePath = (req, res) => {
   try {
-    const { name, path: drivePath, type } = req.body;
+    const {
+      name,
+      path: drivePath,
+      type,
+      compression_enabled,
+      compression_quality,
+      compression_format,
+      max_width,
+      max_height,
+      delete_after_sync,
+      auto_sync_enabled,
+      sync_interval
+    } = req.body;
 
     if (!name || !drivePath) {
       return res.status(400).json({ error: 'Name and path are required' });
     }
 
-    const stmt = db.prepare(
-      'INSERT INTO drive_paths (name, path, type) VALUES (?, ?, ?)'
+    const stmt = db.prepare(`
+      INSERT INTO drive_paths
+      (name, path, type, compression_enabled, compression_quality, compression_format,
+       max_width, max_height, delete_after_sync, auto_sync_enabled, sync_interval)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = stmt.run(
+      name,
+      drivePath,
+      type || 'google_drive',
+      compression_enabled ? 1 : 0,
+      compression_quality || 85,
+      compression_format || 'webp',
+      max_width || null,
+      max_height || null,
+      delete_after_sync ? 1 : 0,
+      auto_sync_enabled !== false ? 1 : 0, // Default true
+      sync_interval || 5
     );
-    const result = stmt.run(name, drivePath, type || 'google_drive');
 
     const newPath = db.prepare('SELECT * FROM drive_paths WHERE id = ?').get(result.lastInsertRowid);
+
+    // Convert booleans
+    newPath.compression_enabled = !!newPath.compression_enabled;
+    newPath.delete_after_sync = !!newPath.delete_after_sync;
+    newPath.auto_sync_enabled = !!newPath.auto_sync_enabled;
+
+    // Start auto-sync if enabled
+    if (newPath.auto_sync_enabled) {
+      startAutoSync(newPath.id, newPath.sync_interval);
+    }
+
     res.json(newPath);
   } catch (error) {
     console.error('Error adding drive path:', error);
@@ -39,10 +86,33 @@ const addDrivePath = (req, res) => {
 };
 
 // Remove a drive path
-const removeDrivePath = (req, res) => {
+const removeDrivePath = async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Stop auto-sync
+    stopAutoSync(parseInt(id));
+
+    // Get images to delete local files
+    const images = db.prepare('SELECT local_path, thumbnail_url FROM drive_images WHERE drive_path_id = ?').all(id);
+
+    // Delete local files
+    for (const image of images) {
+      try {
+        if (image.local_path) {
+          const localPath = path.join(__dirname, '../../../', image.local_path);
+          await fs.remove(localPath);
+        }
+        if (image.thumbnail_url) {
+          const thumbPath = path.join(__dirname, '../../../', image.thumbnail_url);
+          await fs.remove(thumbPath);
+        }
+      } catch (err) {
+        console.error('Error deleting file:', err);
+      }
+    }
+
+    // Delete from database (cascade will delete images)
     const stmt = db.prepare('DELETE FROM drive_paths WHERE id = ?');
     stmt.run(id);
 
@@ -57,19 +127,70 @@ const removeDrivePath = (req, res) => {
 const updateDrivePath = (req, res) => {
   try {
     const { id } = req.params;
-    const { name, path: drivePath } = req.body;
+    const {
+      name,
+      path: drivePath,
+      compression_enabled,
+      compression_quality,
+      compression_format,
+      max_width,
+      max_height,
+      delete_after_sync,
+      auto_sync_enabled,
+      sync_interval
+    } = req.body;
 
     const updates = [];
     const values = [];
 
-    if (name) {
+    if (name !== undefined) {
       updates.push('name = ?');
       values.push(name);
     }
 
-    if (drivePath) {
+    if (drivePath !== undefined) {
       updates.push('path = ?');
       values.push(drivePath);
+    }
+
+    if (compression_enabled !== undefined) {
+      updates.push('compression_enabled = ?');
+      values.push(compression_enabled ? 1 : 0);
+    }
+
+    if (compression_quality !== undefined) {
+      updates.push('compression_quality = ?');
+      values.push(compression_quality);
+    }
+
+    if (compression_format !== undefined) {
+      updates.push('compression_format = ?');
+      values.push(compression_format);
+    }
+
+    if (max_width !== undefined) {
+      updates.push('max_width = ?');
+      values.push(max_width || null);
+    }
+
+    if (max_height !== undefined) {
+      updates.push('max_height = ?');
+      values.push(max_height || null);
+    }
+
+    if (delete_after_sync !== undefined) {
+      updates.push('delete_after_sync = ?');
+      values.push(delete_after_sync ? 1 : 0);
+    }
+
+    if (auto_sync_enabled !== undefined) {
+      updates.push('auto_sync_enabled = ?');
+      values.push(auto_sync_enabled ? 1 : 0);
+    }
+
+    if (sync_interval !== undefined) {
+      updates.push('sync_interval = ?');
+      values.push(sync_interval);
     }
 
     if (updates.length > 0) {
@@ -85,6 +206,20 @@ const updateDrivePath = (req, res) => {
 
     if (!result) {
       return res.status(404).json({ error: 'Drive path not found' });
+    }
+
+    // Convert booleans
+    result.compression_enabled = !!result.compression_enabled;
+    result.delete_after_sync = !!result.delete_after_sync;
+    result.auto_sync_enabled = !!result.auto_sync_enabled;
+
+    // Update auto-sync if needed
+    if (auto_sync_enabled !== undefined) {
+      if (result.auto_sync_enabled) {
+        startAutoSync(result.id, result.sync_interval);
+      } else {
+        stopAutoSync(result.id);
+      }
     }
 
     res.json(result);
@@ -113,6 +248,12 @@ const getImages = (req, res) => {
     const stmt = db.prepare(query);
     const images = stmt.all(...params);
 
+    // Convert booleans
+    const formatted = images.map(img => ({
+      ...img,
+      is_compressed: !!img.is_compressed
+    }));
+
     // Get total count
     let countQuery = 'SELECT COUNT(*) as count FROM drive_images';
     const countParams = [];
@@ -126,7 +267,7 @@ const getImages = (req, res) => {
     const countResult = countStmt.get(...countParams);
 
     res.json({
-      images,
+      images: formatted,
       total: countResult.count,
       limit: parseInt(limit),
       offset: parseInt(offset)
@@ -149,6 +290,8 @@ const getImageById = (req, res) => {
       return res.status(404).json({ error: 'Image not found' });
     }
 
+    result.is_compressed = !!result.is_compressed;
+
     res.json(result);
   } catch (error) {
     console.error('Error getting image:', error);
@@ -157,7 +300,7 @@ const getImageById = (req, res) => {
 };
 
 // Rename an image
-const renameImage = (req, res) => {
+const renameImage = async (req, res) => {
   try {
     const { id } = req.params;
     const { name } = req.body;
@@ -166,14 +309,53 @@ const renameImage = (req, res) => {
       return res.status(400).json({ error: 'Name is required' });
     }
 
-    const stmt = db.prepare('UPDATE drive_images SET name = ?, updated_at = datetime("now") WHERE id = ?');
-    stmt.run(name, id);
+    // Get current image info
+    const image = db.prepare('SELECT * FROM drive_images WHERE id = ?').get(id);
 
-    const result = db.prepare('SELECT * FROM drive_images WHERE id = ?').get(id);
-
-    if (!result) {
+    if (!image) {
       return res.status(404).json({ error: 'Image not found' });
     }
+
+    // Rename local file if it exists
+    if (image.local_path) {
+      const oldPath = path.join(__dirname, '../../../', image.local_path);
+      const dir = path.dirname(oldPath);
+      const ext = path.extname(oldPath);
+      const sanitizedName = name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const newFilename = `${sanitizedName}${ext}`;
+      const newPath = path.join(dir, newFilename);
+
+      try {
+        if (await fs.pathExists(oldPath)) {
+          await fs.move(oldPath, newPath, { overwrite: false });
+
+          // Update local_path in database
+          const newLocalPath = image.local_path.replace(path.basename(oldPath), newFilename);
+
+          db.prepare(`
+            UPDATE drive_images
+            SET name = ?, local_path = ?, updated_at = datetime("now")
+            WHERE id = ?
+          `).run(name, newLocalPath, id);
+        } else {
+          // File doesn't exist, just update name
+          db.prepare('UPDATE drive_images SET name = ?, updated_at = datetime("now") WHERE id = ?')
+            .run(name, id);
+        }
+      } catch (err) {
+        console.error('Error renaming file:', err);
+        // If file rename fails, still update database name
+        db.prepare('UPDATE drive_images SET name = ?, updated_at = datetime("now") WHERE id = ?')
+          .run(name, id);
+      }
+    } else {
+      // No local file, just update name
+      db.prepare('UPDATE drive_images SET name = ?, updated_at = datetime("now") WHERE id = ?')
+        .run(name, id);
+    }
+
+    const result = db.prepare('SELECT * FROM drive_images WHERE id = ?').get(id);
+    result.is_compressed = !!result.is_compressed;
 
     res.json(result);
   } catch (error) {
@@ -182,52 +364,50 @@ const renameImage = (req, res) => {
   }
 };
 
-// Refresh images from Google Drive (placeholder - will be implemented with actual Google Drive API)
-const refreshImages = (req, res) => {
+// Manually trigger sync for a specific drive path
+const syncDrive = async (req, res) => {
   try {
-    // Get all configured drive paths
-    const stmt = db.prepare('SELECT * FROM drive_paths WHERE type = ?');
-    const paths = stmt.all('google_drive');
+    const { id } = req.params;
+
+    const result = await syncDrivePath(parseInt(id));
+
+    res.json(result);
+  } catch (error) {
+    console.error('Error syncing drive:', error);
+    res.status(500).json({ error: error.message || 'Failed to sync drive' });
+  }
+};
+
+// Refresh all images (legacy - triggers sync for all paths)
+const refreshImages = async (req, res) => {
+  try {
+    const paths = db.prepare('SELECT id, name FROM drive_paths').all();
 
     if (paths.length === 0) {
       return res.json({ message: 'No drive paths configured', added: 0 });
     }
 
-    let addedCount = 0;
+    let totalAdded = 0;
+    const results = [];
 
     for (const drivePath of paths) {
-      // TODO: Implement actual Google Drive API integration
-      // For now, this is a placeholder
-      console.log(`Would refresh images from: ${drivePath.path}`);
+      try {
+        const result = await syncDrivePath(drivePath.id);
+        totalAdded += result.added;
+        results.push({ name: drivePath.name, ...result });
+      } catch (error) {
+        results.push({ name: drivePath.name, error: error.message });
+      }
     }
 
     res.json({
-      message: 'Images refreshed successfully',
-      added: addedCount
+      message: 'Sync completed',
+      totalAdded,
+      results
     });
   } catch (error) {
     console.error('Error refreshing images:', error);
     res.status(500).json({ error: 'Failed to refresh images' });
-  }
-};
-
-// Helper function to create thumbnail
-const createThumbnail = async (imageBuffer, filename) => {
-  try {
-    const thumbnailPath = path.join(__dirname, '../../../uploads/thumbnails', filename);
-
-    await sharp(imageBuffer)
-      .resize(300, 300, {
-        fit: 'cover',
-        position: 'center'
-      })
-      .jpeg({ quality: 80 })
-      .toFile(thumbnailPath);
-
-    return `/uploads/thumbnails/${filename}`;
-  } catch (error) {
-    console.error('Error creating thumbnail:', error);
-    throw error;
   }
 };
 
@@ -239,5 +419,6 @@ module.exports = {
   getImages,
   getImageById,
   renameImage,
+  syncDrive,
   refreshImages
 };

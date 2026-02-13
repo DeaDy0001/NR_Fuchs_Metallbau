@@ -47,7 +47,8 @@ const initDirectories = async () => {
   const dirs = [
     path.join(__dirname, '../../uploads'),
     path.join(__dirname, '../../uploads/thumbnails'),
-    path.join(__dirname, '../../uploads/logos')
+    path.join(__dirname, '../../uploads/logos'),
+    path.join(__dirname, '../../uploads/drive')
   ];
 
   for (const dir of dirs) {
@@ -60,6 +61,10 @@ const startServer = async () => {
   try {
     await initDirectories();
 
+    // Initialize auto-sync for Google Drive
+    const { initializeAutoSync } = require('./services/driveSyncService');
+    initializeAutoSync();
+
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`
 ╔═══════════════════════════════════════════╗
@@ -68,6 +73,7 @@ const startServer = async () => {
 ║   Status: Running                         ║
 ║   Port: ${PORT}                           ║
 ║   URL: http://localhost:${PORT}           ║
+║   Drive Auto-Sync: Active                 ║
 ╚═══════════════════════════════════════════╝
       `);
     });

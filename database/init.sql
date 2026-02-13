@@ -20,6 +20,20 @@ CREATE TABLE IF NOT EXISTS drive_paths (
     name TEXT NOT NULL,
     path TEXT NOT NULL,
     type TEXT DEFAULT 'google_drive',
+
+    -- Compression Settings
+    compression_enabled INTEGER DEFAULT 0,
+    compression_quality INTEGER DEFAULT 85,
+    compression_format TEXT DEFAULT 'webp',
+    max_width INTEGER,
+    max_height INTEGER,
+
+    -- Sync Settings
+    delete_after_sync INTEGER DEFAULT 0,
+    auto_sync_enabled INTEGER DEFAULT 1,
+    sync_interval INTEGER DEFAULT 5,
+    last_sync TEXT,
+
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -31,11 +45,14 @@ CREATE TABLE IF NOT EXISTS drive_images (
     name TEXT NOT NULL,
     original_name TEXT NOT NULL,
     file_url TEXT NOT NULL,
+    local_path TEXT,
     thumbnail_url TEXT,
     file_size INTEGER,
     mime_type TEXT,
     width INTEGER,
     height INTEGER,
+    is_compressed INTEGER DEFAULT 0,
+    drive_file_id TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
 );

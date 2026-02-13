@@ -40,6 +40,9 @@ desktop.ini
 # Uploads (user content)
 uploads/
 !uploads/.gitkeep
+!uploads/drive/.gitkeep
+!uploads/thumbnails/.gitkeep
+!uploads/logos/.gitkeep
 
 # Temporary files
 *.tmp
