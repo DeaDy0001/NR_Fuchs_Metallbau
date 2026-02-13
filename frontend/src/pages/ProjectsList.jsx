@@ -14,6 +14,15 @@ function ProjectsList() {
 
   useEffect(() => {
     loadProjects();
+    // Load selected projects from localStorage
+    const saved = localStorage.getItem('selectedProjects');
+    if (saved) {
+      try {
+        setSelectedProjects(JSON.parse(saved));
+      } catch (e) {
+        console.error('Error loading selected projects:', e);
+      }
+    }
   }, [searchQuery]);
 
   const loadProjects = async () => {
@@ -75,11 +84,15 @@ function ProjectsList() {
   };
 
   const toggleProjectSelection = (projectId) => {
-    setSelectedProjects(prev =>
-      prev.includes(projectId)
+    setSelectedProjects(prev => {
+      const updated = prev.includes(projectId)
         ? prev.filter(id => id !== projectId)
-        : [...prev, projectId]
-    );
+        : [...prev, projectId];
+
+      // Save to localStorage
+      localStorage.setItem('selectedProjects', JSON.stringify(updated));
+      return updated;
+    });
   };
 
   // Gefilterte Projekte basierend auf Markierung

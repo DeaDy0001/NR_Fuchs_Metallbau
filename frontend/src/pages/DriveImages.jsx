@@ -38,10 +38,22 @@ function DriveImages() {
     limit: 100,
     offset: 0
   });
+  const [projects, setProjects] = useState([]); // Alle Projekte
+  const [selectedProjects, setSelectedProjects] = useState([]); // Markierte Projekte aus localStorage
 
   // Initial load
   useEffect(() => {
     loadImages();
+    loadProjects();
+    // Load selected projects from localStorage
+    const saved = localStorage.getItem('selectedProjects');
+    if (saved) {
+      try {
+        setSelectedProjects(JSON.parse(saved));
+      } catch (e) {
+        console.error('Error loading selected projects:', e);
+      }
+    }
   }, [searchQuery]);
 
   // Auto-refresh Bilder-Liste alle 10 Sekunden
@@ -106,6 +118,18 @@ function DriveImages() {
       if (!silent) {
         setLoading(false);
       }
+    }
+  };
+
+  const loadProjects = async () => {
+    try {
+      const response = await fetch('/api/projects?limit=1000');
+      if (response.ok) {
+        const data = await response.json();
+        setProjects(data.projects);
+      }
+    } catch (error) {
+      console.error('Error loading projects:', error);
     }
   };
 
@@ -198,6 +222,33 @@ function DriveImages() {
   // Open delete confirmation dialog
   const handleDelete = () => {
     setShowDeleteDialog(true);
+  };
+
+  // Assign image to project
+  const handleAssignToProject = async (projectId) => {
+    try {
+      const response = await fetch('/api/drive/images/assign-to-project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageId: selectedImage.id,
+          projectId: projectId
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        // Reload images to get updated project assignments
+        loadImages();
+        console.log(`✅ Bild zu "${result.projectName}" hinzugefügt`);
+      } else {
+        const error = await response.json();
+        alert(`Fehler: ${error.error || 'Unbekannter Fehler'}`);
+      }
+    } catch (error) {
+      console.error('Error assigning image to project:', error);
+      alert(`Fehler beim Zuweisen: ${error.message}`);
+    }
   };
 
   // Perform actual delete operation
@@ -405,6 +456,20 @@ function DriveImages() {
                     {image.subfolder && (
                       <div className="subfolder-badge-small">{image.subfolder}</div>
                     )}
+                    {image.projects && image.projects.length > 0 && (
+                      <div className="project-badges">
+                        {image.projects.map(project => (
+                          <div
+                            key={project.id}
+                            className="project-badge-small"
+                            style={{ backgroundColor: project.color }}
+                            title={project.folder_name}
+                          >
+                            {project.folder_name}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </>
               ) : (
@@ -430,6 +495,20 @@ function DriveImages() {
                     <div className="image-meta">
                       {image.file_size && `${(image.file_size / 1024 / 1024).toFixed(2)} MB`}
                       {image.width && image.height && ` • ${image.width}x${image.height}`}
+                      {image.projects && image.projects.length > 0 && (
+                        <div className="project-badges" style={{ marginTop: '0.25rem' }}>
+                          {image.projects.map(project => (
+                            <div
+                              key={project.id}
+                              className="project-badge-small"
+                              style={{ backgroundColor: project.color }}
+                              title={project.folder_name}
+                            >
+                              {project.folder_name}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="list-actions">
@@ -595,6 +674,24 @@ function DriveImages() {
                   </div>
                 )}
 
+                {selectedImage.projects && selectedImage.projects.length > 0 && (
+                  <div className="modal-section">
+                    <label>🏷️ Zugeordnete Projekte</label>
+                    <div className="project-badges-modal">
+                      {selectedImage.projects.map(project => (
+                        <div
+                          key={project.id}
+                          className="project-badge"
+                          style={{ backgroundColor: project.color }}
+                          title={project.folder_name}
+                        >
+                          {project.folder_name}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {selectedImage.file_size && (
                   <div className="modal-section">
                     <label>Dateigröße</label>
@@ -630,6 +727,30 @@ function DriveImages() {
                     </div>
                   </div>
                 )}
+
+                {/* Projekt-Zuordnung */}
+                <div className="modal-section projects-section">
+                  <label>📁 Projekte</label>
+                  {selectedProjects.length === 0 ? (
+                    <div className="empty-hint">Keine Projekte markiert. Gehe zum Projekte-Tab und markiere Projekte.</div>
+                  ) : (
+                    <div className="project-list">
+                      {projects
+                        .filter(p => selectedProjects.includes(p.id))
+                        .map(project => (
+                          <button
+                            key={project.id}
+                            className="project-item"
+                            onClick={() => handleAssignToProject(project.id)}
+                            style={{ borderLeftColor: project.color }}
+                            title={`Bild zu "${project.folder_name}" hinzufügen`}
+                          >
+                            <span className="project-item-name">{project.folder_name}</span>
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

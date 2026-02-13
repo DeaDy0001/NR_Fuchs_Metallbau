@@ -124,6 +124,39 @@ const migrations = [
 
       console.log('✓ Migration add_subfolder_column completed');
     }
+  },
+  {
+    id: 6,
+    name: 'create_image_project_assignments_table',
+    up: () => {
+      console.log('Running migration: create_image_project_assignments_table');
+
+      // Create table for image-project assignments
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS image_project_assignments (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          image_id INTEGER NOT NULL,
+          project_id INTEGER NOT NULL,
+          assigned_at TEXT DEFAULT (datetime('now')),
+          FOREIGN KEY (image_id) REFERENCES drive_images (id) ON DELETE CASCADE,
+          FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE,
+          UNIQUE (image_id, project_id)
+        )
+      `);
+
+      // Create index for faster lookups
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_image_project_image_id
+        ON image_project_assignments(image_id)
+      `);
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_image_project_project_id
+        ON image_project_assignments(project_id)
+      `);
+
+      console.log('✓ Migration create_image_project_assignments_table completed');
+    }
   }
 ];
 

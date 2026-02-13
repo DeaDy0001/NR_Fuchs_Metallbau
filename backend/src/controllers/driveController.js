@@ -249,10 +249,19 @@ const getImages = (req, res) => {
     const stmt = db.prepare(query);
     const images = stmt.all(...params);
 
-    // Convert booleans
+    // Get assigned projects for each image
+    const projectsStmt = db.prepare(`
+      SELECT p.id, p.folder_name, p.color
+      FROM image_project_assignments ipa
+      JOIN projects p ON ipa.project_id = p.id
+      WHERE ipa.image_id = ?
+    `);
+
+    // Convert booleans and add projects
     const formatted = images.map(img => ({
       ...img,
-      is_compressed: !!img.is_compressed
+      is_compressed: !!img.is_compressed,
+      projects: projectsStmt.all(img.id)
     }));
 
     // Get total count
@@ -489,6 +498,76 @@ const refreshImages = async (req, res) => {
   }
 };
 
+// Assign image to project
+const assignImageToProject = async (req, res) => {
+  try {
+    const { imageId, projectId } = req.body;
+
+    if (!imageId || !projectId) {
+      return res.status(400).json({ error: 'Image ID and Project ID are required' });
+    }
+
+    // Get image details
+    const image = db.prepare('SELECT * FROM drive_images WHERE id = ?').get(imageId);
+    if (!image) {
+      return res.status(404).json({ error: 'Image not found' });
+    }
+
+    // Get project details
+    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Get project base path from settings
+    const setting = db.prepare("SELECT value FROM settings WHERE key = 'project_base_path'").get();
+    if (!setting || !setting.value) {
+      return res.status(400).json({ error: 'Project base path not configured' });
+    }
+
+    const projectBasePath = setting.value;
+    const projectFolderPath = path.join(projectBasePath, project.folder_name);
+    const imagesFolderPath = path.join(projectFolderPath, 'Bilder');
+
+    // Create Bilder folder if it doesn't exist
+    await fs.ensureDir(imagesFolderPath);
+
+    // Get source file path
+    const sourcePath = image.local_path;
+    if (!sourcePath || !(await fs.pathExists(sourcePath))) {
+      return res.status(404).json({ error: 'Source image file not found' });
+    }
+
+    // Destination path
+    const fileName = path.basename(sourcePath);
+    const destPath = path.join(imagesFolderPath, fileName);
+
+    // Copy file to project folder
+    await fs.copy(sourcePath, destPath, { overwrite: false });
+
+    // Check if assignment already exists
+    const existing = db.prepare(
+      'SELECT id FROM image_project_assignments WHERE image_id = ? AND project_id = ?'
+    ).get(imageId, projectId);
+
+    if (!existing) {
+      // Create assignment record
+      db.prepare(
+        'INSERT INTO image_project_assignments (image_id, project_id) VALUES (?, ?)'
+      ).run(imageId, projectId);
+    }
+
+    res.json({
+      message: 'Image assigned to project successfully',
+      projectName: project.folder_name,
+      destinationPath: destPath
+    });
+  } catch (error) {
+    console.error('Error assigning image to project:', error);
+    res.status(500).json({ error: 'Failed to assign image to project' });
+  }
+};
+
 module.exports = {
   getDriveSettings,
   addDrivePath,
@@ -499,5 +578,6 @@ module.exports = {
   renameImage,
   deleteImage,
   syncDrive,
-  refreshImages
+  refreshImages,
+  assignImageToProject
 };
