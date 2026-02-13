@@ -532,16 +532,8 @@ const assignImageToProject = async (req, res) => {
     // Create Bilder folder if it doesn't exist
     await fs.ensureDir(imagesFolderPath);
 
-    // Get source file path
+    // Get source file path - convert relative to absolute
     let sourcePath = image.local_path;
-
-    // Log for debugging
-    console.log('Image data:', {
-      id: image.id,
-      name: image.name,
-      local_path: image.local_path,
-      thumbnail_url: image.thumbnail_url
-    });
 
     if (!sourcePath) {
       return res.status(404).json({
@@ -550,16 +542,30 @@ const assignImageToProject = async (req, res) => {
       });
     }
 
+    // Convert relative path to absolute path (relative to project root)
+    // Remove leading slash if present
+    const relativePath = sourcePath.startsWith('/') ? sourcePath.substring(1) : sourcePath;
+    const absolutePath = path.join(__dirname, '../../..', relativePath);
+
+    console.log('Path resolution:', {
+      original: sourcePath,
+      relative: relativePath,
+      absolute: absolutePath
+    });
+
     // Check if path exists
-    const pathExists = await fs.pathExists(sourcePath);
-    console.log('Path exists check:', sourcePath, '→', pathExists);
+    const pathExists = await fs.pathExists(absolutePath);
+    console.log('Path exists check:', absolutePath, '→', pathExists);
 
     if (!pathExists) {
       return res.status(404).json({
         error: 'Source image file not found',
-        details: `Path does not exist: ${sourcePath}`
+        details: `Path does not exist: ${absolutePath}`
       });
     }
+
+    // Use absolute path for further operations
+    sourcePath = absolutePath;
 
     // Destination path
     const fileName = path.basename(sourcePath);
