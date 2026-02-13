@@ -9,6 +9,7 @@ router.post('/settings/path', projectsController.setProjectPath);
 // Projects routes
 router.get('/', projectsController.getProjects);
 router.get('/:id', projectsController.getProjectById);
+router.get('/:id/files', projectsController.getProjectFiles);
 router.post('/', projectsController.createProject);
 router.put('/:id', projectsController.updateProject);
 router.delete('/:id', projectsController.deleteProject);

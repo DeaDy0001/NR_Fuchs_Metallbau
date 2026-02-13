@@ -246,6 +246,74 @@ const syncProjects = async (req, res) => {
   }
 };
 
+// Get project files (images and PDFs)
+const getProjectFiles = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get project details
+    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Get project base path from settings
+    const setting = db.prepare("SELECT value FROM settings WHERE key = 'project_base_path'").get();
+    if (!setting || !setting.value) {
+      return res.status(400).json({ error: 'Project base path not configured' });
+    }
+
+    const projectBasePath = setting.value;
+    const projectFolderPath = path.join(projectBasePath, project.folder_name);
+
+    // Check if project folder exists
+    if (!(await fs.pathExists(projectFolderPath))) {
+      return res.json({
+        images: [],
+        pdfs: [],
+        hasImages: false,
+        hasPdfs: false
+      });
+    }
+
+    // Scan for images in Bilder folder
+    const imagesFolderPath = path.join(projectFolderPath, 'Bilder');
+    let images = [];
+    if (await fs.pathExists(imagesFolderPath)) {
+      const imageFiles = await fs.readdir(imagesFolderPath);
+      images = imageFiles
+        .filter(file => /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(file))
+        .map(file => ({
+          name: file,
+          path: path.join(imagesFolderPath, file),
+          url: `/uploads/projects/${project.folder_name}/Bilder/${file}`,
+          type: 'image'
+        }));
+    }
+
+    // Scan for PDFs in main folder
+    const files = await fs.readdir(projectFolderPath);
+    const pdfs = files
+      .filter(file => /\.pdf$/i.test(file))
+      .map(file => ({
+        name: file,
+        path: path.join(projectFolderPath, file),
+        url: `/uploads/projects/${project.folder_name}/${file}`,
+        type: 'pdf'
+      }));
+
+    res.json({
+      images,
+      pdfs,
+      hasImages: images.length > 0,
+      hasPdfs: pdfs.length > 0
+    });
+  } catch (error) {
+    console.error('Error getting project files:', error);
+    res.status(500).json({ error: 'Failed to get project files' });
+  }
+};
+
 module.exports = {
   getProjectSettings,
   setProjectPath,
@@ -254,5 +322,6 @@ module.exports = {
   createProject,
   updateProject,
   deleteProject,
-  syncProjects
+  syncProjects,
+  getProjectFiles
 };

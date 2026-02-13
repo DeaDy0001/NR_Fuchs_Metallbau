@@ -11,6 +11,10 @@ function ProjectsList() {
   const [selectedProjects, setSelectedProjects] = useState([]); // Markierte Projekte
   const [showMarked, setShowMarked] = useState(true); // Filter: Markierte anzeigen
   const [showUnmarked, setShowUnmarked] = useState(true); // Filter: Nicht markierte anzeigen
+  const [viewingProject, setViewingProject] = useState(null); // Projekt-Modal
+  const [projectFiles, setProjectFiles] = useState({ images: [], pdfs: [], hasImages: false, hasPdfs: false });
+  const [activeTab, setActiveTab] = useState('images'); // Active tab in project modal
+  const [loadingFiles, setLoadingFiles] = useState(false);
 
   useEffect(() => {
     loadProjects();
@@ -95,6 +99,30 @@ function ProjectsList() {
     });
   };
 
+  const handleViewProject = async (project) => {
+    setViewingProject(project);
+    setLoadingFiles(true);
+    setActiveTab('images');
+
+    try {
+      const response = await fetch(`/api/projects/${project.id}/files`);
+      if (response.ok) {
+        const data = await response.json();
+        setProjectFiles(data);
+      }
+    } catch (error) {
+      console.error('Error loading project files:', error);
+    } finally {
+      setLoadingFiles(false);
+    }
+  };
+
+  const closeProjectModal = () => {
+    setViewingProject(null);
+    setProjectFiles({ images: [], pdfs: [], hasImages: false, hasPdfs: false });
+    setActiveTab('images');
+  };
+
   // Gefilterte Projekte basierend auf Markierung
   const filteredProjects = projects.filter(project => {
     const isSelected = selectedProjects.includes(project.id);
@@ -172,20 +200,26 @@ function ProjectsList() {
                   style={{ backgroundColor: project.color }}
                 />
 
-                <div className="project-content">
+                <div className="project-content" onClick={() => handleViewProject(project)}>
                   <div className="project-header">
                     <h3 className="project-name">{project.folder_name}</h3>
                     <div className="project-actions">
                       <button
                         className="icon-btn select-btn"
-                        onClick={() => toggleProjectSelection(project.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleProjectSelection(project.id);
+                        }}
                         title={isSelected ? "Markierung entfernen" : "Projekt markieren"}
                       >
                         {isSelected ? <CheckSquare size={18} /> : <Square size={18} />}
                       </button>
                       <button
                         className="icon-btn"
-                        onClick={() => handleEdit(project)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEdit(project);
+                        }}
                         title="Bearbeiten"
                       >
                         <Edit2 size={18} />
@@ -266,6 +300,73 @@ function ProjectsList() {
                 <Save size={18} />
                 Speichern
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewingProject && (
+        <div className="modal-overlay" onClick={closeProjectModal}>
+          <div className="modal project-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{viewingProject.folder_name}</h2>
+              <button className="modal-close" onClick={closeProjectModal}>
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="modal-tabs">
+              <button
+                className={`tab-btn ${activeTab === 'images' ? 'active' : ''}`}
+                onClick={() => setActiveTab('images')}
+              >
+                Bilder
+              </button>
+              {projectFiles.hasPdfs && (
+                <button
+                  className={`tab-btn ${activeTab === 'pdfs' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('pdfs')}
+                >
+                  PDFs
+                </button>
+              )}
+            </div>
+
+            <div className="modal-body project-modal-body">
+              {loadingFiles ? (
+                <div className="loading-state">Lade Dateien...</div>
+              ) : activeTab === 'images' ? (
+                projectFiles.images.length === 0 ? (
+                  <div className="empty-state">Keine Bilder gefunden</div>
+                ) : (
+                  <div className="project-images-grid">
+                    {projectFiles.images.map((image, index) => (
+                      <div key={index} className="project-image-card">
+                        <img src={image.url} alt={image.name} />
+                        <div className="project-image-name">{image.name}</div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : activeTab === 'pdfs' ? (
+                projectFiles.pdfs.length === 0 ? (
+                  <div className="empty-state">Keine PDFs gefunden</div>
+                ) : (
+                  <div className="project-files-list">
+                    {projectFiles.pdfs.map((pdf, index) => (
+                      <a
+                        key={index}
+                        href={pdf.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="project-file-item"
+                      >
+                        {pdf.name}
+                      </a>
+                    ))}
+                  </div>
+                )
+              ) : null}
             </div>
           </div>
         </div>
