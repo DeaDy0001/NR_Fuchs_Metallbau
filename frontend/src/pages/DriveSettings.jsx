@@ -414,6 +414,7 @@ function DriveSettings() {
           </button>
         ) : (
           <PathForm
+            key="add-form"
             formData={newPath}
             setFormData={setNewPath}
             showAdv={showAdvanced}
@@ -436,6 +437,7 @@ function DriveSettings() {
               <div key={path.id} className="path-item">
                 {editingPath === path.id ? (
                   <PathForm
+                    key={`edit-${editingPath}`}
                     formData={editForm}
                     setFormData={setEditForm}
                     showAdv={editShowAdvanced}
