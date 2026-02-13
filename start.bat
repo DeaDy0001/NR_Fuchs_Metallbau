@@ -18,33 +18,25 @@ node --version
 echo.
 
 REM Install backend dependencies
-echo [1/5] Installiere Backend Dependencies...
+echo [1/5] Installiere/Aktualisiere Backend Dependencies...
 cd backend
-if not exist node_modules (
-    call npm install
-    if %ERRORLEVEL% NEQ 0 (
-        echo [ERROR] Backend Installation fehlgeschlagen!
-        pause
-        exit /b 1
-    )
-) else (
-    echo [INFO] Backend Dependencies bereits installiert
+call npm install
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] Backend Installation fehlgeschlagen!
+    pause
+    exit /b 1
 )
 cd ..
 echo.
 
 REM Install frontend dependencies
-echo [2/5] Installiere Frontend Dependencies...
+echo [2/5] Installiere/Aktualisiere Frontend Dependencies...
 cd frontend
-if not exist node_modules (
-    call npm install
-    if %ERRORLEVEL% NEQ 0 (
-        echo [ERROR] Frontend Installation fehlgeschlagen!
-        pause
-        exit /b 1
-    )
-) else (
-    echo [INFO] Frontend Dependencies bereits installiert
+call npm install
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] Frontend Installation fehlgeschlagen!
+    pause
+    exit /b 1
 )
 cd ..
 echo.
