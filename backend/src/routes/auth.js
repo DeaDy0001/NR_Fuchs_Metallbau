@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getOAuth2Client } = require('../config/oauth');
-const { getAuthUrl } = require('../config/oauth');
+const { createOAuth2Client, getAuthUrl } = require('../config/oauth');
 const {
   exchangeCodeForTokens,
   getAuthStatus,
@@ -28,7 +27,7 @@ router.get('/status', async (req, res) => {
 // Initiate OAuth flow
 router.get('/google', (req, res) => {
   try {
-    const oauth2Client = getOAuth2Client();
+    const oauth2Client = createOAuth2Client();
 
     if (!oauth2Client) {
       return res.status(500).json({
