@@ -533,9 +533,32 @@ const assignImageToProject = async (req, res) => {
     await fs.ensureDir(imagesFolderPath);
 
     // Get source file path
-    const sourcePath = image.local_path;
-    if (!sourcePath || !(await fs.pathExists(sourcePath))) {
-      return res.status(404).json({ error: 'Source image file not found' });
+    let sourcePath = image.local_path;
+
+    // Log for debugging
+    console.log('Image data:', {
+      id: image.id,
+      name: image.name,
+      local_path: image.local_path,
+      thumbnail_url: image.thumbnail_url
+    });
+
+    if (!sourcePath) {
+      return res.status(404).json({
+        error: 'Source image file not found',
+        details: 'local_path is not set in database'
+      });
+    }
+
+    // Check if path exists
+    const pathExists = await fs.pathExists(sourcePath);
+    console.log('Path exists check:', sourcePath, '→', pathExists);
+
+    if (!pathExists) {
+      return res.status(404).json({
+        error: 'Source image file not found',
+        details: `Path does not exist: ${sourcePath}`
+      });
     }
 
     // Destination path
