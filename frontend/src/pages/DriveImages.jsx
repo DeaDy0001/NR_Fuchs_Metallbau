@@ -30,6 +30,9 @@ function DriveImages() {
   const [newImagesCount, setNewImagesCount] = useState(0);
   const [zoomLevel, setZoomLevel] = useState(1); // Zoom level (1 = 100%)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false); // Delete confirmation dialog
+  const [panPosition, setPanPosition] = useState({ x: 0, y: 0 }); // Pan position for zoomed image
+  const [isDragging, setIsDragging] = useState(false); // Is user dragging the image
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 }); // Drag start position
   const [pagination, setPagination] = useState({
     total: 0,
     limit: 100,
@@ -155,6 +158,41 @@ function DriveImages() {
 
   const handleZoomReset = () => {
     setZoomLevel(1);
+    setPanPosition({ x: 0, y: 0 });
+  };
+
+  // Pan/Drag handlers for zoomed image
+  const handleMouseDown = (e) => {
+    if (zoomLevel > 1) {
+      setIsDragging(true);
+      setDragStart({
+        x: e.clientX - panPosition.x,
+        y: e.clientY - panPosition.y
+      });
+      e.preventDefault();
+    }
+  };
+
+  const handleMouseMove = (e) => {
+    if (isDragging && zoomLevel > 1) {
+      setPanPosition({
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  // Shift + Wheel zoom
+  const handleWheel = (e) => {
+    if (e.shiftKey) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      setZoomLevel(prev => Math.min(Math.max(prev + delta, 0.5), 3));
+    }
   };
 
   // Open delete confirmation dialog
@@ -200,6 +238,7 @@ function DriveImages() {
       setSelectedImage(prevImage);
       setEditingName(prevImage.name);
       setZoomLevel(1);
+      setPanPosition({ x: 0, y: 0 });
     }
   };
 
@@ -210,6 +249,7 @@ function DriveImages() {
       setSelectedImage(nextImage);
       setEditingName(nextImage.name);
       setZoomLevel(1);
+      setPanPosition({ x: 0, y: 0 });
     }
   };
 
@@ -354,9 +394,23 @@ function DriveImages() {
                         <Maximize2 size={32} />
                       </div>
                     )}
+                    <button
+                      className="image-delete-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedImage(image);
+                        setShowDeleteDialog(true);
+                      }}
+                      title="Bild löschen"
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   </div>
                   <div className="image-info">
                     <div className="image-name" title={image.name}>{image.name}</div>
+                    {image.subfolder && (
+                      <div className="subfolder-badge-small">{image.subfolder}</div>
+                    )}
                   </div>
                 </>
               ) : (
@@ -371,15 +425,30 @@ function DriveImages() {
                     )}
                   </div>
                   <div className="list-info">
-                    <div className="image-name">{image.name}</div>
+                    <div className="image-name">
+                      {image.name}
+                      {image.subfolder && (
+                        <span className="subfolder-badge-small" style={{ marginLeft: '0.5rem' }}>
+                          {image.subfolder}
+                        </span>
+                      )}
+                    </div>
                     <div className="image-meta">
                       {image.file_size && `${(image.file_size / 1024 / 1024).toFixed(2)} MB`}
                       {image.width && image.height && ` • ${image.width}x${image.height}`}
                     </div>
                   </div>
                   <div className="list-actions">
-                    <button className="icon-btn" title="Bearbeiten">
-                      <Edit2 size={18} />
+                    <button
+                      className="icon-btn delete-icon-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedImage(image);
+                        setShowDeleteDialog(true);
+                      }}
+                      title="Bild löschen"
+                    >
+                      <Trash2 size={18} />
                     </button>
                   </div>
                 </div>
@@ -436,14 +505,6 @@ function DriveImages() {
               {/* Scrollable Image Container (Left) */}
               <div className="modal-image-container">
                 <div className="zoom-controls">
-                  <button
-                    className="zoom-btn nav-btn"
-                    onClick={handlePreviousImage}
-                    title="Vorheriges Bild (←)"
-                    disabled={images.findIndex(img => img.id === selectedImage.id) === 0}
-                  >
-                    <ChevronLeft size={18} />
-                  </button>
                   <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= 0.5}>
                     -
                   </button>
@@ -451,34 +512,58 @@ function DriveImages() {
                   <button className="zoom-btn" onClick={handleZoomIn} title="Zoom In" disabled={zoomLevel >= 3}>
                     +
                   </button>
-                  <button className="zoom-btn zoom-reset" onClick={handleZoomReset} title="Reset Zoom">
+                  <button className="zoom-btn zoom-reset" onClick={handleZoomReset} title="Zoom auf 100% zurücksetzen">
                     Reset
                   </button>
-                  <button
-                    className="zoom-btn nav-btn"
-                    onClick={handleNextImage}
-                    title="Nächstes Bild (→)"
-                    disabled={images.findIndex(img => img.id === selectedImage.id) === images.length - 1}
-                  >
-                    <ChevronRight size={18} />
-                  </button>
-                  <button
-                    className="zoom-btn delete-btn"
-                    onClick={handleDelete}
-                    title="Bild löschen (Delete)"
-                  >
-                    <Trash2 size={18} />
-                  </button>
+
+                  <div className="zoom-controls-right">
+                    <button
+                      className="zoom-btn nav-btn"
+                      onClick={handlePreviousImage}
+                      title="Vorheriges Bild (←)"
+                      disabled={images.findIndex(img => img.id === selectedImage.id) === 0}
+                    >
+                      <ChevronLeft size={18} />
+                    </button>
+                    <button
+                      className="zoom-btn nav-btn"
+                      onClick={handleNextImage}
+                      title="Nächstes Bild (→)"
+                      disabled={images.findIndex(img => img.id === selectedImage.id) === images.length - 1}
+                    >
+                      <ChevronRight size={18} />
+                    </button>
+                    <button
+                      className="zoom-btn delete-btn"
+                      onClick={handleDelete}
+                      title="Bild löschen (Delete)"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
                 </div>
-                <div className="modal-image-scroll">
+                <div
+                  className="modal-image-scroll"
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseUp}
+                  onWheel={handleWheel}
+                  style={{
+                    cursor: zoomLevel > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
+                  }}
+                >
                   <img
                     src={selectedImage.local_path || selectedImage.thumbnail_url}
                     alt={selectedImage.name}
                     style={{
-                      transform: `scale(${zoomLevel})`,
+                      transform: `scale(${zoomLevel}) translate(${panPosition.x / zoomLevel}px, ${panPosition.y / zoomLevel}px)`,
                       transformOrigin: 'top left',
-                      transition: 'transform 0.2s ease'
+                      transition: isDragging ? 'none' : 'transform 0.2s ease',
+                      userSelect: 'none',
+                      pointerEvents: 'none'
                     }}
+                    draggable={false}
                   />
                 </div>
               </div>
