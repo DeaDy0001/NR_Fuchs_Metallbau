@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Grid, List, RefreshCw, Search, Maximize2, Edit2, X, Play, Pause, Trash2, ChevronLeft, ChevronRight, Filter, Calendar } from 'lucide-react';
 import './DriveImages.css';
 
@@ -54,6 +54,25 @@ function DriveImages() {
   const [showProjectModal, setShowProjectModal] = useState(false); // Projekt-Auswahl Modal
   const [projectSearchQuery, setProjectSearchQuery] = useState(''); // Suchfeld im Projekt-Modal
 
+  // Ref to always have current filter values (for auto-refresh)
+  const latestFilters = useRef({});
+
+  // Update ref whenever filters change
+  useEffect(() => {
+    latestFilters.current = {
+      searchQuery,
+      selectedProjectsFilter,
+      photoDateFrom,
+      photoDateTo,
+      uploadDateFrom,
+      uploadDateTo,
+      showOnlyUnassigned,
+      showAllImages,
+      showOnlyWithProjects,
+      selectedSubfolders
+    };
+  });
+
   // Initial load (only once)
   useEffect(() => {
     loadProjects();
@@ -82,7 +101,7 @@ function DriveImages() {
     }, 10000); // 10 Sekunden
 
     return () => clearInterval(interval);
-  }, [autoRefresh, searchQuery]);
+  }, [autoRefresh]); // No searchQuery dependency - loadImages uses latestFilters ref
 
   // Auto-sync mit Google Drive alle 5 Minuten
   useEffect(() => {
@@ -107,38 +126,41 @@ function DriveImages() {
     }
 
     try {
+      // Use latest filter values from ref (important for auto-refresh)
+      const filters = latestFilters.current;
+
       const params = new URLSearchParams({
         limit: pagination.limit,
         offset: pagination.offset,
-        search: searchQuery
+        search: filters.searchQuery
       });
 
       // Add filters
-      if (selectedProjectsFilter.length > 0) {
-        params.append('projectIds', selectedProjectsFilter.join(','));
+      if (filters.selectedProjectsFilter.length > 0) {
+        params.append('projectIds', filters.selectedProjectsFilter.join(','));
       }
-      if (photoDateFrom) {
-        params.append('photoDateFrom', photoDateFrom);
+      if (filters.photoDateFrom) {
+        params.append('photoDateFrom', filters.photoDateFrom);
       }
-      if (photoDateTo) {
-        params.append('photoDateTo', photoDateTo);
+      if (filters.photoDateTo) {
+        params.append('photoDateTo', filters.photoDateTo);
       }
-      if (uploadDateFrom) {
-        params.append('uploadDateFrom', uploadDateFrom);
+      if (filters.uploadDateFrom) {
+        params.append('uploadDateFrom', filters.uploadDateFrom);
       }
-      if (uploadDateTo) {
-        params.append('uploadDateTo', uploadDateTo);
+      if (filters.uploadDateTo) {
+        params.append('uploadDateTo', filters.uploadDateTo);
       }
-      if (selectedSubfolders.length > 0) {
-        params.append('subfolders', selectedSubfolders.join(','));
+      if (filters.selectedSubfolders.length > 0) {
+        params.append('subfolders', filters.selectedSubfolders.join(','));
       }
 
       // Image project filter (mutually exclusive)
-      if (showAllImages) {
+      if (filters.showAllImages) {
         params.append('showAllImages', 'true');
-      } else if (showOnlyWithProjects) {
+      } else if (filters.showOnlyWithProjects) {
         params.append('onlyWithProjects', 'true');
-      } else if (showOnlyUnassigned) {
+      } else if (filters.showOnlyUnassigned) {
         params.append('onlyUnassigned', 'true');
       }
 
