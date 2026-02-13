@@ -61,6 +61,10 @@ const startServer = async () => {
   try {
     await initDirectories();
 
+    // Run database migrations
+    const { runMigrations } = require('./config/migrations');
+    runMigrations();
+
     // Initialize auto-sync for Google Drive
     const { initializeAutoSync } = require('./services/driveSyncService');
     initializeAutoSync();

@@ -76,15 +76,19 @@ const listFilesInFolder = async (folderId) => {
 
 // Fallback method without API key (public folder scraping)
 const listFilesInFolderFallback = async (folderId) => {
-  try {
-    console.log('Using fallback method to list files (less reliable)');
+  throw new Error(`
+Google Drive API Key benötigt!
 
-    // This is a simplified fallback - in production, you should use the API
-    // For now, return empty array and guide user to set up API key
-    throw new Error('Google Drive API key required. Please add GOOGLE_DRIVE_API_KEY to .env file');
-  } catch (error) {
-    throw error;
-  }
+So bekommst du einen API Key:
+1. Gehe zu: https://console.cloud.google.com/apis/credentials
+2. Erstelle ein neues Projekt (falls noch keins existiert)
+3. Aktiviere die "Google Drive API"
+4. Erstelle einen API-Schlüssel (API Key)
+5. Füge ihn zur .env Datei hinzu:
+   GOOGLE_DRIVE_API_KEY=dein_api_key_hier
+
+Danach Server neu starten mit start.bat
+  `.trim());
 };
 
 // Download a file from Google Drive
