@@ -494,7 +494,7 @@ function DriveImages() {
         </div>
       )}
 
-      {selectedImage && (
+      {selectedImage && !showDeleteDialog && (
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close" onClick={closeModal}>
