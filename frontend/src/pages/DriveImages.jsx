@@ -43,9 +43,15 @@ function DriveImages() {
 
   // Filter states
   const [selectedProjectsFilter, setSelectedProjectsFilter] = useState([]); // Projekte für Filter
-  const [dateFrom, setDateFrom] = useState(''); // Start-Datum
-  const [dateTo, setDateTo] = useState(''); // End-Datum
+  const [photoDateFrom, setPhotoDateFrom] = useState(''); // Fotoaufnahme Start-Datum
+  const [photoDateTo, setPhotoDateTo] = useState(''); // Fotoaufnahme End-Datum
+  const [uploadDateFrom, setUploadDateFrom] = useState(''); // Hochlade Start-Datum
+  const [uploadDateTo, setUploadDateTo] = useState(''); // Hochlade End-Datum
   const [showOnlyUnassigned, setShowOnlyUnassigned] = useState(true); // Nur Bilder ohne Projekt
+  const [showAllImages, setShowAllImages] = useState(false); // Alle Bilder (mit und ohne Projekte)
+  const [showOnlyWithProjects, setShowOnlyWithProjects] = useState(false); // Nur Bilder mit Projekten
+  const [selectedSubfolders, setSelectedSubfolders] = useState([]); // Ausgewählte Ordner-Badges
+  const [showProjectModal, setShowProjectModal] = useState(false); // Projekt-Auswahl Modal
 
   // Initial load
   useEffect(() => {
@@ -60,7 +66,7 @@ function DriveImages() {
         console.error('Error loading selected projects:', e);
       }
     }
-  }, [searchQuery, selectedProjectsFilter, dateFrom, dateTo, showOnlyUnassigned]);
+  }, [searchQuery, selectedProjectsFilter, photoDateFrom, photoDateTo, uploadDateFrom, uploadDateTo, showOnlyUnassigned, showAllImages, showOnlyWithProjects, selectedSubfolders]);
 
   // Auto-refresh Bilder-Liste alle 10 Sekunden
   useEffect(() => {
@@ -106,13 +112,28 @@ function DriveImages() {
       if (selectedProjectsFilter.length > 0) {
         params.append('projectIds', selectedProjectsFilter.join(','));
       }
-      if (dateFrom) {
-        params.append('dateFrom', dateFrom);
+      if (photoDateFrom) {
+        params.append('photoDateFrom', photoDateFrom);
       }
-      if (dateTo) {
-        params.append('dateTo', dateTo);
+      if (photoDateTo) {
+        params.append('photoDateTo', photoDateTo);
       }
-      if (showOnlyUnassigned) {
+      if (uploadDateFrom) {
+        params.append('uploadDateFrom', uploadDateFrom);
+      }
+      if (uploadDateTo) {
+        params.append('uploadDateTo', uploadDateTo);
+      }
+      if (selectedSubfolders.length > 0) {
+        params.append('subfolders', selectedSubfolders.join(','));
+      }
+
+      // Image project filter (mutually exclusive)
+      if (showAllImages) {
+        params.append('showAllImages', 'true');
+      } else if (showOnlyWithProjects) {
+        params.append('onlyWithProjects', 'true');
+      } else if (showOnlyUnassigned) {
         params.append('onlyUnassigned', 'true');
       }
 
@@ -474,57 +495,142 @@ function DriveImages() {
             {/* Projekt-Filter */}
             <div className="filter-group">
               <Filter size={16} />
-              <select
-                multiple
-                value={selectedProjectsFilter}
-                onChange={(e) => {
-                  const selected = Array.from(e.target.selectedOptions, option => parseInt(option.value));
-                  setSelectedProjectsFilter(selected);
-                }}
-                className="filter-select"
+              <button
+                className="filter-button"
+                onClick={() => setShowProjectModal(true)}
               >
-                <option value="" disabled>Projekte auswählen...</option>
-                {projects.map(project => (
-                  <option key={project.id} value={project.id}>
-                    {project.folder_name}
-                  </option>
-                ))}
-              </select>
+                {selectedProjectsFilter.length === 0
+                  ? 'Projekte auswählen'
+                  : `${selectedProjectsFilter.length} Projekt(e)`}
+              </button>
             </div>
 
-            {/* Datums-Filter */}
+            {/* Bild-Typ Filter */}
+            <div className="filter-group">
+              <label className="filter-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={showAllImages}
+                  onChange={(e) => {
+                    setShowAllImages(e.target.checked);
+                    if (e.target.checked) {
+                      setShowOnlyUnassigned(false);
+                      setShowOnlyWithProjects(false);
+                    }
+                  }}
+                  className="filter-checkbox"
+                />
+                Alle Bilder
+              </label>
+            </div>
+
+            <div className="filter-group">
+              <label className="filter-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={showOnlyWithProjects}
+                  onChange={(e) => {
+                    setShowOnlyWithProjects(e.target.checked);
+                    if (e.target.checked) {
+                      setShowAllImages(false);
+                      setShowOnlyUnassigned(false);
+                    }
+                  }}
+                  className="filter-checkbox"
+                />
+                Nur mit Projekten
+              </label>
+            </div>
+
+            <div className="filter-group">
+              <label className="filter-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={showOnlyUnassigned}
+                  onChange={(e) => {
+                    setShowOnlyUnassigned(e.target.checked);
+                    if (e.target.checked) {
+                      setShowAllImages(false);
+                      setShowOnlyWithProjects(false);
+                    }
+                  }}
+                  className="filter-checkbox"
+                />
+                Nur ohne Projekt
+              </label>
+            </div>
+
+            {/* Fotoaufnahme-Datums-Filter */}
             <div className="filter-group">
               <Calendar size={16} />
+              <span className="filter-label">Fotoaufnahme:</span>
               <input
                 type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
+                value={photoDateFrom}
+                onChange={(e) => setPhotoDateFrom(e.target.value)}
                 className="filter-date"
                 placeholder="Von"
               />
               <span className="date-separator">bis</span>
               <input
                 type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
+                value={photoDateTo}
+                onChange={(e) => setPhotoDateTo(e.target.value)}
                 className="filter-date"
                 placeholder="Bis"
               />
             </div>
 
-            {/* Nur unzugeordnete Bilder */}
-            <div className="filter-checkbox-group">
-              <label className="filter-checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={showOnlyUnassigned}
-                  onChange={(e) => setShowOnlyUnassigned(e.target.checked)}
-                  className="filter-checkbox"
-                />
-                Nur Bilder ohne Projekt
-              </label>
+            {/* Hochlade-Datums-Filter */}
+            <div className="filter-group">
+              <Calendar size={16} />
+              <span className="filter-label">Hochgeladen:</span>
+              <input
+                type="date"
+                value={uploadDateFrom}
+                onChange={(e) => setUploadDateFrom(e.target.value)}
+                className="filter-date"
+                placeholder="Von"
+              />
+              <span className="date-separator">bis</span>
+              <input
+                type="date"
+                value={uploadDateTo}
+                onChange={(e) => setUploadDateTo(e.target.value)}
+                className="filter-date"
+                placeholder="Bis"
+              />
             </div>
           </div>
+
+          {/* Ordner-Badge Filter */}
+          {(() => {
+            // Get unique subfolders from images
+            const uniqueSubfolders = [...new Set(images.map(img => img.subfolder).filter(Boolean))];
+            if (uniqueSubfolders.length > 0) {
+              return (
+                <div className="subfolder-filter-row">
+                  <span className="filter-label">Ordner:</span>
+                  {uniqueSubfolders.map(subfolder => (
+                    <button
+                      key={subfolder}
+                      className={`subfolder-badge-filter ${selectedSubfolders.includes(subfolder) ? 'active' : ''}`}
+                      onClick={() => {
+                        setSelectedSubfolders(prev =>
+                          prev.includes(subfolder)
+                            ? prev.filter(s => s !== subfolder)
+                            : [...prev, subfolder]
+                        );
+                      }}
+                    >
+                      {subfolder}
+                    </button>
+                  ))}
+                </div>
+              );
+            }
+            return null;
+          })()}
         </div>
 
         <div className="view-toggle">
@@ -896,6 +1002,66 @@ function DriveImages() {
                     </div>
                   )}
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Projekt-Auswahl Modal */}
+      {showProjectModal && (
+        <div className="modal-overlay" onClick={() => setShowProjectModal(false)}>
+          <div className="project-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="project-modal-header">
+              <h3>Projekte auswählen</h3>
+              <button className="modal-close" onClick={() => setShowProjectModal(false)}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="project-modal-content">
+              <div className="project-modal-hint">
+                Halte <kbd>Strg</kbd> gedrückt, um mehrere Projekte auszuwählen
+              </div>
+              <div className="project-modal-list">
+                {projects.map(project => (
+                  <div
+                    key={project.id}
+                    className={`project-modal-item ${selectedProjectsFilter.includes(project.id) ? 'selected' : ''}`}
+                    onClick={(e) => {
+                      if (e.ctrlKey || e.metaKey) {
+                        // Multiselect with Ctrl
+                        setSelectedProjectsFilter(prev =>
+                          prev.includes(project.id)
+                            ? prev.filter(id => id !== project.id)
+                            : [...prev, project.id]
+                        );
+                      } else {
+                        // Single select
+                        setSelectedProjectsFilter([project.id]);
+                      }
+                    }}
+                    style={{ borderLeftColor: project.color }}
+                  >
+                    <span>{project.folder_name}</span>
+                    {selectedProjectsFilter.includes(project.id) && (
+                      <span className="project-modal-checkmark">✓</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="project-modal-actions">
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setSelectedProjectsFilter([])}
+                >
+                  Alle abwählen
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => setShowProjectModal(false)}
+                >
+                  Fertig
+                </button>
               </div>
             </div>
           </div>

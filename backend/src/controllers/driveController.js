@@ -233,7 +233,20 @@ const updateDrivePath = (req, res) => {
 // Get all images from configured drive paths
 const getImages = (req, res) => {
   try {
-    const { limit = 100, offset = 0, search = '', projectIds = '', dateFrom = '', dateTo = '', onlyUnassigned = '' } = req.query;
+    const {
+      limit = 100,
+      offset = 0,
+      search = '',
+      projectIds = '',
+      photoDateFrom = '',
+      photoDateTo = '',
+      uploadDateFrom = '',
+      uploadDateTo = '',
+      subfolders = '',
+      onlyUnassigned = '',
+      showAllImages = '',
+      onlyWithProjects = ''
+    } = req.query;
 
     let query = 'SELECT DISTINCT di.* FROM drive_images di';
     const params = [];
@@ -247,8 +260,14 @@ const getImages = (req, res) => {
       params.push(...projectIdArray);
     }
 
-    // Filter by "only unassigned"
-    if (onlyUnassigned === 'true') {
+    // Filter by project assignment status (mutually exclusive)
+    if (showAllImages === 'true') {
+      // Show all images (no filter)
+    } else if (onlyWithProjects === 'true') {
+      // Only show images with at least one project assignment
+      query += ' JOIN image_project_assignments ipa3 ON di.id = ipa3.image_id';
+    } else if (onlyUnassigned === 'true') {
+      // Only show images without any project assignment
       query += ' LEFT JOIN image_project_assignments ipa2 ON di.id = ipa2.image_id';
       whereClauses.push('ipa2.id IS NULL');
     }
@@ -259,17 +278,36 @@ const getImages = (req, res) => {
       params.push(`%${search}%`, `%${search}%`);
     }
 
-    // Date filters
-    if (dateFrom) {
+    // Photo date filters
+    if (photoDateFrom) {
       whereClauses.push('di.photo_taken_at >= ?');
-      params.push(dateFrom);
+      params.push(photoDateFrom);
     }
-    if (dateTo) {
+    if (photoDateTo) {
       // Add 1 day to include the entire end date
-      const endDate = new Date(dateTo);
+      const endDate = new Date(photoDateTo);
       endDate.setDate(endDate.getDate() + 1);
       whereClauses.push('di.photo_taken_at < ?');
       params.push(endDate.toISOString().split('T')[0]);
+    }
+
+    // Upload date filters (created_at)
+    if (uploadDateFrom) {
+      whereClauses.push('di.created_at >= ?');
+      params.push(uploadDateFrom);
+    }
+    if (uploadDateTo) {
+      const endDate = new Date(uploadDateTo);
+      endDate.setDate(endDate.getDate() + 1);
+      whereClauses.push('di.created_at < ?');
+      params.push(endDate.toISOString().split('T')[0]);
+    }
+
+    // Subfolder filter
+    if (subfolders) {
+      const subfolderArray = subfolders.split(',').map(s => s.trim());
+      whereClauses.push(`di.subfolder IN (${subfolderArray.map(() => '?').join(', ')})`);
+      params.push(...subfolderArray);
     }
 
     // Add WHERE clauses
@@ -311,7 +349,11 @@ const getImages = (req, res) => {
       countParams.push(...projectIdArray);
     }
 
-    if (onlyUnassigned === 'true') {
+    if (showAllImages === 'true') {
+      // Show all images
+    } else if (onlyWithProjects === 'true') {
+      countQuery += ' JOIN image_project_assignments ipa3 ON di.id = ipa3.image_id';
+    } else if (onlyUnassigned === 'true') {
       countQuery += ' LEFT JOIN image_project_assignments ipa2 ON di.id = ipa2.image_id';
       countWhereClauses.push('ipa2.id IS NULL');
     }
@@ -321,15 +363,32 @@ const getImages = (req, res) => {
       countParams.push(`%${search}%`, `%${search}%`);
     }
 
-    if (dateFrom) {
+    if (photoDateFrom) {
       countWhereClauses.push('di.photo_taken_at >= ?');
-      countParams.push(dateFrom);
+      countParams.push(photoDateFrom);
     }
-    if (dateTo) {
-      const endDate = new Date(dateTo);
+    if (photoDateTo) {
+      const endDate = new Date(photoDateTo);
       endDate.setDate(endDate.getDate() + 1);
       countWhereClauses.push('di.photo_taken_at < ?');
       countParams.push(endDate.toISOString().split('T')[0]);
+    }
+
+    if (uploadDateFrom) {
+      countWhereClauses.push('di.created_at >= ?');
+      countParams.push(uploadDateFrom);
+    }
+    if (uploadDateTo) {
+      const endDate = new Date(uploadDateTo);
+      endDate.setDate(endDate.getDate() + 1);
+      countWhereClauses.push('di.created_at < ?');
+      countParams.push(endDate.toISOString().split('T')[0]);
+    }
+
+    if (subfolders) {
+      const subfolderArray = subfolders.split(',').map(s => s.trim());
+      countWhereClauses.push(`di.subfolder IN (${subfolderArray.map(() => '?').join(', ')})`);
+      countParams.push(...subfolderArray);
     }
 
     if (countWhereClauses.length > 0) {
@@ -691,14 +750,14 @@ const unassignImageFromProject = async (req, res) => {
       return res.status(404).json({ error: 'Image is not assigned to this project' });
     }
 
-    // Get projects_settings to find base path
-    const projectsSettings = db.prepare('SELECT * FROM projects_settings LIMIT 1').get();
-    if (!projectsSettings?.base_path) {
+    // Get project_settings to find base path
+    const projectSettings = db.prepare('SELECT * FROM project_settings LIMIT 1').get();
+    if (!projectSettings?.project_path) {
       return res.status(500).json({ error: 'Projects base path not configured' });
     }
 
     // Build project folder path
-    const projectFolderPath = path.join(projectsSettings.base_path, project.folder_name, 'Bilder');
+    const projectFolderPath = path.join(projectSettings.project_path, project.folder_name, 'Bilder');
 
     // Delete image from project folder
     const fileName = path.basename(image.local_path);
