@@ -167,7 +167,7 @@ function DriveImages() {
 
   const loadDrivePaths = async () => {
     try {
-      const response = await fetch('/api/drive/paths');
+      const response = await fetch('/api/drive/settings');
       if (response.ok) {
         const data = await response.json();
         setDrivePaths(data);
