@@ -3,36 +3,6 @@ import { Plus, Trash2, Save, Edit2, RefreshCw, ChevronDown, ChevronUp, Image, Al
 import AuthStatus from '../components/AuthStatus';
 import './DriveSettings.css';
 
-// PathForm component - defined outside to prevent re-creation on each render
-const PathForm = ({ formData, setFormData, showAdv, setShowAdv, onSubmit, onCancel, isEdit = false }) => (
-  <div className="path-form">
-    <div className="form-row">
-      <div className="form-group">
-        <label className="form-label">Name</label>
-        <input
-          type="text"
-          placeholder="z.B. Projekt Bilder"
-          value={formData.name}
-          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-          className="input"
-        />
-      </div>
-      <div className="form-group">
-        <label className="form-label">Google Drive Link</label>
-        <input
-          type="text"
-          placeholder="https://drive.google.com/drive/folders/..."
-          value={formData.path}
-          onChange={(e) => setFormData({ ...formData, path: e.target.value })}
-          className="input"
-        />
-      </div>
-    </div>
-
-    {/* Rest of the form will be copied below */}
-  </div>
-);
-
 function DriveSettings() {
   const [paths, setPaths] = useState([]);
   const [newPath, setNewPath] = useState({
