@@ -194,7 +194,7 @@ const updateDrivePath = (req, res) => {
     }
 
     if (updates.length > 0) {
-      updates.push('updated_at = datetime("now")');
+      updates.push('updated_at = datetime('now')');
       values.push(id);
 
       const sql = `UPDATE drive_paths SET ${updates.join(', ')} WHERE id = ?`;
@@ -334,23 +334,23 @@ const renameImage = async (req, res) => {
 
           db.prepare(`
             UPDATE drive_images
-            SET name = ?, local_path = ?, updated_at = datetime("now")
+            SET name = ?, local_path = ?, updated_at = datetime('now')
             WHERE id = ?
           `).run(name, newLocalPath, id);
         } else {
           // File doesn't exist, just update name
-          db.prepare('UPDATE drive_images SET name = ?, updated_at = datetime("now") WHERE id = ?')
+          db.prepare('UPDATE drive_images SET name = ?, updated_at = datetime('now') WHERE id = ?')
             .run(name, id);
         }
       } catch (err) {
         console.error('Error renaming file:', err);
         // If file rename fails, still update database name
-        db.prepare('UPDATE drive_images SET name = ?, updated_at = datetime("now") WHERE id = ?')
+        db.prepare('UPDATE drive_images SET name = ?, updated_at = datetime('now') WHERE id = ?')
           .run(name, id);
       }
     } else {
       // No local file, just update name
-      db.prepare('UPDATE drive_images SET name = ?, updated_at = datetime("now") WHERE id = ?')
+      db.prepare('UPDATE drive_images SET name = ?, updated_at = datetime('now') WHERE id = ?')
         .run(name, id);
     }
 

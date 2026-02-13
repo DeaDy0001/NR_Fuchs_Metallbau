@@ -37,7 +37,7 @@ const setProjectPath = async (req, res) => {
       return res.status(400).json({ error: 'Path does not exist' });
     }
 
-    const updateStmt = db.prepare('UPDATE project_settings SET project_path = ?, updated_at = datetime("now") WHERE id = 1');
+    const updateStmt = db.prepare('UPDATE project_settings SET project_path = ?, updated_at = datetime('now') WHERE id = 1');
     const updateResult = updateStmt.run(projectPath);
 
     if (updateResult.changes === 0) {
@@ -161,7 +161,7 @@ const updateProject = (req, res) => {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
-    updates.push('updated_at = datetime("now")');
+    updates.push('updated_at = datetime('now')');
     params.push(id);
 
     const query = `UPDATE projects SET ${updates.join(', ')} WHERE id = ?`;
