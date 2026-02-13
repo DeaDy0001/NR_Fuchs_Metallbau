@@ -157,6 +157,23 @@ const migrations = [
 
       console.log('✓ Migration create_image_project_assignments_table completed');
     }
+  },
+  {
+    id: 7,
+    name: 'add_favicon_path_column',
+    up: () => {
+      console.log('Running migration: add_favicon_path_column');
+
+      const tableInfo = db.pragma('table_info(settings)');
+      const existingColumns = tableInfo.map(col => col.name);
+
+      // Add favicon_path column to settings table
+      if (!existingColumns.includes('favicon_path')) {
+        db.exec('ALTER TABLE settings ADD COLUMN favicon_path TEXT');
+      }
+
+      console.log('✓ Migration add_favicon_path_column completed');
+    }
   }
 ];
 

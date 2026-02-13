@@ -1,0 +1,57 @@
+.settings-tabs-page {
+  max-width: 100%;
+}
+
+.settings-tabs-container {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.tabs-header {
+  display: flex;
+  gap: 0;
+  background-color: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 1rem 1.5rem;
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 0.9375rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.tab-btn:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+}
+
+.tab-btn.active {
+  color: var(--accent-primary);
+  border-bottom-color: var(--accent-primary);
+  background-color: var(--bg-secondary);
+}
+
+.tabs-content {
+  padding: 0;
+}
+
+/* Remove page headers from child components when in tabs */
+.tabs-content .page-header {
+  display: none;
+}
+
+.tabs-content .settings-page,
+.tabs-content .drive-settings-page,
+.tabs-content .projects-settings-page {
+  max-width: 100%;
+}

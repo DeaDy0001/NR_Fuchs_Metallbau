@@ -1,38 +1,36 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { HardDrive, FolderKanban, Settings, ChevronDown, ChevronRight } from 'lucide-react';
+import { Image, FolderKanban, Settings, ChevronDown, ChevronRight } from 'lucide-react';
 import './Sidebar.css';
 
 const menuItems = [
   {
-    id: 'drive',
-    label: 'Drive',
-    icon: HardDrive,
-    subItems: [
-      { id: 'drive-images', label: 'Bilder', path: '/drive/images' },
-      { id: 'drive-settings', label: 'Einstellungen', path: '/drive/settings' }
-    ]
+    id: 'images',
+    label: 'Bilder',
+    icon: Image,
+    path: '/images'
   },
   {
     id: 'projects',
     label: 'Projekte',
     icon: FolderKanban,
-    subItems: [
-      { id: 'projects-list', label: 'Projekte', path: '/projects/list' },
-      { id: 'projects-settings', label: 'Einstellungen', path: '/projects/settings' }
-    ]
+    path: '/projects'
   },
   {
     id: 'settings',
     label: 'Einstellungen',
     icon: Settings,
-    path: '/settings'
+    subItems: [
+      { id: 'settings-general', label: 'Allgemein', path: '/settings/general' },
+      { id: 'settings-images', label: 'Bilder', path: '/settings/images' },
+      { id: 'settings-projects', label: 'Projekte', path: '/settings/projects' }
+    ]
   }
 ];
 
 function Sidebar({ collapsed }) {
   const location = useLocation();
-  const [expandedItems, setExpandedItems] = useState(['drive', 'projects']);
+  const [expandedItems, setExpandedItems] = useState(['settings']);
 
   const toggleExpand = (itemId) => {
     setExpandedItems(prev =>

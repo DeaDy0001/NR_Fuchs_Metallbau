@@ -2,10 +2,8 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { useState, useEffect } from 'react';
 import Layout from './components/Layout';
 import DriveImages from './pages/DriveImages';
-import DriveSettings from './pages/DriveSettings';
 import ProjectsList from './pages/ProjectsList';
-import ProjectsSettings from './pages/ProjectsSettings';
-import Settings from './pages/Settings';
+import SettingsTabs from './pages/SettingsTabs';
 
 function App() {
   const [settings, setSettings] = useState({
@@ -39,18 +37,23 @@ function App() {
     <Router>
       <Layout settings={settings} updateSettings={updateSettings}>
         <Routes>
-          <Route path="/" element={<Navigate to="/drive/images" replace />} />
+          <Route path="/" element={<Navigate to="/images" replace />} />
 
-          {/* Drive routes */}
-          <Route path="/drive/images" element={<DriveImages />} />
-          <Route path="/drive/settings" element={<DriveSettings />} />
+          {/* Bilder (früher Drive) */}
+          <Route path="/images" element={<DriveImages />} />
 
-          {/* Projects routes */}
-          <Route path="/projects/list" element={<ProjectsList />} />
-          <Route path="/projects/settings" element={<ProjectsSettings />} />
+          {/* Projekte */}
+          <Route path="/projects" element={<ProjectsList />} />
 
-          {/* Settings route */}
-          <Route path="/settings" element={<Settings settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} />} />
+          {/* Einstellungen mit Tabs */}
+          <Route path="/settings/general" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} />} />
+          <Route path="/settings/images" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} />} />
+          <Route path="/settings/projects" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} />} />
+
+          {/* Redirect old routes */}
+          <Route path="/drive/images" element={<Navigate to="/images" replace />} />
+          <Route path="/projects/list" element={<Navigate to="/projects" replace />} />
+          <Route path="/settings" element={<Navigate to="/settings/general" replace />} />
         </Routes>
       </Layout>
     </Router>

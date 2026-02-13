@@ -120,9 +120,64 @@ const deleteLogo = async (req, res) => {
   }
 };
 
+// Upload favicon
+const uploadFavicon = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const faviconPath = `/uploads/logos/${req.file.filename}`;
+
+    // Delete old favicon if exists
+    const oldSettings = db.prepare('SELECT favicon_path FROM settings WHERE id = 1').get();
+    if (oldSettings && oldSettings.favicon_path) {
+      const oldFaviconPath = path.join(__dirname, '../../../', oldSettings.favicon_path);
+      await fs.remove(oldFaviconPath).catch(err => console.error('Error deleting old favicon:', err));
+    }
+
+    // Update database with new favicon
+    const stmt = db.prepare("UPDATE settings SET favicon_path = ?, updated_at = datetime('now') WHERE id = 1");
+    stmt.run(faviconPath);
+
+    const result = db.prepare('SELECT * FROM settings WHERE id = 1').get();
+    result.sidebar_collapsed = !!result.sidebar_collapsed;
+
+    res.json(result);
+  } catch (error) {
+    console.error('Error uploading favicon:', error);
+    res.status(500).json({ error: 'Failed to upload favicon' });
+  }
+};
+
+// Delete favicon
+const deleteFavicon = async (req, res) => {
+  try {
+    const settings = db.prepare('SELECT favicon_path FROM settings WHERE id = 1').get();
+
+    if (settings && settings.favicon_path) {
+      const faviconPath = path.join(__dirname, '../../../', settings.favicon_path);
+      await fs.remove(faviconPath).catch(err => console.error('Error deleting favicon:', err));
+    }
+
+    const stmt = db.prepare("UPDATE settings SET favicon_path = NULL, updated_at = datetime('now') WHERE id = 1");
+    stmt.run();
+
+    const result = db.prepare('SELECT * FROM settings WHERE id = 1').get();
+    result.sidebar_collapsed = !!result.sidebar_collapsed;
+
+    res.json(result);
+  } catch (error) {
+    console.error('Error deleting favicon:', error);
+    res.status(500).json({ error: 'Failed to delete favicon' });
+  }
+};
+
 module.exports = {
   getSettings,
   updateSettings,
   uploadLogo,
-  deleteLogo
+  deleteLogo,
+  uploadFavicon,
+  deleteFavicon
 };
