@@ -1084,11 +1084,6 @@ function ImageEditor({ image, onClose }) {
           {/* Canvas */}
           <div className="editor-canvas-container" ref={containerRef}>
             <canvas ref={canvasRef} />
-            {isDrawing && (
-              <div className="measurement-hint">
-                Ziehen Sie, um das Objekt zu erstellen
-              </div>
-            )}
           </div>
 
           {/* Layers panel */}
