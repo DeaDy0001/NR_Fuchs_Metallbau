@@ -4,13 +4,51 @@ const { createOAuth2Client, getAuthUrl } = require('../config/oauth');
 const {
   exchangeCodeForTokens,
   getAuthStatus,
-  deleteTokens
+  deleteTokens,
+  checkCredentials,
+  saveCredentials
 } = require('../services/authService');
 
 /**
  * Auth Routes
  * Handles Google OAuth 2.0 authentication flow
  */
+
+// Check if OAuth credentials are configured
+router.get('/credentials/status', (req, res) => {
+  try {
+    const status = checkCredentials();
+    res.json(status);
+  } catch (error) {
+    res.status(500).json({
+      error: error.message
+    });
+  }
+});
+
+// Save OAuth credentials
+router.post('/credentials', async (req, res) => {
+  try {
+    const { clientId, clientSecret } = req.body;
+
+    if (!clientId || !clientSecret) {
+      return res.status(400).json({
+        error: 'Client ID and Client Secret are required'
+      });
+    }
+
+    await saveCredentials(clientId, clientSecret);
+
+    res.json({
+      success: true,
+      message: 'Credentials saved successfully'
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error.message
+    });
+  }
+});
 
 // Get auth status
 router.get('/status', async (req, res) => {

@@ -2,6 +2,7 @@ const fs = require('fs-extra');
 const path = require('path');
 const { google } = require('googleapis');
 const { createOAuth2Client } = require('../config/oauth');
+const dotenv = require('dotenv');
 
 /**
  * Authentication Service
@@ -226,6 +227,89 @@ const initializeAuth = async () => {
   }
 };
 
+/**
+ * Check if OAuth credentials are configured
+ * @returns {Object} Status object
+ */
+const checkCredentials = () => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+  const isConfigured =
+    clientId &&
+    clientSecret &&
+    clientId !== 'your_client_id_here.apps.googleusercontent.com' &&
+    clientSecret !== 'your_client_secret_here';
+
+  return {
+    configured: isConfigured,
+    clientId: isConfigured ? clientId : null,
+    message: isConfigured
+      ? 'OAuth credentials are configured'
+      : 'OAuth credentials are missing or not configured'
+  };
+};
+
+/**
+ * Save OAuth credentials to .env file
+ * @param {string} clientId - Google Client ID
+ * @param {string} clientSecret - Google Client Secret
+ */
+const saveCredentials = async (clientId, clientSecret) => {
+  try {
+    const envPath = path.join(__dirname, '../../.env');
+
+    // Read existing .env file
+    let envContent = '';
+    if (await fs.pathExists(envPath)) {
+      envContent = await fs.readFile(envPath, 'utf8');
+    }
+
+    // Update or add credentials
+    const lines = envContent.split('\n');
+    let clientIdUpdated = false;
+    let clientSecretUpdated = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('GOOGLE_CLIENT_ID=')) {
+        lines[i] = `GOOGLE_CLIENT_ID=${clientId}`;
+        clientIdUpdated = true;
+      } else if (lines[i].startsWith('GOOGLE_CLIENT_SECRET=')) {
+        lines[i] = `GOOGLE_CLIENT_SECRET=${clientSecret}`;
+        clientSecretUpdated = true;
+      }
+    }
+
+    // Add if not found
+    if (!clientIdUpdated) {
+      lines.push(`GOOGLE_CLIENT_ID=${clientId}`);
+    }
+    if (!clientSecretUpdated) {
+      lines.push(`GOOGLE_CLIENT_SECRET=${clientSecret}`);
+    }
+
+    // Ensure GOOGLE_REDIRECT_URI exists
+    const hasRedirectUri = lines.some(line => line.startsWith('GOOGLE_REDIRECT_URI='));
+    if (!hasRedirectUri) {
+      lines.push('GOOGLE_REDIRECT_URI=http://localhost:3001/api/auth/google/callback');
+    }
+
+    // Write back to .env
+    await fs.writeFile(envPath, lines.join('\n'));
+
+    // Reload environment variables
+    dotenv.config({ path: envPath });
+
+    // Reset OAuth client to pick up new credentials
+    oauth2Client = null;
+
+    console.log('✅ OAuth credentials saved successfully');
+  } catch (error) {
+    console.error('❌ Error saving credentials:', error.message);
+    throw new Error('Failed to save credentials to .env file');
+  }
+};
+
 module.exports = {
   getOAuth2Client,
   saveTokens,
@@ -236,5 +320,7 @@ module.exports = {
   exchangeCodeForTokens,
   getDriveClient,
   getAuthStatus,
-  initializeAuth
+  initializeAuth,
+  checkCredentials,
+  saveCredentials
 };
