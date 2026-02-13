@@ -1,22 +1,21 @@
-const pool = require('../config/database');
+const db = require('../config/database');
 const fs = require('fs-extra');
 const path = require('path');
 
 // Get project settings (configured path)
-const getProjectSettings = async (req, res) => {
+const getProjectSettings = (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM project_settings WHERE id = 1');
+    const result = db.prepare('SELECT * FROM project_settings WHERE id = 1').get();
 
-    if (result.rows.length === 0) {
+    if (!result) {
       // Create default settings
-      const defaultSettings = await pool.query(
-        'INSERT INTO project_settings (project_path) VALUES ($1) RETURNING *',
-        [null]
-      );
-      return res.json(defaultSettings.rows[0]);
+      const stmt = db.prepare('INSERT INTO project_settings (project_path) VALUES (?)');
+      const insertResult = stmt.run(null);
+      const defaultSettings = db.prepare('SELECT * FROM project_settings WHERE id = ?').get(insertResult.lastInsertRowid);
+      return res.json(defaultSettings);
     }
 
-    res.json(result.rows[0]);
+    res.json(result);
   } catch (error) {
     console.error('Error getting project settings:', error);
     res.status(500).json({ error: 'Failed to get project settings' });
@@ -32,27 +31,25 @@ const setProjectPath = async (req, res) => {
       return res.status(400).json({ error: 'Path is required' });
     }
 
-    // Check if path exists
+    // Check if path exists (keep async for fs operations)
     const pathExists = await fs.pathExists(projectPath);
     if (!pathExists) {
       return res.status(400).json({ error: 'Path does not exist' });
     }
 
-    const result = await pool.query(
-      'UPDATE project_settings SET project_path = $1, updated_at = NOW() WHERE id = 1 RETURNING *',
-      [projectPath]
-    );
+    const updateStmt = db.prepare('UPDATE project_settings SET project_path = ?, updated_at = datetime("now") WHERE id = 1');
+    const updateResult = updateStmt.run(projectPath);
 
-    if (result.rows.length === 0) {
+    if (updateResult.changes === 0) {
       // Insert if doesn't exist
-      const insertResult = await pool.query(
-        'INSERT INTO project_settings (project_path) VALUES ($1) RETURNING *',
-        [projectPath]
-      );
-      return res.json(insertResult.rows[0]);
+      const insertStmt = db.prepare('INSERT INTO project_settings (project_path) VALUES (?)');
+      const insertResult = insertStmt.run(projectPath);
+      const newSettings = db.prepare('SELECT * FROM project_settings WHERE id = ?').get(insertResult.lastInsertRowid);
+      return res.json(newSettings);
     }
 
-    res.json(result.rows[0]);
+    const updatedSettings = db.prepare('SELECT * FROM project_settings WHERE id = 1').get();
+    res.json(updatedSettings);
   } catch (error) {
     console.error('Error setting project path:', error);
     res.status(500).json({ error: 'Failed to set project path' });
@@ -60,7 +57,7 @@ const setProjectPath = async (req, res) => {
 };
 
 // Get all projects
-const getProjects = async (req, res) => {
+const getProjects = (req, res) => {
   try {
     const { limit = 100, offset = 0, search = '' } = req.query;
 
@@ -68,25 +65,31 @@ const getProjects = async (req, res) => {
     const params = [];
 
     if (search) {
-      params.push(`%${search}%`);
-      query += ` AND (folder_name ILIKE $${params.length} OR notes ILIKE $${params.length})`;
+      query += ' AND (folder_name LIKE ? OR notes LIKE ?)';
+      const searchParam = `%${search}%`;
+      params.push(searchParam, searchParam);
     }
 
-    query += ' ORDER BY created_at DESC LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
+    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
     params.push(parseInt(limit), parseInt(offset));
 
-    const result = await pool.query(query, params);
+    const result = db.prepare(query).all(...params);
 
     // Get total count
-    const countQuery = search
-      ? 'SELECT COUNT(*) FROM projects WHERE folder_name ILIKE $1 OR notes ILIKE $1'
-      : 'SELECT COUNT(*) FROM projects';
-    const countParams = search ? [`%${search}%`] : [];
-    const countResult = await pool.query(countQuery, countParams);
+    let countQuery = 'SELECT COUNT(*) as count FROM projects';
+    const countParams = [];
+    
+    if (search) {
+      countQuery += ' WHERE folder_name LIKE ? OR notes LIKE ?';
+      const searchParam = `%${search}%`;
+      countParams.push(searchParam, searchParam);
+    }
+    
+    const countResult = db.prepare(countQuery).get(...countParams);
 
     res.json({
-      projects: result.rows,
-      total: parseInt(countResult.rows[0].count),
+      projects: result,
+      total: countResult.count,
       limit: parseInt(limit),
       offset: parseInt(offset)
     });
@@ -97,17 +100,17 @@ const getProjects = async (req, res) => {
 };
 
 // Get single project by ID
-const getProjectById = async (req, res) => {
+const getProjectById = (req, res) => {
   try {
     const { id } = req.params;
 
-    const result = await pool.query('SELECT * FROM projects WHERE id = $1', [id]);
+    const result = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
 
-    if (result.rows.length === 0) {
+    if (!result) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    res.json(result.rows[0]);
+    res.json(result);
   } catch (error) {
     console.error('Error getting project:', error);
     res.status(500).json({ error: 'Failed to get project' });
@@ -115,7 +118,7 @@ const getProjectById = async (req, res) => {
 };
 
 // Create a new project
-const createProject = async (req, res) => {
+const createProject = (req, res) => {
   try {
     const { folder_name, color, notes } = req.body;
 
@@ -123,12 +126,11 @@ const createProject = async (req, res) => {
       return res.status(400).json({ error: 'Folder name is required' });
     }
 
-    const result = await pool.query(
-      'INSERT INTO projects (folder_name, color, notes) VALUES ($1, $2, $3) RETURNING *',
-      [folder_name, color || '#3b82f6', notes || '']
-    );
-
-    res.json(result.rows[0]);
+    const stmt = db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)');
+    const result = stmt.run(folder_name, color || '#3b82f6', notes || '');
+    
+    const newProject = db.prepare('SELECT * FROM projects WHERE id = ?').get(result.lastInsertRowid);
+    res.json(newProject);
   } catch (error) {
     console.error('Error creating project:', error);
     res.status(500).json({ error: 'Failed to create project' });
@@ -136,21 +138,41 @@ const createProject = async (req, res) => {
 };
 
 // Update a project
-const updateProject = async (req, res) => {
+const updateProject = (req, res) => {
   try {
     const { id } = req.params;
     const { color, notes } = req.body;
 
-    const result = await pool.query(
-      'UPDATE projects SET color = COALESCE($1, color), notes = COALESCE($2, notes), updated_at = NOW() WHERE id = $3 RETURNING *',
-      [color, notes, id]
-    );
+    // Build dynamic update query based on provided fields
+    const updates = [];
+    const params = [];
 
-    if (result.rows.length === 0) {
+    if (color !== undefined) {
+      updates.push('color = ?');
+      params.push(color);
+    }
+
+    if (notes !== undefined) {
+      updates.push('notes = ?');
+      params.push(notes);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    updates.push('updated_at = datetime("now")');
+    params.push(id);
+
+    const query = `UPDATE projects SET ${updates.join(', ')} WHERE id = ?`;
+    const result = db.prepare(query).run(...params);
+
+    if (result.changes === 0) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    res.json(result.rows[0]);
+    const updatedProject = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+    res.json(updatedProject);
   } catch (error) {
     console.error('Error updating project:', error);
     res.status(500).json({ error: 'Failed to update project' });
@@ -158,13 +180,13 @@ const updateProject = async (req, res) => {
 };
 
 // Delete a project
-const deleteProject = async (req, res) => {
+const deleteProject = (req, res) => {
   try {
     const { id } = req.params;
 
-    const result = await pool.query('DELETE FROM projects WHERE id = $1 RETURNING *', [id]);
+    const result = db.prepare('DELETE FROM projects WHERE id = ?').run(id);
 
-    if (result.rows.length === 0) {
+    if (result.changes === 0) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
@@ -179,37 +201,36 @@ const deleteProject = async (req, res) => {
 const syncProjects = async (req, res) => {
   try {
     // Get configured project path
-    const settingsResult = await pool.query('SELECT project_path FROM project_settings WHERE id = 1');
+    const settingsResult = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
 
-    if (settingsResult.rows.length === 0 || !settingsResult.rows[0].project_path) {
+    if (!settingsResult || !settingsResult.project_path) {
       return res.status(400).json({ error: 'Project path not configured' });
     }
 
-    const projectPath = settingsResult.rows[0].project_path;
+    const projectPath = settingsResult.project_path;
 
-    // Check if path exists
+    // Check if path exists (keep async for fs operations)
     const pathExists = await fs.pathExists(projectPath);
     if (!pathExists) {
       return res.status(400).json({ error: 'Configured path does not exist' });
     }
 
-    // Read directories
+    // Read directories (keep async for fs operations)
     const items = await fs.readdir(projectPath, { withFileTypes: true });
     const folders = items.filter(item => item.isDirectory()).map(item => item.name);
 
     // Get existing projects
-    const existingProjects = await pool.query('SELECT folder_name FROM projects');
-    const existingFolderNames = new Set(existingProjects.rows.map(p => p.folder_name));
+    const existingProjects = db.prepare('SELECT folder_name FROM projects').all();
+    const existingFolderNames = new Set(existingProjects.map(p => p.folder_name));
 
     let addedCount = 0;
 
     // Add new projects
+    const insertStmt = db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)');
+    
     for (const folderName of folders) {
       if (!existingFolderNames.has(folderName)) {
-        await pool.query(
-          'INSERT INTO projects (folder_name, color, notes) VALUES ($1, $2, $3)',
-          [folderName, '#3b82f6', '']
-        );
+        insertStmt.run(folderName, '#3b82f6', '');
         addedCount++;
       }
     }

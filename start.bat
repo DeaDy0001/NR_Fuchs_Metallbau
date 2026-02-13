@@ -17,18 +17,6 @@ echo [INFO] Node.js gefunden:
 node --version
 echo.
 
-REM Check if PostgreSQL is installed
-where psql >nul 2>nul
-if %ERRORLEVEL% NEQ 0 (
-    echo [WARNING] PostgreSQL CLI nicht im PATH gefunden
-    echo Stelle sicher, dass PostgreSQL installiert und gestartet ist
-    echo.
-) else (
-    echo [INFO] PostgreSQL gefunden:
-    psql --version
-    echo.
-)
-
 REM Install backend dependencies
 echo [1/5] Installiere Backend Dependencies...
 cd backend
@@ -62,13 +50,13 @@ cd ..
 echo.
 
 REM Initialize database
-echo [3/5] Initialisiere Datenbank...
+echo [3/5] Initialisiere SQLite Datenbank...
 cd backend
 call node src/utils/initDatabase.js
 if %ERRORLEVEL% NEQ 0 (
-    echo [WARNING] Datenbank-Initialisierung fehlgeschlagen
-    echo Stelle sicher, dass PostgreSQL läuft und die Credentials in .env korrekt sind
-    echo.
+    echo [ERROR] Datenbank-Initialisierung fehlgeschlagen!
+    pause
+    exit /b 1
 )
 cd ..
 echo.

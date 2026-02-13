@@ -1,19 +1,24 @@
-const { Pool } = require('pg');
+const Database = require('better-sqlite3');
+const path = require('path');
+const fs = require('fs-extra');
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME || 'fuchs_metallbau',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'postgres',
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+// Ensure database directory exists
+const dbDir = path.join(__dirname, '../../../database');
+fs.ensureDirSync(dbDir);
+
+const dbPath = path.join(dbDir, 'fuchs_metallbau.db');
+
+// Create database connection
+const db = new Database(dbPath, {
+  verbose: process.env.NODE_ENV === 'development' ? console.log : null
 });
 
-pool.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
-  process.exit(-1);
-});
+// Enable foreign keys
+db.pragma('foreign_keys = ON');
 
-module.exports = pool;
+// Enable WAL mode for better concurrent access
+db.pragma('journal_mode = WAL');
+
+console.log(`📦 SQLite database connected: ${dbPath}`);
+
+module.exports = db;

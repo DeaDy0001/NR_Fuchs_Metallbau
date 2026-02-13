@@ -1,29 +1,28 @@
-const pool = require('../config/database');
+const db = require('../config/database');
 const fs = require('fs-extra');
 const path = require('path');
 
 // Get all settings
-const getSettings = async (req, res) => {
+const getSettings = (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM settings WHERE id = 1');
+    const stmt = db.prepare('SELECT * FROM settings WHERE id = 1');
+    let result = stmt.get();
 
-    if (result.rows.length === 0) {
+    if (!result) {
       // Create default settings if they don't exist
-      const defaultSettings = {
-        logo_path: null,
-        theme: 'dark',
-        sidebar_collapsed: false
-      };
-
-      const insertResult = await pool.query(
-        'INSERT INTO settings (logo_path, theme, sidebar_collapsed) VALUES ($1, $2, $3) RETURNING *',
-        [defaultSettings.logo_path, defaultSettings.theme, defaultSettings.sidebar_collapsed]
+      const insertStmt = db.prepare(
+        'INSERT INTO settings (logo_path, theme, sidebar_collapsed) VALUES (?, ?, ?)'
       );
+      insertStmt.run(null, 'dark', 0);
 
-      return res.json(insertResult.rows[0]);
+      const selectStmt = db.prepare('SELECT * FROM settings WHERE id = 1');
+      result = selectStmt.get();
     }
 
-    res.json(result.rows[0]);
+    // Convert SQLite boolean (0/1) to JavaScript boolean
+    result.sidebar_collapsed = !!result.sidebar_collapsed;
+
+    res.json(result);
   } catch (error) {
     console.error('Error getting settings:', error);
     res.status(500).json({ error: 'Failed to get settings' });
@@ -31,16 +30,36 @@ const getSettings = async (req, res) => {
 };
 
 // Update settings
-const updateSettings = async (req, res) => {
+const updateSettings = (req, res) => {
   try {
     const { theme, sidebar_collapsed } = req.body;
 
-    const result = await pool.query(
-      'UPDATE settings SET theme = COALESCE($1, theme), sidebar_collapsed = COALESCE($2, sidebar_collapsed), updated_at = NOW() WHERE id = 1 RETURNING *',
-      [theme, sidebar_collapsed]
-    );
+    const updates = [];
+    const values = [];
 
-    res.json(result.rows[0]);
+    if (theme !== undefined) {
+      updates.push('theme = ?');
+      values.push(theme);
+    }
+
+    if (sidebar_collapsed !== undefined) {
+      updates.push('sidebar_collapsed = ?');
+      values.push(sidebar_collapsed ? 1 : 0);
+    }
+
+    if (updates.length > 0) {
+      updates.push('updated_at = datetime("now")');
+      values.push(1); // WHERE id = 1
+
+      const sql = `UPDATE settings SET ${updates.join(', ')} WHERE id = ?`;
+      const stmt = db.prepare(sql);
+      stmt.run(...values);
+    }
+
+    const result = db.prepare('SELECT * FROM settings WHERE id = 1').get();
+    result.sidebar_collapsed = !!result.sidebar_collapsed;
+
+    res.json(result);
   } catch (error) {
     console.error('Error updating settings:', error);
     res.status(500).json({ error: 'Failed to update settings' });
@@ -57,20 +76,21 @@ const uploadLogo = async (req, res) => {
     const logoPath = `/uploads/logos/${req.file.filename}`;
 
     // Get old logo to delete it
-    const oldSettings = await pool.query('SELECT logo_path FROM settings WHERE id = 1');
+    const oldSettings = db.prepare('SELECT logo_path FROM settings WHERE id = 1').get();
 
-    if (oldSettings.rows.length > 0 && oldSettings.rows[0].logo_path) {
-      const oldLogoPath = path.join(__dirname, '../../../', oldSettings.rows[0].logo_path);
+    if (oldSettings && oldSettings.logo_path) {
+      const oldLogoPath = path.join(__dirname, '../../../', oldSettings.logo_path);
       await fs.remove(oldLogoPath).catch(err => console.error('Error deleting old logo:', err));
     }
 
     // Update database with new logo
-    const result = await pool.query(
-      'UPDATE settings SET logo_path = $1, updated_at = NOW() WHERE id = 1 RETURNING *',
-      [logoPath]
-    );
+    const stmt = db.prepare('UPDATE settings SET logo_path = ?, updated_at = datetime("now") WHERE id = 1');
+    stmt.run(logoPath);
 
-    res.json(result.rows[0]);
+    const result = db.prepare('SELECT * FROM settings WHERE id = 1').get();
+    result.sidebar_collapsed = !!result.sidebar_collapsed;
+
+    res.json(result);
   } catch (error) {
     console.error('Error uploading logo:', error);
     res.status(500).json({ error: 'Failed to upload logo' });
@@ -80,18 +100,20 @@ const uploadLogo = async (req, res) => {
 // Delete logo
 const deleteLogo = async (req, res) => {
   try {
-    const settings = await pool.query('SELECT logo_path FROM settings WHERE id = 1');
+    const settings = db.prepare('SELECT logo_path FROM settings WHERE id = 1').get();
 
-    if (settings.rows.length > 0 && settings.rows[0].logo_path) {
-      const logoPath = path.join(__dirname, '../../../', settings.rows[0].logo_path);
+    if (settings && settings.logo_path) {
+      const logoPath = path.join(__dirname, '../../../', settings.logo_path);
       await fs.remove(logoPath).catch(err => console.error('Error deleting logo:', err));
     }
 
-    const result = await pool.query(
-      'UPDATE settings SET logo_path = NULL, updated_at = NOW() WHERE id = 1 RETURNING *'
-    );
+    const stmt = db.prepare('UPDATE settings SET logo_path = NULL, updated_at = datetime("now") WHERE id = 1');
+    stmt.run();
 
-    res.json(result.rows[0]);
+    const result = db.prepare('SELECT * FROM settings WHERE id = 1').get();
+    result.sidebar_collapsed = !!result.sidebar_collapsed;
+
+    res.json(result);
   } catch (error) {
     console.error('Error deleting logo:', error);
     res.status(500).json({ error: 'Failed to delete logo' });

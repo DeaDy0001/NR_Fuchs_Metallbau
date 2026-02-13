@@ -25,7 +25,7 @@ Eine lokale Webanwendung für die Verwaltung von Bildern und Projekten im Firmen
 
 ### Backend
 - **Node.js** + Express
-- **PostgreSQL** - Datenbank mit optimierten Indizes
+- **SQLite** - Datei-basierte Datenbank mit optimierten Indizes
 - **Sharp** - Bild-Processing und Thumbnail-Generierung
 
 ### Frontend
@@ -36,32 +36,31 @@ Eine lokale Webanwendung für die Verwaltung von Bildern und Projekten im Firmen
 ## Voraussetzungen
 
 - **Node.js** (v16 oder höher) - [Download](https://nodejs.org/)
-- **PostgreSQL** (v12 oder höher) - [Download](https://www.postgresql.org/download/)
+- **Keine zusätzliche Datenbank nötig** - SQLite ist eingebaut!
 
 ## Installation & Start
 
 ### Windows Server
 
-1. **PostgreSQL konfigurieren**
-   - PostgreSQL installieren und starten
-   - Datenbank erstellen: `CREATE DATABASE fuchs_metallbau;`
-   - Optional: Credentials in `backend/.env` anpassen
+**Super einfach - nur 2 Schritte:**
 
-2. **Server starten**
+1. **Server starten**
    ```cmd
    start.bat
    ```
 
 Die `start.bat` Datei führt automatisch folgende Schritte aus:
-- Prüft Node.js und PostgreSQL
+- Prüft ob Node.js installiert ist
 - Installiert alle Dependencies (Backend + Frontend)
-- Initialisiert die Datenbank
+- Erstellt automatisch die SQLite-Datenbank
 - Baut das Frontend
 - Startet den Server
 
-3. **App öffnen**
+2. **App öffnen**
    - Öffne Browser: `http://localhost:3001`
    - Oder von anderem PC im Netzwerk: `http://<SERVER-IP>:3001`
+
+**Fertig!** 🎉 Keine Datenbank-Installation, keine Konfiguration nötig.
 
 ### Manuelle Installation
 
@@ -79,15 +78,6 @@ npm run build
 ```
 
 ## Konfiguration
-
-### Datenbank (backend/.env)
-```env
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=fuchs_metallbau
-DB_USER=postgres
-DB_PASSWORD=postgres
-```
 
 ### Port ändern (backend/.env)
 ```env
@@ -131,7 +121,8 @@ Die App ist für große Datenmengen optimiert:
 - **Indizierte Datenbank-Queries** - Schnelle Suche auch bei vielen Einträgen
 - **Pagination** - Effizientes Laden großer Listen
 - **Thumbnail-Cache** - Vorschaubilder werden generiert und gecacht
-- **PostgreSQL** - Hochperformante Datenbank
+- **SQLite** - Schnelle, datei-basierte Datenbank (perfekt für lokale Anwendungen)
+- **WAL-Modus** - Write-Ahead Logging für bessere Concurrent-Performance
 
 ## Entwicklung
 
@@ -192,10 +183,16 @@ Um die App im lokalen Netzwerk verfügbar zu machen:
 PORT=3002
 ```
 
-### PostgreSQL-Verbindungsfehler
-- PostgreSQL-Dienst starten
-- Credentials in `backend/.env` prüfen
-- Datenbank existiert: `CREATE DATABASE fuchs_metallbau;`
+### Datenbank-Probleme
+Die SQLite-Datenbank wird automatisch in `database/fuchs_metallbau.db` erstellt.
+Falls Probleme auftreten:
+```bash
+# Datenbank-Datei löschen und neu initialisieren
+cd database
+del fuchs_metallbau.db
+cd ../backend
+node src/utils/initDatabase.js
+```
 
 ### Frontend Build-Fehler
 ```bash
