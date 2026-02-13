@@ -52,10 +52,10 @@ function DriveImages() {
   const [showOnlyWithProjects, setShowOnlyWithProjects] = useState(false); // Nur Bilder mit Projekten
   const [selectedSubfolders, setSelectedSubfolders] = useState([]); // Ausgewählte Ordner-Badges
   const [showProjectModal, setShowProjectModal] = useState(false); // Projekt-Auswahl Modal
+  const [projectSearchQuery, setProjectSearchQuery] = useState(''); // Suchfeld im Projekt-Modal
 
-  // Initial load
+  // Initial load (only once)
   useEffect(() => {
-    loadImages();
     loadProjects();
     // Load selected projects from localStorage
     const saved = localStorage.getItem('selectedProjects');
@@ -66,6 +66,11 @@ function DriveImages() {
         console.error('Error loading selected projects:', e);
       }
     }
+  }, []); // Empty dependency array - only run once
+
+  // Reload images when filters change
+  useEffect(() => {
+    loadImages();
   }, [searchQuery, selectedProjectsFilter, photoDateFrom, photoDateTo, uploadDateFrom, uploadDateTo, showOnlyUnassigned, showAllImages, showOnlyWithProjects, selectedSubfolders]);
 
   // Auto-refresh Bilder-Liste alle 10 Sekunden
@@ -1010,11 +1015,17 @@ function DriveImages() {
 
       {/* Projekt-Auswahl Modal */}
       {showProjectModal && (
-        <div className="modal-overlay" onClick={() => setShowProjectModal(false)}>
+        <div className="modal-overlay" onClick={() => {
+          setShowProjectModal(false);
+          setProjectSearchQuery('');
+        }}>
           <div className="project-modal" onClick={(e) => e.stopPropagation()}>
             <div className="project-modal-header">
               <h3>Projekte auswählen</h3>
-              <button className="modal-close" onClick={() => setShowProjectModal(false)}>
+              <button className="modal-close" onClick={() => {
+                setShowProjectModal(false);
+                setProjectSearchQuery('');
+              }}>
                 <X size={20} />
               </button>
             </div>
@@ -1022,8 +1033,33 @@ function DriveImages() {
               <div className="project-modal-hint">
                 Halte <kbd>Strg</kbd> gedrückt, um mehrere Projekte auszuwählen
               </div>
+
+              {/* Projekt-Suchfeld */}
+              <div className="project-modal-search">
+                <Search size={18} />
+                <input
+                  type="text"
+                  placeholder="Projekt suchen..."
+                  value={projectSearchQuery}
+                  onChange={(e) => setProjectSearchQuery(e.target.value)}
+                  className="project-modal-search-input"
+                />
+                {projectSearchQuery && (
+                  <button
+                    className="project-modal-search-clear"
+                    onClick={() => setProjectSearchQuery('')}
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+
               <div className="project-modal-list">
-                {projects.map(project => (
+                {projects
+                  .filter(project =>
+                    project.folder_name.toLowerCase().includes(projectSearchQuery.toLowerCase())
+                  )
+                  .map(project => (
                   <div
                     key={project.id}
                     className={`project-modal-item ${selectedProjectsFilter.includes(project.id) ? 'selected' : ''}`}
@@ -1058,7 +1094,10 @@ function DriveImages() {
                 </button>
                 <button
                   className="btn btn-primary"
-                  onClick={() => setShowProjectModal(false)}
+                  onClick={() => {
+                    setShowProjectModal(false);
+                    setProjectSearchQuery('');
+                  }}
                 >
                   Fertig
                 </button>
