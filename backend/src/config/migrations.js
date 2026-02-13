@@ -196,6 +196,33 @@ const migrations = [
 
       console.log('✓ Migration add_company_branding_columns completed');
     }
+  },
+  {
+    id: 9,
+    name: 'create_image_annotations_table',
+    up: () => {
+      console.log('Running migration: create_image_annotations_table');
+
+      // Create table for image annotations (drawings, measurements, etc.)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS image_annotations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          image_id INTEGER NOT NULL,
+          annotations TEXT NOT NULL,
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now')),
+          FOREIGN KEY (image_id) REFERENCES drive_images (id) ON DELETE CASCADE
+        )
+      `);
+
+      // Create index for faster lookups
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_image_annotations_image_id
+        ON image_annotations(image_id)
+      `);
+
+      console.log('✓ Migration create_image_annotations_table completed');
+    }
   }
 ];
 

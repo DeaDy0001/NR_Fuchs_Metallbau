@@ -1311,11 +1311,6 @@ function DriveImages() {
         <ImageEditor
           image={selectedImage}
           onClose={() => setShowEditor(false)}
-          onSave={async (data) => {
-            // TODO: Implement save functionality
-            console.log('Save editor data:', data);
-            alert('Editor-Funktionalität wird noch implementiert!');
-          }}
         />
       )}
     </div>

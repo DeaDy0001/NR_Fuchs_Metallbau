@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import './ImageEditor.css';
 
-function ImageEditor({ image, onClose, onSave }) {
+function ImageEditor({ image, onClose }) {
   const canvasRef = useRef(null);
   const fabricCanvasRef = useRef(null);
   const [activeTool, setActiveTool] = useState('select');
@@ -64,6 +64,33 @@ function ImageEditor({ image, onClose, onSave }) {
       canvas.dispose();
     };
   }, [image]);
+
+  // Load existing annotations
+  useEffect(() => {
+    const loadAnnotations = async () => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas || !image.id) return;
+
+      try {
+        const response = await fetch(`/api/annotations/${image.id}`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.annotations) {
+            canvas.loadFromJSON(data.annotations, () => {
+              canvas.renderAll();
+              updateLayers();
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error loading annotations:', error);
+      }
+    };
+
+    // Wait for canvas to be ready
+    const timer = setTimeout(loadAnnotations, 1000);
+    return () => clearTimeout(timer);
+  }, [image.id]);
 
   // Update layers list
   const updateLayers = () => {
@@ -355,30 +382,65 @@ function ImageEditor({ image, onClose, onSave }) {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !confirm('Original-Bild überschreiben?')) return;
 
-    const dataURL = canvas.toDataURL({
-      format: 'png',
-      quality: 1
-    });
+    try {
+      const dataURL = canvas.toDataURL({
+        format: 'png',
+        quality: 1
+      });
 
-    const annotations = JSON.stringify(canvas.toJSON(['customType', 'customName']));
+      const annotations = JSON.stringify(canvas.toJSON(['customType', 'customName']));
 
-    await onSave({ mode: 'overwrite', dataURL, annotations });
-    onClose();
+      const response = await fetch(`/api/annotations/${image.id}/export/overwrite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataURL, annotations })
+      });
+
+      if (response.ok) {
+        alert('Bild erfolgreich überschrieben!');
+        onClose();
+        // Reload page to show updated image
+        window.location.reload();
+      } else {
+        alert('Fehler beim Speichern des Bildes');
+      }
+    } catch (error) {
+      console.error('Error saving image:', error);
+      alert('Fehler beim Speichern des Bildes');
+    }
   };
 
   const handleSaveNew = async () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    const dataURL = canvas.toDataURL({
-      format: 'png',
-      quality: 1
-    });
+    try {
+      const dataURL = canvas.toDataURL({
+        format: 'png',
+        quality: 1
+      });
 
-    const annotations = JSON.stringify(canvas.toJSON(['customType', 'customName']));
+      const annotations = JSON.stringify(canvas.toJSON(['customType', 'customName']));
 
-    await onSave({ mode: 'new', dataURL, annotations });
-    onClose();
+      const response = await fetch(`/api/annotations/${image.id}/export/new`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataURL, annotations })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        alert('Neues Bild erfolgreich erstellt!');
+        onClose();
+        // Reload page to show new image
+        window.location.reload();
+      } else {
+        alert('Fehler beim Erstellen des neuen Bildes');
+      }
+    } catch (error) {
+      console.error('Error creating new image:', error);
+      alert('Fehler beim Erstellen des neuen Bildes');
+    }
   };
 
   return (

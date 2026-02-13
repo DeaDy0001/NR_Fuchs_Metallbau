@@ -20,6 +20,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/drive', require('./routes/drive'));
 app.use('/api/projects', require('./routes/projects'));
+app.use('/api/annotations', require('./routes/annotations'));
 
 // Health check
 app.get('/api/health', (req, res) => {
