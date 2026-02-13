@@ -110,15 +110,26 @@ function CredentialsModal({ isOpen, onClose, onSave }) {
               <ExternalLink size={18} />
               Google Cloud Console öffnen
             </a>
-            <a
-              href="https://github.com/yourusername/fuchs-metallbau/blob/main/GOOGLE_OAUTH_SETUP.md"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="credentials-link secondary"
-            >
-              <ExternalLink size={18} />
-              Detaillierte Anleitung ansehen
-            </a>
+            <div className="credentials-link-row">
+              <a
+                href="/GOOGLE_OAUTH_SETUP.md"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="credentials-link secondary"
+              >
+                <ExternalLink size={18} />
+                Setup-Anleitung
+              </a>
+              <a
+                href="/TROUBLESHOOTING_OAUTH.md"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="credentials-link secondary"
+              >
+                <ExternalLink size={18} />
+                Troubleshooting
+              </a>
+            </div>
           </div>
 
           <form onSubmit={handleSubmit} className="credentials-form">
