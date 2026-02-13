@@ -169,7 +169,7 @@ const syncDrivePath = async (drivePathId) => {
 
     // Update last sync time
     db.prepare(
-      'UPDATE drive_paths SET last_sync = datetime('now') WHERE id = ?'
+      "UPDATE drive_paths SET last_sync = datetime('now') WHERE id = ?"
     ).run(drivePathId);
 
     console.log(`Sync completed for ${drivePath.name}: ${addedCount} images added`);

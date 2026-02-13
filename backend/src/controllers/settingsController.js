@@ -48,7 +48,7 @@ const updateSettings = (req, res) => {
     }
 
     if (updates.length > 0) {
-      updates.push('updated_at = datetime('now')');
+      updates.push("updated_at = datetime('now')");
       values.push(1); // WHERE id = 1
 
       const sql = `UPDATE settings SET ${updates.join(', ')} WHERE id = ?`;
@@ -84,7 +84,7 @@ const uploadLogo = async (req, res) => {
     }
 
     // Update database with new logo
-    const stmt = db.prepare('UPDATE settings SET logo_path = ?, updated_at = datetime('now') WHERE id = 1');
+    const stmt = db.prepare("UPDATE settings SET logo_path = ?, updated_at = datetime('now') WHERE id = 1");
     stmt.run(logoPath);
 
     const result = db.prepare('SELECT * FROM settings WHERE id = 1').get();
@@ -107,7 +107,7 @@ const deleteLogo = async (req, res) => {
       await fs.remove(logoPath).catch(err => console.error('Error deleting logo:', err));
     }
 
-    const stmt = db.prepare('UPDATE settings SET logo_path = NULL, updated_at = datetime('now') WHERE id = 1');
+    const stmt = db.prepare("UPDATE settings SET logo_path = NULL, updated_at = datetime('now') WHERE id = 1");
     stmt.run();
 
     const result = db.prepare('SELECT * FROM settings WHERE id = 1').get();
