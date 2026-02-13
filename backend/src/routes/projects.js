@@ -10,6 +10,7 @@ router.post('/settings/path', projectsController.setProjectPath);
 router.get('/', projectsController.getProjects);
 router.get('/:id', projectsController.getProjectById);
 router.get('/:id/files', projectsController.getProjectFiles);
+router.get('/:id/file/:type/:filename', projectsController.serveProjectFile);
 router.post('/', projectsController.createProject);
 router.put('/:id', projectsController.updateProject);
 router.delete('/:id', projectsController.deleteProject);

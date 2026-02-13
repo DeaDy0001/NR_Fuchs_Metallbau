@@ -6,12 +6,11 @@ function ProjectsList() {
   const [projects, setProjects] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const [editingProject, setEditingProject] = useState(null);
   const [editForm, setEditForm] = useState({ color: '', notes: '' });
   const [selectedProjects, setSelectedProjects] = useState([]); // Markierte Projekte
   const [showMarked, setShowMarked] = useState(true); // Filter: Markierte anzeigen
   const [showUnmarked, setShowUnmarked] = useState(true); // Filter: Nicht markierte anzeigen
-  const [viewingProject, setViewingProject] = useState(null); // Projekt-Modal
+  const [viewingProject, setViewingProject] = useState(null); // Projekt-Modal (auch für Bearbeitung)
   const [projectFiles, setProjectFiles] = useState({ images: [], pdfs: [], hasImages: false, hasPdfs: false });
   const [activeTab, setActiveTab] = useState('images'); // Active tab in project modal
   const [loadingFiles, setLoadingFiles] = useState(false);
@@ -51,19 +50,11 @@ function ProjectsList() {
     }
   };
 
-  const handleEdit = (project) => {
-    setEditingProject(project);
-    setEditForm({
-      color: project.color || '#3b82f6',
-      notes: project.notes || ''
-    });
-  };
-
-  const handleSave = async () => {
-    if (!editingProject) return;
+  const handleSaveProject = async () => {
+    if (!viewingProject) return;
 
     try {
-      const response = await fetch(`/api/projects/${editingProject.id}`, {
+      const response = await fetch(`/api/projects/${viewingProject.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editForm)
@@ -71,8 +62,8 @@ function ProjectsList() {
 
       if (response.ok) {
         loadProjects();
-        setEditingProject(null);
-        setEditForm({ color: '', notes: '' });
+        // Update viewingProject with new values
+        setViewingProject({ ...viewingProject, ...editForm });
       } else {
         alert('Fehler beim Speichern');
       }
@@ -80,11 +71,6 @@ function ProjectsList() {
       console.error('Error saving project:', error);
       alert('Fehler beim Speichern');
     }
-  };
-
-  const handleCancel = () => {
-    setEditingProject(null);
-    setEditForm({ color: '', notes: '' });
   };
 
   const toggleProjectSelection = (projectId) => {
@@ -104,6 +90,12 @@ function ProjectsList() {
     setLoadingFiles(true);
     setActiveTab('images');
 
+    // Initialize edit form with current project values
+    setEditForm({
+      color: project.color || '#3b82f6',
+      notes: project.notes || ''
+    });
+
     try {
       const response = await fetch(`/api/projects/${project.id}/files`);
       if (response.ok) {
@@ -121,6 +113,7 @@ function ProjectsList() {
     setViewingProject(null);
     setProjectFiles({ images: [], pdfs: [], hasImages: false, hasPdfs: false });
     setActiveTab('images');
+    setEditForm({ color: '', notes: '' });
   };
 
   // Gefilterte Projekte basierend auf Markierung
@@ -218,9 +211,9 @@ function ProjectsList() {
                         className="icon-btn"
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleEdit(project);
+                          handleViewProject(project);
                         }}
-                        title="Bearbeiten"
+                        title="Anzeigen & Bearbeiten"
                       >
                         <Edit2 size={18} />
                       </button>
@@ -244,22 +237,18 @@ function ProjectsList() {
         </div>
       )}
 
-      {editingProject && (
-        <div className="modal-overlay" onClick={handleCancel}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+      {viewingProject && (
+        <div className="modal-overlay" onClick={closeProjectModal}>
+          <div className="modal project-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Projekt bearbeiten</h2>
-              <button className="modal-close" onClick={handleCancel}>
+              <h2>{viewingProject.folder_name}</h2>
+              <button className="modal-close" onClick={closeProjectModal}>
                 <X size={24} />
               </button>
             </div>
 
-            <div className="modal-body">
-              <div className="form-group">
-                <label>Ordnername</label>
-                <div className="readonly-field">{editingProject.folder_name}</div>
-              </div>
-
+            {/* Edit-Felder */}
+            <div className="project-edit-section">
               <div className="form-group">
                 <label>Farbe</label>
                 <div className="color-picker">
@@ -287,32 +276,14 @@ function ProjectsList() {
                   value={editForm.notes}
                   onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
                   className="textarea"
-                  rows="6"
+                  rows="3"
                   placeholder="Fügen Sie Notizen zum Projekt hinzu..."
                 />
               </div>
-            </div>
 
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={handleCancel}>
-                Abbrechen
-              </button>
-              <button className="btn btn-primary" onClick={handleSave}>
+              <button className="btn btn-primary btn-save" onClick={handleSaveProject}>
                 <Save size={18} />
                 Speichern
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {viewingProject && (
-        <div className="modal-overlay" onClick={closeProjectModal}>
-          <div className="modal project-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>{viewingProject.folder_name}</h2>
-              <button className="modal-close" onClick={closeProjectModal}>
-                <X size={24} />
               </button>
             </div>
 

@@ -317,7 +317,7 @@ const getProjectFiles = async (req, res) => {
         .map(file => ({
           name: file,
           path: path.join(imagesFolderPath, file),
-          url: `/uploads/projects/${encodeURIComponent(project.folder_name)}/Bilder/${encodeURIComponent(file)}`,
+          url: `/api/projects/${id}/file/image/${encodeURIComponent(file)}`,
           type: 'image'
         }));
     }
@@ -329,7 +329,7 @@ const getProjectFiles = async (req, res) => {
       .map(file => ({
         name: file,
         path: path.join(projectFolderPath, file),
-        url: `/uploads/projects/${encodeURIComponent(project.folder_name)}/${encodeURIComponent(file)}`,
+        url: `/api/projects/${id}/file/pdf/${encodeURIComponent(file)}`,
         type: 'pdf'
       }));
 
@@ -345,6 +345,50 @@ const getProjectFiles = async (req, res) => {
   }
 };
 
+// Serve a project file (image or PDF)
+const serveProjectFile = async (req, res) => {
+  try {
+    const { id, type, filename } = req.params;
+
+    // Get project details
+    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Get project base path from settings
+    const setting = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    if (!setting || !setting.project_path) {
+      return res.status(400).json({ error: 'Project base path not configured' });
+    }
+
+    const projectBasePath = setting.project_path;
+    const projectFolderPath = path.join(projectBasePath, project.folder_name);
+
+    let filePath;
+    if (type === 'image') {
+      // Images are in Bilder subfolder
+      filePath = path.join(projectFolderPath, 'Bilder', filename);
+    } else if (type === 'pdf') {
+      // PDFs are in main folder
+      filePath = path.join(projectFolderPath, filename);
+    } else {
+      return res.status(400).json({ error: 'Invalid file type' });
+    }
+
+    // Check if file exists
+    if (!(await fs.pathExists(filePath))) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    // Send file
+    res.sendFile(filePath);
+  } catch (error) {
+    console.error('Error serving project file:', error);
+    res.status(500).json({ error: 'Failed to serve file' });
+  }
+};
+
 module.exports = {
   getProjectSettings,
   setProjectPath,
@@ -354,5 +398,6 @@ module.exports = {
   updateProject,
   deleteProject,
   syncProjects,
-  getProjectFiles
+  getProjectFiles,
+  serveProjectFile
 };

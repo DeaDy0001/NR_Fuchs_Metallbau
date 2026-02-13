@@ -221,6 +221,29 @@
   flex-direction: column;
 }
 
+/* Project edit section (above tabs) */
+.project-edit-section {
+  padding: 1.5rem;
+  background-color: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.project-edit-section .form-group {
+  margin-bottom: 1rem;
+}
+
+.project-edit-section .form-group:last-of-type {
+  margin-bottom: 1.5rem;
+}
+
+.btn-save {
+  width: auto;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .project-content {
   cursor: pointer;
   transition: transform 0.2s;
