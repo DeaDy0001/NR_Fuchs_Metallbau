@@ -93,6 +93,12 @@ const exportImageOverwrite = async (req, res) => {
       stmt.run(imageId, annotations);
     }
 
+    // ✅ Update thumbnail to show the annotated image
+    db.prepare('UPDATE drive_images SET thumbnail_url = ? WHERE id = ?').run(
+      image.local_path,  // Use updated image as thumbnail (shows annotations!)
+      imageId
+    );
+
     res.json({
       success: true,
       message: 'Image updated successfully'
@@ -154,7 +160,7 @@ const exportImageNew = async (req, res) => {
       newImageName, // original_name = same as name for annotated images
       `/uploads/${newFileName}`, // file_url for accessing the file
       null, // No drive_file_id for local images
-      image.thumbnail_url,
+      `/uploads/${newFileName}`, // ✅ Use new image as thumbnail (shows annotations!)
       newLocalPath,
       image.mime_type,
       image.photo_taken_at,
