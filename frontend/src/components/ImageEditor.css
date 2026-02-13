@@ -150,7 +150,7 @@
   background-color: var(--bg-primary);
   position: relative;
   overflow: auto;
-  padding: 2rem;
+  padding: 0.5rem;
 }
 
 .measurement-hint {
@@ -237,6 +237,10 @@
   box-shadow: 0 0 0 2px var(--accent-primary);
 }
 
+.layer-item.hidden {
+  opacity: 0.5;
+}
+
 .layer-name {
   font-size: 0.875rem;
   color: var(--text-primary);
@@ -244,6 +248,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.layer-name-input {
+  flex: 1;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--accent-primary);
+  border-radius: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  outline: none;
 }
 
 .layer-actions {

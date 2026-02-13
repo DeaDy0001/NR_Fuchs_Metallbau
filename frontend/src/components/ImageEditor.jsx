@@ -3,18 +3,25 @@ import { fabric } from 'fabric';
 import {
   X, Save, FileDown, XCircle, Minus, Square, Circle, Type,
   Ruler, MousePointer, Trash2, Edit2, ChevronUp, ChevronDown,
-  ArrowRight, Pencil
+  ArrowRight, Pencil, Eye, EyeOff
 } from 'lucide-react';
 import './ImageEditor.css';
 
 function ImageEditor({ image, onClose }) {
   const canvasRef = useRef(null);
   const fabricCanvasRef = useRef(null);
+  const containerRef = useRef(null);
   const [activeTool, setActiveTool] = useState('select');
   const [layers, setLayers] = useState([]);
   const [selectedLayer, setSelectedLayer] = useState(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [measurementPoints, setMeasurementPoints] = useState([]);
+  const [editingLayerId, setEditingLayerId] = useState(null);
+  const [editingText, setEditingText] = useState('');
+
+  // Drag drawing state
+  const [dragStart, setDragStart] = useState(null);
+  const [tempObject, setTempObject] = useState(null);
 
   // Tool colors and settings
   const [strokeColor, setStrokeColor] = useState('#ff0000');
@@ -23,11 +30,16 @@ function ImageEditor({ image, onClose }) {
 
   // Initialize Fabric.js canvas
   useEffect(() => {
-    if (!canvasRef.current) return;
+    if (!canvasRef.current || !containerRef.current) return;
+
+    // Get container dimensions
+    const container = containerRef.current;
+    const width = container.clientWidth - 40; // Subtract padding
+    const height = container.clientHeight - 40;
 
     const canvas = new fabric.Canvas(canvasRef.current, {
-      width: 1200,
-      height: 800,
+      width: width,
+      height: height,
       backgroundColor: '#1a1a1a'
     });
 
@@ -183,79 +195,282 @@ function ImageEditor({ image, onClose }) {
     };
   }, []);
 
-  // Canvas click handler for measurements
+  // Drag drawing for shapes
   useEffect(() => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    const handleCanvasClick = (e) => {
-      // Don't place new elements if an existing object was clicked
-      if (e.target) {
-        return;
-      }
+    const handleMouseDown = (e) => {
+      // Don't draw if clicking on existing object
+      if (e.target) return;
 
-      if (activeTool === 'measurement') {
-        const pointer = canvas.getPointer(e.e);
+      // Only for drawing tools
+      if (!['measurement', 'arrow', 'rectangle', 'circle', 'text', 'line'].includes(activeTool)) return;
 
-        if (measurementPoints.length === 0) {
-          // First point
-          setMeasurementPoints([pointer]);
-        } else if (measurementPoints.length === 1) {
-          // Second point - create measurement line
-          const [point1] = measurementPoints;
-          const distance = Math.sqrt(
-            Math.pow(pointer.x - point1.x, 2) + Math.pow(pointer.y - point1.y, 2)
-          ).toFixed(0);
+      const pointer = canvas.getPointer(e.e);
+      setDragStart(pointer);
+      setIsDrawing(true);
 
-          const text = prompt('Bemaßung eingeben:', `${distance}px`);
-          if (text) {
-            createMeasurement(point1, pointer, text);
-          }
-          setMeasurementPoints([]);
-        }
-      } else if (activeTool !== 'select' && activeTool !== 'freehand' && activeTool !== 'measurement') {
-        const pointer = canvas.getPointer(e.e);
-
-        // Check if click is within canvas bounds
-        if (pointer.x >= 0 && pointer.x <= canvas.width &&
-            pointer.y >= 0 && pointer.y <= canvas.height) {
-          handleDrawing(pointer);
-        }
+      // For text tool, create immediately
+      if (activeTool === 'text') {
+        const text = new fabric.Text('Text bearbeiten...', {
+          left: pointer.x,
+          top: pointer.y,
+          fontSize: fontSize,
+          fill: strokeColor,
+          customType: 'text',
+          customName: 'Text bearbeiten...',
+          editable: true
+        });
+        canvas.add(text);
+        canvas.setActiveObject(text);
+        setIsDrawing(false);
+        setDragStart(null);
       }
     };
 
-    canvas.on('mouse:down', handleCanvasClick);
+    const handleMouseMove = (e) => {
+      if (!isDrawing || !dragStart) return;
+
+      const pointer = canvas.getPointer(e.e);
+
+      // Remove previous temp object
+      if (tempObject) {
+        canvas.remove(tempObject);
+      }
+
+      let newTempObject = null;
+
+      switch (activeTool) {
+        case 'line':
+          newTempObject = createTempLine(dragStart, pointer);
+          break;
+        case 'measurement':
+          newTempObject = createTempMeasurement(dragStart, pointer);
+          break;
+        case 'arrow':
+          newTempObject = createTempArrow(dragStart, pointer);
+          break;
+        case 'rectangle':
+          newTempObject = createTempRectangle(dragStart, pointer);
+          break;
+        case 'circle':
+          newTempObject = createTempCircle(dragStart, pointer);
+          break;
+      }
+
+      if (newTempObject) {
+        newTempObject.selectable = false;
+        newTempObject.evented = false;
+        canvas.add(newTempObject);
+        setTempObject(newTempObject);
+        canvas.renderAll();
+      }
+    };
+
+    const handleMouseUp = (e) => {
+      if (!isDrawing || !dragStart) return;
+
+      const pointer = canvas.getPointer(e.e);
+
+      // Remove temp object
+      if (tempObject) {
+        canvas.remove(tempObject);
+        setTempObject(null);
+      }
+
+      // Create final object
+      switch (activeTool) {
+        case 'line':
+          createFinalLine(dragStart, pointer);
+          break;
+        case 'measurement':
+          createFinalMeasurement(dragStart, pointer);
+          break;
+        case 'arrow':
+          createFinalArrow(dragStart, pointer);
+          break;
+        case 'rectangle':
+          createFinalRectangle(dragStart, pointer);
+          break;
+        case 'circle':
+          createFinalCircle(dragStart, pointer);
+          break;
+      }
+
+      setIsDrawing(false);
+      setDragStart(null);
+      canvas.renderAll();
+    };
+
+    canvas.on('mouse:down', handleMouseDown);
+    canvas.on('mouse:move', handleMouseMove);
+    canvas.on('mouse:up', handleMouseUp);
 
     return () => {
-      canvas.off('mouse:down', handleCanvasClick);
+      canvas.off('mouse:down', handleMouseDown);
+      canvas.off('mouse:move', handleMouseMove);
+      canvas.off('mouse:up', handleMouseUp);
     };
-  }, [activeTool, measurementPoints]);
+  }, [activeTool, isDrawing, dragStart, tempObject, strokeColor, strokeWidth, fontSize]);
 
-  // Create measurement
-  const createMeasurement = (point1, point2, text) => {
+  // Temporary object creation for drag preview
+  const createTempLine = (start, end) => {
+    return new fabric.Line([start.x, start.y, end.x, end.y], {
+      stroke: strokeColor,
+      strokeWidth: strokeWidth,
+      opacity: 0.6
+    });
+  };
+
+  const createTempMeasurement = (start, end) => {
+    const distance = Math.sqrt(
+      Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2)
+    ).toFixed(0);
+
+    const line = new fabric.Line([start.x, start.y, end.x, end.y], {
+      stroke: strokeColor,
+      strokeWidth: strokeWidth,
+      opacity: 0.6
+    });
+
+    const angle = Math.atan2(end.y - start.y, end.x - start.x);
+    const arrowSize = 10;
+
+    const arrow1 = new fabric.Triangle({
+      left: start.x,
+      top: start.y,
+      width: arrowSize,
+      height: arrowSize,
+      fill: strokeColor,
+      angle: (angle * 180 / Math.PI) + 90,
+      originX: 'center',
+      originY: 'center',
+      opacity: 0.6
+    });
+
+    const arrow2 = new fabric.Triangle({
+      left: end.x,
+      top: end.y,
+      width: arrowSize,
+      height: arrowSize,
+      fill: strokeColor,
+      angle: (angle * 180 / Math.PI) - 90,
+      originX: 'center',
+      originY: 'center',
+      opacity: 0.6
+    });
+
+    const midX = (start.x + end.x) / 2;
+    const midY = (start.y + end.y) / 2;
+
+    const text = new fabric.Text(`${distance}px`, {
+      left: midX,
+      top: midY - 20,
+      fontSize: fontSize,
+      fill: strokeColor,
+      backgroundColor: 'rgba(0, 0, 0, 0.7)',
+      padding: 4,
+      originX: 'center',
+      opacity: 0.6
+    });
+
+    return new fabric.Group([line, arrow1, arrow2, text]);
+  };
+
+  const createTempArrow = (start, end) => {
+    const line = new fabric.Line([start.x, start.y, end.x, end.y], {
+      stroke: strokeColor,
+      strokeWidth: strokeWidth,
+      opacity: 0.6
+    });
+
+    const angle = Math.atan2(end.y - start.y, end.x - start.x);
+    const arrowHead = new fabric.Triangle({
+      left: end.x,
+      top: end.y,
+      width: 15,
+      height: 15,
+      fill: strokeColor,
+      angle: (angle * 180 / Math.PI) + 90,
+      originX: 'center',
+      originY: 'center',
+      opacity: 0.6
+    });
+
+    return new fabric.Group([line, arrowHead]);
+  };
+
+  const createTempRectangle = (start, end) => {
+    const left = Math.min(start.x, end.x);
+    const top = Math.min(start.y, end.y);
+    const width = Math.abs(end.x - start.x);
+    const height = Math.abs(end.y - start.y);
+
+    return new fabric.Rect({
+      left: left,
+      top: top,
+      width: width,
+      height: height,
+      fill: 'transparent',
+      stroke: strokeColor,
+      strokeWidth: strokeWidth,
+      opacity: 0.6
+    });
+  };
+
+  const createTempCircle = (start, end) => {
+    const radius = Math.sqrt(
+      Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2)
+    );
+
+    return new fabric.Circle({
+      left: start.x - radius,
+      top: start.y - radius,
+      radius: radius,
+      fill: 'transparent',
+      stroke: strokeColor,
+      strokeWidth: strokeWidth,
+      opacity: 0.6
+    });
+  };
+
+  // Final object creation
+  const createFinalLine = (start, end) => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    const group = new fabric.Group([], {
-      customType: 'measurement',
-      customName: `Bemaßung: ${text}`,
-      selectable: true
+    const line = new fabric.Line([start.x, start.y, end.x, end.y], {
+      stroke: strokeColor,
+      strokeWidth: strokeWidth,
+      customType: 'line',
+      customName: 'Linie'
     });
 
-    // Main line
-    const line = new fabric.Line([point1.x, point1.y, point2.x, point2.y], {
+    canvas.add(line);
+  };
+
+  const createFinalMeasurement = (start, end) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    const distance = Math.sqrt(
+      Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2)
+    ).toFixed(0);
+
+    const defaultText = `${distance}px`;
+    const line = new fabric.Line([start.x, start.y, end.x, end.y], {
       stroke: strokeColor,
       strokeWidth: strokeWidth,
       selectable: false
     });
 
-    // Arrows
+    const angle = Math.atan2(end.y - start.y, end.x - start.x);
     const arrowSize = 10;
-    const angle = Math.atan2(point2.y - point1.y, point2.x - point1.x);
 
     const arrow1 = new fabric.Triangle({
-      left: point1.x,
-      top: point1.y,
+      left: start.x,
+      top: start.y,
       width: arrowSize,
       height: arrowSize,
       fill: strokeColor,
@@ -266,8 +481,8 @@ function ImageEditor({ image, onClose }) {
     });
 
     const arrow2 = new fabric.Triangle({
-      left: point2.x,
-      top: point2.y,
+      left: end.x,
+      top: end.y,
       width: arrowSize,
       height: arrowSize,
       fill: strokeColor,
@@ -277,11 +492,10 @@ function ImageEditor({ image, onClose }) {
       selectable: false
     });
 
-    // Text
-    const midX = (point1.x + point2.x) / 2;
-    const midY = (point1.y + point2.y) / 2;
+    const midX = (start.x + end.x) / 2;
+    const midY = (start.y + end.y) / 2;
 
-    const textObj = new fabric.Text(text, {
+    const textObj = new fabric.Text(defaultText, {
       left: midX,
       top: midY - 20,
       fontSize: fontSize,
@@ -292,104 +506,92 @@ function ImageEditor({ image, onClose }) {
       selectable: false
     });
 
-    group.addWithUpdate(line);
-    group.addWithUpdate(arrow1);
-    group.addWithUpdate(arrow2);
-    group.addWithUpdate(textObj);
+    const group = new fabric.Group([line, arrow1, arrow2, textObj], {
+      customType: 'measurement',
+      customName: defaultText,
+      editable: true,
+      selectable: true
+    });
 
     canvas.add(group);
-    canvas.renderAll();
   };
 
-  // Handle drawing for other tools
-  const handleDrawing = (pointer) => {
+  const createFinalArrow = (start, end) => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    switch (activeTool) {
-      case 'line':
-        const line = new fabric.Line([pointer.x, pointer.y, pointer.x + 100, pointer.y], {
-          stroke: strokeColor,
-          strokeWidth: strokeWidth,
-          customType: 'line',
-          customName: 'Linie'
-        });
-        canvas.add(line);
-        break;
+    const line = new fabric.Line([start.x, start.y, end.x, end.y], {
+      stroke: strokeColor,
+      strokeWidth: strokeWidth,
+      selectable: false
+    });
 
-      case 'rectangle':
-        const rect = new fabric.Rect({
-          left: pointer.x,
-          top: pointer.y,
-          width: 100,
-          height: 60,
-          fill: 'transparent',
-          stroke: strokeColor,
-          strokeWidth: strokeWidth,
-          customType: 'rectangle',
-          customName: 'Rechteck'
-        });
-        canvas.add(rect);
-        break;
+    const angle = Math.atan2(end.y - start.y, end.x - start.x);
+    const arrowHead = new fabric.Triangle({
+      left: end.x,
+      top: end.y,
+      width: 15,
+      height: 15,
+      fill: strokeColor,
+      angle: (angle * 180 / Math.PI) + 90,
+      originX: 'center',
+      originY: 'center',
+      selectable: false
+    });
 
-      case 'circle':
-        const circle = new fabric.Circle({
-          left: pointer.x,
-          top: pointer.y,
-          radius: 50,
-          fill: 'transparent',
-          stroke: strokeColor,
-          strokeWidth: strokeWidth,
-          customType: 'circle',
-          customName: 'Kreis'
-        });
-        canvas.add(circle);
-        break;
+    const group = new fabric.Group([line, arrowHead], {
+      customType: 'arrow',
+      customName: 'Pfeil',
+      selectable: true
+    });
 
-      case 'arrow':
-        const arrowLine = new fabric.Line([pointer.x, pointer.y, pointer.x + 100, pointer.y], {
-          stroke: strokeColor,
-          strokeWidth: strokeWidth,
-          customType: 'arrow',
-          customName: 'Pfeil'
-        });
+    canvas.add(group);
+  };
 
-        const arrowHead = new fabric.Triangle({
-          left: pointer.x + 100,
-          top: pointer.y,
-          width: 15,
-          height: 15,
-          fill: strokeColor,
-          angle: 90,
-          originX: 'center',
-          originY: 'center'
-        });
+  const createFinalRectangle = (start, end) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
 
-        const arrowGroup = new fabric.Group([arrowLine, arrowHead], {
-          customType: 'arrow',
-          customName: 'Pfeil'
-        });
+    const left = Math.min(start.x, end.x);
+    const top = Math.min(start.y, end.y);
+    const width = Math.abs(end.x - start.x);
+    const height = Math.abs(end.y - start.y);
 
-        canvas.add(arrowGroup);
-        break;
+    const rect = new fabric.Rect({
+      left: left,
+      top: top,
+      width: width,
+      height: height,
+      fill: 'transparent',
+      stroke: strokeColor,
+      strokeWidth: strokeWidth,
+      customType: 'rectangle',
+      customName: 'Rechteck'
+    });
 
-      case 'text':
-        const textInput = prompt('Text eingeben:');
-        if (textInput) {
-          const text = new fabric.Text(textInput, {
-            left: pointer.x,
-            top: pointer.y,
-            fontSize: fontSize,
-            fill: strokeColor,
-            customType: 'text',
-            customName: `Text: ${textInput.substring(0, 20)}`
-          });
-          canvas.add(text);
-        }
-        break;
-    }
+    canvas.add(rect);
+  };
 
-    canvas.renderAll();
+  const createFinalCircle = (start, end) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    const radius = Math.sqrt(
+      Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2)
+    );
+
+    const circle = new fabric.Circle({
+      left: start.x - radius,
+      top: start.y - radius,
+      radius: radius,
+      fill: 'transparent',
+      stroke: strokeColor,
+      strokeWidth: strokeWidth,
+      customType: 'circle',
+      customName: 'Kreis'
+    });
+
+    canvas.add(circle);
   };
 
   // Layer operations
@@ -404,6 +606,18 @@ function ImageEditor({ image, onClose }) {
     }
   };
 
+  const toggleLayerVisibility = (layerId) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    const obj = layers.find(l => l.id === layerId)?.object;
+    if (obj) {
+      obj.visible = !obj.visible;
+      canvas.renderAll();
+      updateLayers();
+    }
+  };
+
   const selectLayer = (layerId) => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
@@ -415,6 +629,43 @@ function ImageEditor({ image, onClose }) {
       canvas.renderAll();
       setSelectedLayer(layerId);
     }
+  };
+
+  const startEditingLayer = (layerId, currentName) => {
+    setEditingLayerId(layerId);
+    setEditingText(currentName);
+  };
+
+  const finishEditingLayer = (layerId) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    const obj = layers.find(l => l.id === layerId)?.object;
+    if (obj && editingText.trim()) {
+      // Update customName
+      obj.customName = editingText.trim();
+
+      // If it's a text object, update the actual text
+      if (obj.type === 'text') {
+        obj.set('text', editingText.trim());
+      }
+
+      // If it's a group with text (like measurement), update the text element
+      if (obj.type === 'group' && obj.editable) {
+        const items = obj._objects || obj.getObjects();
+        const textItem = items.find(item => item.type === 'text');
+        if (textItem) {
+          textItem.set('text', editingText.trim());
+          obj.customName = editingText.trim();
+        }
+      }
+
+      canvas.renderAll();
+      updateLayers();
+    }
+
+    setEditingLayerId(null);
+    setEditingText('');
   };
 
   const moveLayerUp = (layerId) => {
@@ -633,11 +884,11 @@ function ImageEditor({ image, onClose }) {
           </div>
 
           {/* Canvas */}
-          <div className="editor-canvas-container">
+          <div className="editor-canvas-container" ref={containerRef}>
             <canvas ref={canvasRef} />
-            {activeTool === 'measurement' && measurementPoints.length === 1 && (
+            {isDrawing && (
               <div className="measurement-hint">
-                Klicken Sie auf den zweiten Punkt
+                Ziehen Sie, um das Objekt zu erstellen
               </div>
             )}
           </div>
@@ -652,11 +903,53 @@ function ImageEditor({ image, onClose }) {
               {layers.map((layer) => (
                 <div
                   key={layer.id}
-                  className={`layer-item ${selectedLayer === layer.id ? 'selected' : ''}`}
-                  onClick={() => selectLayer(layer.id)}
+                  className={`layer-item ${selectedLayer === layer.id ? 'selected' : ''} ${!layer.object.visible ? 'hidden' : ''}`}
                 >
-                  <span className="layer-name">{layer.name}</span>
+                  {editingLayerId === layer.id ? (
+                    <input
+                      type="text"
+                      className="layer-name-input"
+                      value={editingText}
+                      onChange={(e) => setEditingText(e.target.value)}
+                      onBlur={() => finishEditingLayer(layer.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') finishEditingLayer(layer.id);
+                        if (e.key === 'Escape') {
+                          setEditingLayerId(null);
+                          setEditingText('');
+                        }
+                      }}
+                      autoFocus
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span
+                      className="layer-name"
+                      onClick={() => selectLayer(layer.id)}
+                      onDoubleClick={() => startEditingLayer(layer.id, layer.name)}
+                    >
+                      {layer.name}
+                    </span>
+                  )}
                   <div className="layer-actions">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleLayerVisibility(layer.id);
+                      }}
+                      title={layer.object.visible ? "Ausblenden" : "Einblenden"}
+                    >
+                      {layer.object.visible ? <Eye size={16} /> : <EyeOff size={16} />}
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startEditingLayer(layer.id, layer.name);
+                      }}
+                      title="Text bearbeiten"
+                    >
+                      <Edit2 size={16} />
+                    </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
