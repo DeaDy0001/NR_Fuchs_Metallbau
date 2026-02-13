@@ -28,6 +28,7 @@ function DriveImages() {
   const [editingName, setEditingName] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(true); // Auto-refresh aktiviert
   const [newImagesCount, setNewImagesCount] = useState(0);
+  const [zoomLevel, setZoomLevel] = useState(1); // Zoom level (1 = 100%)
   const [pagination, setPagination] = useState({
     total: 0,
     limit: 100,
@@ -140,6 +141,19 @@ function DriveImages() {
   const handleImageClick = (image) => {
     setSelectedImage(image);
     setEditingName(image.name);
+    setZoomLevel(1); // Reset zoom when opening new image
+  };
+
+  const handleZoomIn = () => {
+    setZoomLevel(prev => Math.min(prev + 0.25, 3)); // Max 300%
+  };
+
+  const handleZoomOut = () => {
+    setZoomLevel(prev => Math.max(prev - 0.25, 0.5)); // Min 50%
+  };
+
+  const handleZoomReset = () => {
+    setZoomLevel(1);
   };
 
   const handleRename = async () => {
@@ -306,11 +320,35 @@ function DriveImages() {
             </button>
 
             <div className="modal-content">
-              <div className="modal-image">
-                <img src={selectedImage.local_path || selectedImage.thumbnail_url} alt={selectedImage.name} />
+              {/* Scrollable Image Container (Left) */}
+              <div className="modal-image-container">
+                <div className="zoom-controls">
+                  <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= 0.5}>
+                    -
+                  </button>
+                  <span className="zoom-level">{Math.round(zoomLevel * 100)}%</span>
+                  <button className="zoom-btn" onClick={handleZoomIn} title="Zoom In" disabled={zoomLevel >= 3}>
+                    +
+                  </button>
+                  <button className="zoom-btn zoom-reset" onClick={handleZoomReset} title="Reset Zoom">
+                    Reset
+                  </button>
+                </div>
+                <div className="modal-image-scroll">
+                  <img
+                    src={selectedImage.local_path || selectedImage.thumbnail_url}
+                    alt={selectedImage.name}
+                    style={{
+                      transform: `scale(${zoomLevel})`,
+                      transformOrigin: 'top left',
+                      transition: 'transform 0.2s ease'
+                    }}
+                  />
+                </div>
               </div>
 
-              <div className="modal-details">
+              {/* Fixed Sidebar (Right) */}
+              <div className="modal-sidebar">
                 <div className="modal-section">
                   <label>Name</label>
                   <div className="rename-input-group">
@@ -320,7 +358,7 @@ function DriveImages() {
                       onChange={(e) => setEditingName(e.target.value)}
                       className="input"
                     />
-                    <button className="btn btn-primary" onClick={handleRename}>
+                    <button className="btn btn-primary btn-sm" onClick={handleRename}>
                       Umbenennen
                     </button>
                   </div>
