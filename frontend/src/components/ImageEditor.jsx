@@ -124,10 +124,64 @@ function ImageEditor({ image, onClose }) {
     canvas.isDrawingMode = tool === 'freehand';
     canvas.selection = tool === 'select';
 
+    // Configure freehand brush with color and width
+    if (tool === 'freehand' && canvas.freeDrawingBrush) {
+      canvas.freeDrawingBrush.color = strokeColor;
+      canvas.freeDrawingBrush.width = strokeWidth;
+    }
+
     if (tool === 'measurement') {
       setMeasurementPoints([]);
     }
   };
+
+  // Update freehand brush when color or width changes
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || activeTool !== 'freehand' || !canvas.freeDrawingBrush) return;
+
+    canvas.freeDrawingBrush.color = strokeColor;
+    canvas.freeDrawingBrush.width = strokeWidth;
+  }, [strokeColor, strokeWidth, activeTool]);
+
+  // Zoom with Shift + Mouse Wheel
+  useEffect(() => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    const handleMouseWheel = (opt) => {
+      const e = opt.e;
+
+      // Only zoom when Shift is pressed
+      if (!e.shiftKey) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const delta = e.deltaY;
+      let zoom = canvas.getZoom();
+
+      // Zoom in/out by 10%
+      zoom *= 0.999 ** delta;
+
+      // Limit zoom range
+      if (zoom > 20) zoom = 20;
+      if (zoom < 0.1) zoom = 0.1;
+
+      // Zoom to mouse position
+      const point = new fabric.Point(opt.e.offsetX, opt.e.offsetY);
+      canvas.zoomToPoint(point, zoom);
+
+      opt.e.preventDefault();
+      opt.e.stopPropagation();
+    };
+
+    canvas.on('mouse:wheel', handleMouseWheel);
+
+    return () => {
+      canvas.off('mouse:wheel', handleMouseWheel);
+    };
+  }, []);
 
   // Canvas click handler for measurements
   useEffect(() => {
@@ -135,6 +189,11 @@ function ImageEditor({ image, onClose }) {
     if (!canvas) return;
 
     const handleCanvasClick = (e) => {
+      // Don't place new elements if an existing object was clicked
+      if (e.target) {
+        return;
+      }
+
       if (activeTool === 'measurement') {
         const pointer = canvas.getPointer(e.e);
 
@@ -156,7 +215,12 @@ function ImageEditor({ image, onClose }) {
         }
       } else if (activeTool !== 'select' && activeTool !== 'freehand' && activeTool !== 'measurement') {
         const pointer = canvas.getPointer(e.e);
-        handleDrawing(pointer);
+
+        // Check if click is within canvas bounds
+        if (pointer.x >= 0 && pointer.x <= canvas.width &&
+            pointer.y >= 0 && pointer.y <= canvas.height) {
+          handleDrawing(pointer);
+        }
       }
     };
 
