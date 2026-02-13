@@ -146,15 +146,24 @@ function Sidebar({ collapsed }) {
           rel="noopener noreferrer"
           className="netrock-link"
         >
-          <img
-            src="/NR_Logo.png"
-            alt="NetRock Entertainment"
-            className="netrock-logo"
-          />
           {!collapsed && (
-            <span className="netrock-text">
-              Entwickelt von<br />NetRock Entertainment
-            </span>
+            <>
+              <img
+                src="/NR_Logo.png"
+                alt="NetRock Entertainment"
+                className="netrock-logo"
+              />
+              <span className="netrock-text">
+                Entwickelt von<br />NetRock Entertainment
+              </span>
+            </>
+          )}
+          {collapsed && (
+            <img
+              src="/NR_Logo.png"
+              alt="NetRock Entertainment"
+              className="netrock-logo-collapsed"
+            />
           )}
         </a>
       </div>

@@ -290,18 +290,17 @@ function DriveImages() {
 
   // Pan/Drag handlers for zoomed image
   const handleMouseDown = (e) => {
-    if (zoomLevel > 1) {
-      setIsDragging(true);
-      setDragStart({
-        x: e.clientX - panPosition.x,
-        y: e.clientY - panPosition.y
-      });
-      e.preventDefault();
-    }
+    // Allow panning at any zoom level
+    setIsDragging(true);
+    setDragStart({
+      x: e.clientX - panPosition.x,
+      y: e.clientY - panPosition.y
+    });
+    e.preventDefault();
   };
 
   const handleMouseMove = (e) => {
-    if (isDragging && zoomLevel > 1) {
+    if (isDragging) {
       setPanPosition({
         x: e.clientX - dragStart.x,
         y: e.clientY - dragStart.y
@@ -1053,7 +1052,7 @@ function DriveImages() {
                   onMouseLeave={handleMouseUp}
                   onWheel={handleWheel}
                   style={{
-                    cursor: zoomLevel > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
+                    cursor: isDragging ? 'grabbing' : 'grab'
                   }}
                 >
                   <img
