@@ -35,8 +35,9 @@ function DriveImages() {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 }); // Drag start position
   const [pagination, setPagination] = useState({
     total: 0,
-    limit: 100,
-    offset: 0
+    limit: 50,
+    offset: 0,
+    currentPage: 1
   });
   const [projects, setProjects] = useState([]); // Alle Projekte
   const [selectedProjects, setSelectedProjects] = useState([]); // Markierte Projekte aus localStorage
@@ -53,6 +54,10 @@ function DriveImages() {
   const [selectedSubfolders, setSelectedSubfolders] = useState([]); // Ausgewählte Ordner-Badges
   const [showProjectModal, setShowProjectModal] = useState(false); // Projekt-Auswahl Modal
   const [projectSearchQuery, setProjectSearchQuery] = useState(''); // Suchfeld im Projekt-Modal
+  const [drivePaths, setDrivePaths] = useState([]); // Alle verfügbaren Google Drive Pfade
+  const [selectedDrivePaths, setSelectedDrivePaths] = useState([]); // Ausgewählte Drive-Pfade für Filter
+  const [sortBy, setSortBy] = useState('created_at'); // Sortierfeld: name, photo_taken_at, created_at
+  const [sortOrder, setSortOrder] = useState('desc'); // Sortierrichtung: asc, desc
   const prevImagesCountRef = useRef(0); // Für Auto-Refresh Benachrichtigungen
 
   // Load images function (defined before useEffects to avoid TDZ error)
@@ -87,6 +92,13 @@ function DriveImages() {
       if (selectedSubfolders.length > 0) {
         params.append('subfolders', selectedSubfolders.join(','));
       }
+      if (selectedDrivePaths.length > 0) {
+        params.append('drivePathIds', selectedDrivePaths.join(','));
+      }
+
+      // Sorting
+      params.append('sortBy', sortBy);
+      params.append('sortOrder', sortOrder);
 
       // Image project filter (mutually exclusive)
       if (showAllImages) {
@@ -131,6 +143,9 @@ function DriveImages() {
     uploadDateFrom,
     uploadDateTo,
     selectedSubfolders,
+    selectedDrivePaths,
+    sortBy,
+    sortOrder,
     showAllImages,
     showOnlyWithProjects,
     showOnlyUnassigned
@@ -148,9 +163,22 @@ function DriveImages() {
     }
   };
 
+  const loadDrivePaths = async () => {
+    try {
+      const response = await fetch('/api/drive/paths');
+      if (response.ok) {
+        const data = await response.json();
+        setDrivePaths(data);
+      }
+    } catch (error) {
+      console.error('Error loading drive paths:', error);
+    }
+  };
+
   // Initial load (only once)
   useEffect(() => {
     loadProjects();
+    loadDrivePaths();
     loadImages(); // Initial load
     // Load selected projects from localStorage
     const saved = localStorage.getItem('selectedProjects');
@@ -206,6 +234,18 @@ function DriveImages() {
         icon: '/favicon.ico'
       });
     }
+  };
+
+  // Pagination helpers
+  const totalPages = Math.ceil(pagination.total / pagination.limit);
+
+  const handlePageChange = (page) => {
+    const offset = (page - 1) * pagination.limit;
+    setPagination(prev => ({ ...prev, currentPage: page, offset }));
+  };
+
+  const handleLimitChange = (newLimit) => {
+    setPagination(prev => ({ ...prev, limit: newLimit, currentPage: 1, offset: 0 }));
   };
 
   const handleRefresh = async () => {
@@ -625,6 +665,51 @@ function DriveImages() {
             </div>
           </div>
 
+          {/* Sortierung */}
+          <div className="filters-row">
+            <div className="filter-group">
+              <span className="filter-label">Sortieren:</span>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="sort-select"
+              >
+                <option value="created_at">Upload-Datum</option>
+                <option value="photo_taken_at">Foto-Aufnahme</option>
+                <option value="name">Name</option>
+              </select>
+              <button
+                className="sort-order-btn"
+                onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+                title={sortOrder === 'asc' ? 'Aufsteigend' : 'Absteigend'}
+              >
+                {sortOrder === 'asc' ? '↑' : '↓'}
+              </button>
+            </div>
+          </div>
+
+          {/* Google Drive Pfad Filter */}
+          {drivePaths.length > 1 && (
+            <div className="subfolder-filter-row">
+              <span className="filter-label">Google Drive:</span>
+              {drivePaths.map(drivePath => (
+                <button
+                  key={drivePath.id}
+                  className={`subfolder-badge-filter ${selectedDrivePaths.includes(drivePath.id) ? 'active' : ''}`}
+                  onClick={() => {
+                    setSelectedDrivePaths(prev =>
+                      prev.includes(drivePath.id)
+                        ? prev.filter(id => id !== drivePath.id)
+                        : [...prev, drivePath.id]
+                    );
+                  }}
+                >
+                  {drivePath.display_name || drivePath.drive_path}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Ordner-Badge Filter */}
           {(() => {
             // Get unique subfolders from images
@@ -786,6 +871,93 @@ function DriveImages() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Pagination */}
+      {!loading && images.length > 0 && (
+        <div className="pagination-container">
+          <div className="pagination-info">
+            Zeige {((pagination.currentPage - 1) * pagination.limit) + 1} bis {Math.min(pagination.currentPage * pagination.limit, pagination.total)} von {pagination.total} Bildern
+          </div>
+
+          <div className="pagination-controls">
+            <button
+              className="pagination-btn"
+              onClick={() => handlePageChange(pagination.currentPage - 1)}
+              disabled={pagination.currentPage === 1}
+            >
+              ←
+            </button>
+
+            {/* Page numbers */}
+            {(() => {
+              const pages = [];
+              const maxPagesToShow = 7;
+              let startPage = Math.max(1, pagination.currentPage - Math.floor(maxPagesToShow / 2));
+              let endPage = Math.min(totalPages, startPage + maxPagesToShow - 1);
+
+              if (endPage - startPage < maxPagesToShow - 1) {
+                startPage = Math.max(1, endPage - maxPagesToShow + 1);
+              }
+
+              if (startPage > 1) {
+                pages.push(
+                  <button key={1} className="pagination-btn" onClick={() => handlePageChange(1)}>1</button>
+                );
+                if (startPage > 2) {
+                  pages.push(<span key="start-ellipsis" className="pagination-ellipsis">...</span>);
+                }
+              }
+
+              for (let i = startPage; i <= endPage; i++) {
+                pages.push(
+                  <button
+                    key={i}
+                    className={`pagination-btn ${i === pagination.currentPage ? 'active' : ''}`}
+                    onClick={() => handlePageChange(i)}
+                  >
+                    {i}
+                  </button>
+                );
+              }
+
+              if (endPage < totalPages) {
+                if (endPage < totalPages - 1) {
+                  pages.push(<span key="end-ellipsis" className="pagination-ellipsis">...</span>);
+                }
+                pages.push(
+                  <button key={totalPages} className="pagination-btn" onClick={() => handlePageChange(totalPages)}>{totalPages}</button>
+                );
+              }
+
+              return pages;
+            })()}
+
+            <button
+              className="pagination-btn"
+              onClick={() => handlePageChange(pagination.currentPage + 1)}
+              disabled={pagination.currentPage === totalPages}
+            >
+              →
+            </button>
+          </div>
+
+          <div className="pagination-limit">
+            <span className="limit-label">Bilder pro Seite:</span>
+            <select
+              value={pagination.limit}
+              onChange={(e) => handleLimitChange(parseInt(e.target.value))}
+              className="limit-select"
+            >
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+              <option value={150}>150</option>
+              <option value={200}>200</option>
+              <option value={250}>250</option>
+              <option value={300}>300</option>
+            </select>
+          </div>
         </div>
       )}
 

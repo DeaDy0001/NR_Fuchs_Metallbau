@@ -243,6 +243,9 @@ const getImages = (req, res) => {
       uploadDateFrom = '',
       uploadDateTo = '',
       subfolders = '',
+      drivePathIds = '',
+      sortBy = 'created_at',
+      sortOrder = 'desc',
       onlyUnassigned = '',
       showAllImages = '',
       onlyWithProjects = ''
@@ -310,12 +313,23 @@ const getImages = (req, res) => {
       params.push(...subfolderArray);
     }
 
+    // Drive path filter
+    if (drivePathIds) {
+      const drivePathIdArray = drivePathIds.split(',').map(id => parseInt(id.trim()));
+      whereClauses.push(`di.drive_path_id IN (${drivePathIdArray.map(() => '?').join(', ')})`);
+      params.push(...drivePathIdArray);
+    }
+
     // Add WHERE clauses
     if (whereClauses.length > 0) {
       query += ' WHERE ' + whereClauses.join(' AND ');
     }
 
-    query += ' ORDER BY di.created_at DESC LIMIT ? OFFSET ?';
+    // Sorting
+    const validSortFields = ['name', 'photo_taken_at', 'created_at'];
+    const sortField = validSortFields.includes(sortBy) ? sortBy : 'created_at';
+    const order = sortOrder.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+    query += ` ORDER BY di.${sortField} ${order} LIMIT ? OFFSET ?`;
     params.push(parseInt(limit), parseInt(offset));
 
     const stmt = db.prepare(query);
