@@ -656,6 +656,23 @@
   color: white;
 }
 
+.zoom-btn.editor-btn {
+  background-color: rgba(59, 130, 246, 0.1);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: var(--accent-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+
+.zoom-btn.editor-btn:hover:not(:disabled) {
+  background-color: var(--accent-primary);
+  border-color: var(--accent-hover);
+  color: white;
+}
+
 .zoom-level {
   font-size: 0.9rem;
   font-weight: 600;

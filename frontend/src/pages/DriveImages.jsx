@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Grid, List, RefreshCw, Search, Maximize2, Edit2, X, Play, Pause, Trash2, ChevronLeft, ChevronRight, Filter, Calendar } from 'lucide-react';
+import { Grid, List, RefreshCw, Search, Maximize2, Edit2, X, Play, Pause, Trash2, ChevronLeft, ChevronRight, Filter, Calendar, Pencil } from 'lucide-react';
+import ImageEditor from '../components/ImageEditor';
 import './DriveImages.css';
 
 // Helper function to format SQLite timestamps (which are in UTC)
@@ -30,6 +31,7 @@ function DriveImages() {
   const [newImagesCount, setNewImagesCount] = useState(0);
   const [zoomLevel, setZoomLevel] = useState(1); // Zoom level (1 = 100%)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false); // Delete confirmation dialog
+  const [showEditor, setShowEditor] = useState(false); // Image editor
   const [panPosition, setPanPosition] = useState({ x: 0, y: 0 }); // Pan position for zoomed image
   const [isDragging, setIsDragging] = useState(false); // Is user dragging the image
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 }); // Drag start position
@@ -1018,6 +1020,15 @@ function DriveImages() {
                     Reset
                   </button>
 
+                  <button
+                    className="zoom-btn editor-btn"
+                    onClick={() => setShowEditor(true)}
+                    title="Editor öffnen"
+                  >
+                    <Pencil size={18} />
+                    Editor
+                  </button>
+
                   <div className="zoom-controls-right">
                     <button
                       className="zoom-btn nav-btn"
@@ -1293,6 +1304,19 @@ function DriveImages() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Image Editor */}
+      {showEditor && selectedImage && (
+        <ImageEditor
+          image={selectedImage}
+          onClose={() => setShowEditor(false)}
+          onSave={async (data) => {
+            // TODO: Implement save functionality
+            console.log('Save editor data:', data);
+            alert('Editor-Funktionalität wird noch implementiert!');
+          }}
+        />
       )}
     </div>
   );
