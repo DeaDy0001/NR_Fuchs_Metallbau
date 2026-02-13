@@ -520,12 +520,12 @@ const assignImageToProject = async (req, res) => {
     }
 
     // Get project base path from settings
-    const setting = db.prepare("SELECT value FROM settings WHERE key = 'project_base_path'").get();
-    if (!setting || !setting.value) {
+    const setting = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    if (!setting || !setting.project_path) {
       return res.status(400).json({ error: 'Project base path not configured' });
     }
 
-    const projectBasePath = setting.value;
+    const projectBasePath = setting.project_path;
     const projectFolderPath = path.join(projectBasePath, project.folder_name);
     const imagesFolderPath = path.join(projectFolderPath, 'Bilder');
 
