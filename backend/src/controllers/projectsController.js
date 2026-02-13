@@ -57,7 +57,7 @@ const setProjectPath = async (req, res) => {
 };
 
 // Get all projects
-const getProjects = (req, res) => {
+const getProjects = async (req, res) => {
   try {
     const { limit = 100, offset = 0, search = '' } = req.query;
 
@@ -73,22 +73,53 @@ const getProjects = (req, res) => {
     query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
     params.push(parseInt(limit), parseInt(offset));
 
-    const result = db.prepare(query).all(...params);
+    const projects = db.prepare(query).all(...params);
+
+    // Get project settings to build folder paths
+    const settings = db.prepare('SELECT * FROM project_settings WHERE id = 1').get();
+
+    // Enrich each project with image count and folder creation date
+    const enrichedProjects = await Promise.all(projects.map(async (project) => {
+      // Count images assigned to this project
+      const imageCount = db.prepare(
+        'SELECT COUNT(*) as count FROM image_project_assignments WHERE project_id = ?'
+      ).get(project.id);
+
+      // Get folder creation date from filesystem
+      let folderCreatedAt = project.created_at; // Fallback to DB date
+      if (settings?.project_path) {
+        const projectFolderPath = path.join(settings.project_path, project.folder_name);
+        try {
+          if (await fs.pathExists(projectFolderPath)) {
+            const stats = await fs.stat(projectFolderPath);
+            folderCreatedAt = stats.birthtime.toISOString();
+          }
+        } catch (err) {
+          console.error(`Error getting folder stats for ${project.folder_name}:`, err);
+        }
+      }
+
+      return {
+        ...project,
+        image_count: imageCount.count,
+        folder_created_at: folderCreatedAt
+      };
+    }));
 
     // Get total count
     let countQuery = 'SELECT COUNT(*) as count FROM projects';
     const countParams = [];
-    
+
     if (search) {
       countQuery += ' WHERE folder_name LIKE ? OR notes LIKE ?';
       const searchParam = `%${search}%`;
       countParams.push(searchParam, searchParam);
     }
-    
+
     const countResult = db.prepare(countQuery).get(...countParams);
 
     res.json({
-      projects: result,
+      projects: enrichedProjects,
       total: countResult.count,
       limit: parseInt(limit),
       offset: parseInt(offset)
@@ -286,7 +317,7 @@ const getProjectFiles = async (req, res) => {
         .map(file => ({
           name: file,
           path: path.join(imagesFolderPath, file),
-          url: `/uploads/projects/${project.folder_name}/Bilder/${file}`,
+          url: `/uploads/projects/${encodeURIComponent(project.folder_name)}/Bilder/${encodeURIComponent(file)}`,
           type: 'image'
         }));
     }
@@ -298,7 +329,7 @@ const getProjectFiles = async (req, res) => {
       .map(file => ({
         name: file,
         path: path.join(projectFolderPath, file),
-        url: `/uploads/projects/${project.folder_name}/${file}`,
+        url: `/uploads/projects/${encodeURIComponent(project.folder_name)}/${encodeURIComponent(file)}`,
         type: 'pdf'
       }));
 

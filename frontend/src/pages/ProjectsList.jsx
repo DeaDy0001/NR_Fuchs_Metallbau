@@ -234,7 +234,8 @@ function ProjectsList() {
                 )}
 
                 <div className="project-meta">
-                  Erstellt: {new Date(project.created_at).toLocaleDateString('de-DE')}
+                  <div>Erstellt: {new Date(project.folder_created_at || project.created_at).toLocaleDateString('de-DE')}</div>
+                  <div>Bilder: {project.image_count || 0}</div>
                 </div>
               </div>
             </div>
