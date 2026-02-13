@@ -24,6 +24,16 @@
   background-color: var(--bg-hover);
 }
 
+.btn-success {
+  background-color: #10b981;
+  color: white;
+  border: 1px solid #059669;
+}
+
+.btn-success:hover:not(:disabled) {
+  background-color: #059669;
+}
+
 .spinning {
   animation: spin 1s linear infinite;
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Grid, List, RefreshCw, Search, Maximize2, Edit2, X } from 'lucide-react';
+import { Grid, List, RefreshCw, Search, Maximize2, Edit2, X, Play, Pause } from 'lucide-react';
 import './DriveImages.css';
 
 function DriveImages() {
@@ -9,18 +9,51 @@ function DriveImages() {
   const [loading, setLoading] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [editingName, setEditingName] = useState('');
+  const [autoRefresh, setAutoRefresh] = useState(true); // Auto-refresh aktiviert
+  const [newImagesCount, setNewImagesCount] = useState(0);
   const [pagination, setPagination] = useState({
     total: 0,
     limit: 100,
     offset: 0
   });
 
+  // Initial load
   useEffect(() => {
     loadImages();
   }, [searchQuery]);
 
-  const loadImages = async () => {
-    setLoading(true);
+  // Auto-refresh Bilder-Liste alle 10 Sekunden
+  useEffect(() => {
+    if (!autoRefresh) return;
+
+    const interval = setInterval(() => {
+      loadImages(true); // Silent refresh (kein Loading-Spinner)
+    }, 10000); // 10 Sekunden
+
+    return () => clearInterval(interval);
+  }, [autoRefresh, searchQuery]);
+
+  // Auto-sync mit Google Drive alle 5 Minuten
+  useEffect(() => {
+    if (!autoRefresh) return;
+
+    const syncInterval = setInterval(async () => {
+      try {
+        console.log('🔄 Auto-Sync mit Google Drive...');
+        await fetch('/api/drive/images/refresh', { method: 'POST' });
+        loadImages(true);
+      } catch (error) {
+        console.error('Auto-sync error:', error);
+      }
+    }, 5 * 60 * 1000); // 5 Minuten
+
+    return () => clearInterval(syncInterval);
+  }, [autoRefresh]);
+
+  const loadImages = async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+    }
 
     try {
       const params = new URLSearchParams({
@@ -32,13 +65,37 @@ function DriveImages() {
       const response = await fetch(`/api/drive/images?${params}`);
       if (response.ok) {
         const data = await response.json();
+
+        // Prüfe ob neue Bilder vorhanden sind
+        if (silent && data.images.length > images.length) {
+          const newCount = data.images.length - images.length;
+          setNewImagesCount(newCount);
+
+          // Toast-Benachrichtigung
+          showNewImagesNotification(newCount);
+        }
+
         setImages(data.images);
         setPagination(prev => ({ ...prev, total: data.total }));
       }
     } catch (error) {
       console.error('Error loading images:', error);
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
+    }
+  };
+
+  const showNewImagesNotification = (count) => {
+    console.log(`🔔 ${count} neue Bilder gefunden!`);
+
+    // Optional: Browser-Benachrichtigung (wenn erlaubt)
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('Neue Bilder!', {
+        body: `${count} neue ${count === 1 ? 'Bild' : 'Bilder'} verfügbar`,
+        icon: '/favicon.ico'
+      });
     }
   };
 
@@ -103,12 +160,20 @@ function DriveImages() {
         <h1>Drive Bilder</h1>
         <div className="header-actions">
           <button
+            className={`btn ${autoRefresh ? 'btn-success' : 'btn-secondary'}`}
+            onClick={() => setAutoRefresh(!autoRefresh)}
+            title={autoRefresh ? 'Auto-Refresh deaktivieren' : 'Auto-Refresh aktivieren'}
+          >
+            {autoRefresh ? <Pause size={18} /> : <Play size={18} />}
+            {autoRefresh ? 'Auto-Refresh AN' : 'Auto-Refresh AUS'}
+          </button>
+          <button
             className="btn btn-secondary"
             onClick={handleRefresh}
             disabled={loading}
           >
             <RefreshCw size={18} className={loading ? 'spinning' : ''} />
-            Aktualisieren
+            Manuell Aktualisieren
           </button>
         </div>
       </div>
