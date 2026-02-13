@@ -561,6 +561,15 @@
   border-color: var(--accent-primary);
 }
 
+/* Icon button for rename */
+.btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem !important;
+  min-width: 2.5rem;
+}
+
 @media (max-width: 768px) {
   .modal-content {
     flex-direction: column;

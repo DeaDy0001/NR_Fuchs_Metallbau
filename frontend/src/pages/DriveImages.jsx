@@ -579,8 +579,12 @@ function DriveImages() {
                       onChange={(e) => setEditingName(e.target.value)}
                       className="input"
                     />
-                    <button className="btn btn-primary btn-sm" onClick={handleRename}>
-                      Umbenennen
+                    <button
+                      className="btn btn-primary btn-sm btn-icon"
+                      onClick={handleRename}
+                      title="Umbenennen"
+                    >
+                      <Edit2 size={16} />
                     </button>
                   </div>
                 </div>
