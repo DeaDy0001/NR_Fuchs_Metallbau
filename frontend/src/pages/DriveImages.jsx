@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Grid, List, RefreshCw, Search, Maximize2, Edit2, X, Play, Pause, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Grid, List, RefreshCw, Search, Maximize2, Edit2, X, Play, Pause, Trash2, ChevronLeft, ChevronRight, Filter, Calendar } from 'lucide-react';
 import './DriveImages.css';
 
 // Helper function to format SQLite timestamps (which are in UTC)
@@ -41,6 +41,12 @@ function DriveImages() {
   const [projects, setProjects] = useState([]); // Alle Projekte
   const [selectedProjects, setSelectedProjects] = useState([]); // Markierte Projekte aus localStorage
 
+  // Filter states
+  const [selectedProjectsFilter, setSelectedProjectsFilter] = useState([]); // Projekte für Filter
+  const [dateFrom, setDateFrom] = useState(''); // Start-Datum
+  const [dateTo, setDateTo] = useState(''); // End-Datum
+  const [showOnlyUnassigned, setShowOnlyUnassigned] = useState(true); // Nur Bilder ohne Projekt
+
   // Initial load
   useEffect(() => {
     loadImages();
@@ -54,7 +60,7 @@ function DriveImages() {
         console.error('Error loading selected projects:', e);
       }
     }
-  }, [searchQuery]);
+  }, [searchQuery, selectedProjectsFilter, dateFrom, dateTo, showOnlyUnassigned]);
 
   // Auto-refresh Bilder-Liste alle 10 Sekunden
   useEffect(() => {
@@ -95,6 +101,20 @@ function DriveImages() {
         offset: pagination.offset,
         search: searchQuery
       });
+
+      // Add filters
+      if (selectedProjectsFilter.length > 0) {
+        params.append('projectIds', selectedProjectsFilter.join(','));
+      }
+      if (dateFrom) {
+        params.append('dateFrom', dateFrom);
+      }
+      if (dateTo) {
+        params.append('dateTo', dateTo);
+      }
+      if (showOnlyUnassigned) {
+        params.append('onlyUnassigned', 'true');
+      }
 
       const response = await fetch(`/api/drive/images?${params}`);
       if (response.ok) {
@@ -210,12 +230,29 @@ function DriveImages() {
     setIsDragging(false);
   };
 
-  // Shift + Wheel zoom
+  // Shift + Wheel zoom (zoom from mouse position)
   const handleWheel = (e) => {
     if (e.shiftKey) {
       e.preventDefault();
+
       const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      setZoomLevel(prev => Math.min(Math.max(prev + delta, 0.5), 3));
+      const newZoomLevel = Math.min(Math.max(zoomLevel + delta, 0.5), 3);
+
+      // Get mouse position relative to the container
+      const rect = e.currentTarget.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      // Calculate the point in the image that the mouse is over
+      const imageX = (mouseX - panPosition.x) / zoomLevel;
+      const imageY = (mouseY - panPosition.y) / zoomLevel;
+
+      // Calculate new pan position to keep the same point under the mouse
+      const newPanX = mouseX - imageX * newZoomLevel;
+      const newPanY = mouseY - imageY * newZoomLevel;
+
+      setZoomLevel(newZoomLevel);
+      setPanPosition({ x: newPanX, y: newPanY });
     }
   };
 
@@ -238,6 +275,13 @@ function DriveImages() {
 
       if (response.ok) {
         const result = await response.json();
+        // Update selectedImage to reflect the new assignment
+        const updatedProjects = selectedImage.projects ? [...selectedImage.projects] : [];
+        const project = projects.find(p => p.id === projectId);
+        if (project && !updatedProjects.some(p => p.id === projectId)) {
+          updatedProjects.push(project);
+          setSelectedImage({ ...selectedImage, projects: updatedProjects });
+        }
         // Reload images to get updated project assignments
         loadImages();
         console.log(`✅ Bild zu "${result.projectName}" hinzugefügt`);
@@ -248,6 +292,37 @@ function DriveImages() {
     } catch (error) {
       console.error('Error assigning image to project:', error);
       alert(`Fehler beim Zuweisen: ${error.message}`);
+    }
+  };
+
+  // Unassign image from project
+  const handleUnassignFromProject = async (projectId, e) => {
+    e.stopPropagation(); // Prevent triggering the assign handler
+    try {
+      const response = await fetch('/api/drive/images/unassign-from-project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageId: selectedImage.id,
+          projectId: projectId
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        // Update selectedImage to reflect the removal
+        const updatedProjects = selectedImage.projects?.filter(p => p.id !== projectId) || [];
+        setSelectedImage({ ...selectedImage, projects: updatedProjects });
+        // Reload images to get updated project assignments
+        loadImages();
+        console.log(`✅ Bild von "${result.projectName}" entfernt`);
+      } else {
+        const error = await response.json();
+        alert(`Fehler: ${error.error || 'Unbekannter Fehler'}`);
+      }
+    } catch (error) {
+      console.error('Error unassigning image from project:', error);
+      alert(`Fehler beim Entfernen: ${error.message}`);
     }
   };
 
@@ -383,15 +458,73 @@ function DriveImages() {
       </div>
 
       <div className="toolbar">
-        <div className="search-box">
-          <Search size={18} />
-          <input
-            type="text"
-            placeholder="Bilder durchsuchen..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="search-input"
-          />
+        <div className="search-filters-container">
+          <div className="search-box">
+            <Search size={18} />
+            <input
+              type="text"
+              placeholder="Bilder durchsuchen..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="search-input"
+            />
+          </div>
+
+          <div className="filters-row">
+            {/* Projekt-Filter */}
+            <div className="filter-group">
+              <Filter size={16} />
+              <select
+                multiple
+                value={selectedProjectsFilter}
+                onChange={(e) => {
+                  const selected = Array.from(e.target.selectedOptions, option => parseInt(option.value));
+                  setSelectedProjectsFilter(selected);
+                }}
+                className="filter-select"
+              >
+                <option value="" disabled>Projekte auswählen...</option>
+                {projects.map(project => (
+                  <option key={project.id} value={project.id}>
+                    {project.folder_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Datums-Filter */}
+            <div className="filter-group">
+              <Calendar size={16} />
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="filter-date"
+                placeholder="Von"
+              />
+              <span className="date-separator">bis</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="filter-date"
+                placeholder="Bis"
+              />
+            </div>
+
+            {/* Nur unzugeordnete Bilder */}
+            <div className="filter-checkbox-group">
+              <label className="filter-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={showOnlyUnassigned}
+                  onChange={(e) => setShowOnlyUnassigned(e.target.checked)}
+                  className="filter-checkbox"
+                />
+                Nur Bilder ohne Projekt
+              </label>
+            </div>
+          </div>
         </div>
 
         <div className="view-toggle">
@@ -453,9 +586,6 @@ function DriveImages() {
                   </div>
                   <div className="image-info">
                     <div className="image-name" title={image.name}>{image.name}</div>
-                    {image.subfolder && (
-                      <div className="subfolder-badge-small">{image.subfolder}</div>
-                    )}
                     {image.projects && image.projects.length > 0 && (
                       <div className="project-badges">
                         {image.projects.map(project => (
@@ -737,17 +867,32 @@ function DriveImages() {
                     <div className="project-list">
                       {projects
                         .filter(p => selectedProjects.includes(p.id))
-                        .map(project => (
-                          <button
-                            key={project.id}
-                            className="project-item"
-                            onClick={() => handleAssignToProject(project.id)}
-                            style={{ borderLeftColor: project.color }}
-                            title={`Bild zu "${project.folder_name}" hinzufügen`}
-                          >
-                            <span className="project-item-name">{project.folder_name}</span>
-                          </button>
-                        ))}
+                        .map(project => {
+                          const isAssigned = selectedImage.projects?.some(p => p.id === project.id);
+                          return (
+                            <button
+                              key={project.id}
+                              className={`project-item ${isAssigned ? 'project-assigned' : ''}`}
+                              onClick={() => !isAssigned && handleAssignToProject(project.id)}
+                              style={{ borderLeftColor: project.color }}
+                              title={isAssigned ? `✓ Bereits zugeordnet zu "${project.folder_name}"` : `Bild zu "${project.folder_name}" hinzufügen`}
+                            >
+                              <span className="project-item-name">
+                                {isAssigned && <span className="checkmark">✓ </span>}
+                                {project.folder_name}
+                              </span>
+                              {isAssigned && (
+                                <button
+                                  className="project-unassign-btn"
+                                  onClick={(e) => handleUnassignFromProject(project.id, e)}
+                                  title={`Von "${project.folder_name}" entfernen`}
+                                >
+                                  <X size={16} />
+                                </button>
+                              )}
+                            </button>
+                          );
+                        })}
                     </div>
                   )}
                 </div>

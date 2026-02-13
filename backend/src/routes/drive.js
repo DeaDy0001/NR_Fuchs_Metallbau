@@ -16,5 +16,6 @@ router.put('/images/:id/rename', driveController.renameImage);
 router.delete('/images/:id', driveController.deleteImage);
 router.post('/images/refresh', driveController.refreshImages);
 router.post('/images/assign-to-project', driveController.assignImageToProject);
+router.post('/images/unassign-from-project', driveController.unassignImageFromProject);
 
 module.exports = router;

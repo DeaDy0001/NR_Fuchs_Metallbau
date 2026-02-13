@@ -233,17 +233,51 @@ const updateDrivePath = (req, res) => {
 // Get all images from configured drive paths
 const getImages = (req, res) => {
   try {
-    const { limit = 100, offset = 0, search = '' } = req.query;
+    const { limit = 100, offset = 0, search = '', projectIds = '', dateFrom = '', dateTo = '', onlyUnassigned = '' } = req.query;
 
-    let query = 'SELECT * FROM drive_images WHERE 1=1';
+    let query = 'SELECT DISTINCT di.* FROM drive_images di';
     const params = [];
+    const whereClauses = [];
 
+    // Filter by projects
+    if (projectIds) {
+      const projectIdArray = projectIds.split(',').map(id => parseInt(id.trim()));
+      query += ' JOIN image_project_assignments ipa ON di.id = ipa.image_id';
+      whereClauses.push(`ipa.project_id IN (${projectIdArray.map(() => '?').join(', ')})`);
+      params.push(...projectIdArray);
+    }
+
+    // Filter by "only unassigned"
+    if (onlyUnassigned === 'true') {
+      query += ' LEFT JOIN image_project_assignments ipa2 ON di.id = ipa2.image_id';
+      whereClauses.push('ipa2.id IS NULL');
+    }
+
+    // Search filter
     if (search) {
-      query += ' AND (name LIKE ? OR original_name LIKE ?)';
+      whereClauses.push('(di.name LIKE ? OR di.original_name LIKE ?)');
       params.push(`%${search}%`, `%${search}%`);
     }
 
-    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    // Date filters
+    if (dateFrom) {
+      whereClauses.push('di.photo_taken_at >= ?');
+      params.push(dateFrom);
+    }
+    if (dateTo) {
+      // Add 1 day to include the entire end date
+      const endDate = new Date(dateTo);
+      endDate.setDate(endDate.getDate() + 1);
+      whereClauses.push('di.photo_taken_at < ?');
+      params.push(endDate.toISOString().split('T')[0]);
+    }
+
+    // Add WHERE clauses
+    if (whereClauses.length > 0) {
+      query += ' WHERE ' + whereClauses.join(' AND ');
+    }
+
+    query += ' ORDER BY di.created_at DESC LIMIT ? OFFSET ?';
     params.push(parseInt(limit), parseInt(offset));
 
     const stmt = db.prepare(query);
@@ -265,12 +299,41 @@ const getImages = (req, res) => {
     }));
 
     // Get total count
-    let countQuery = 'SELECT COUNT(*) as count FROM drive_images';
+    let countQuery = 'SELECT COUNT(DISTINCT di.id) as count FROM drive_images di';
     const countParams = [];
+    const countWhereClauses = [];
+
+    // Same filters for count
+    if (projectIds) {
+      const projectIdArray = projectIds.split(',').map(id => parseInt(id.trim()));
+      countQuery += ' JOIN image_project_assignments ipa ON di.id = ipa.image_id';
+      countWhereClauses.push(`ipa.project_id IN (${projectIdArray.map(() => '?').join(', ')})`);
+      countParams.push(...projectIdArray);
+    }
+
+    if (onlyUnassigned === 'true') {
+      countQuery += ' LEFT JOIN image_project_assignments ipa2 ON di.id = ipa2.image_id';
+      countWhereClauses.push('ipa2.id IS NULL');
+    }
 
     if (search) {
-      countQuery += ' WHERE name LIKE ? OR original_name LIKE ?';
+      countWhereClauses.push('(di.name LIKE ? OR di.original_name LIKE ?)');
       countParams.push(`%${search}%`, `%${search}%`);
+    }
+
+    if (dateFrom) {
+      countWhereClauses.push('di.photo_taken_at >= ?');
+      countParams.push(dateFrom);
+    }
+    if (dateTo) {
+      const endDate = new Date(dateTo);
+      endDate.setDate(endDate.getDate() + 1);
+      countWhereClauses.push('di.photo_taken_at < ?');
+      countParams.push(endDate.toISOString().split('T')[0]);
+    }
+
+    if (countWhereClauses.length > 0) {
+      countQuery += ' WHERE ' + countWhereClauses.join(' AND ');
     }
 
     const countStmt = db.prepare(countQuery);
@@ -597,6 +660,90 @@ const assignImageToProject = async (req, res) => {
   }
 };
 
+// Unassign image from project
+const unassignImageFromProject = async (req, res) => {
+  try {
+    const { imageId, projectId } = req.body;
+
+    // Validate input
+    if (!imageId || !projectId) {
+      return res.status(400).json({ error: 'imageId and projectId are required' });
+    }
+
+    // Get project info
+    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Get image info
+    const image = db.prepare('SELECT * FROM drive_images WHERE id = ?').get(imageId);
+    if (!image) {
+      return res.status(404).json({ error: 'Image not found' });
+    }
+
+    // Check if assignment exists
+    const existing = db.prepare(
+      'SELECT id FROM image_project_assignments WHERE image_id = ? AND project_id = ?'
+    ).get(imageId, projectId);
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Image is not assigned to this project' });
+    }
+
+    // Get projects_settings to find base path
+    const projectsSettings = db.prepare('SELECT * FROM projects_settings LIMIT 1').get();
+    if (!projectsSettings?.base_path) {
+      return res.status(500).json({ error: 'Projects base path not configured' });
+    }
+
+    // Build project folder path
+    const projectFolderPath = path.join(projectsSettings.base_path, project.folder_name, 'Bilder');
+
+    // Delete image from project folder
+    const fileName = path.basename(image.local_path);
+    const imagePathInProject = path.join(projectFolderPath, fileName);
+
+    if (await fs.pathExists(imagePathInProject)) {
+      await fs.remove(imagePathInProject);
+      console.log(`🗑️ Deleted image from project folder: ${imagePathInProject}`);
+    }
+
+    // Check if project folder is empty (only contains Bilder folder or is completely empty)
+    const bilderFolderExists = await fs.pathExists(projectFolderPath);
+    if (bilderFolderExists) {
+      const filesInBilder = await fs.readdir(projectFolderPath);
+      if (filesInBilder.length === 0) {
+        // Delete Bilder folder if empty
+        await fs.remove(projectFolderPath);
+        console.log(`🗑️ Deleted empty Bilder folder: ${projectFolderPath}`);
+
+        // Check if parent project folder is empty
+        const projectFolder = path.dirname(projectFolderPath);
+        const filesInProject = await fs.readdir(projectFolder);
+        if (filesInProject.length === 0) {
+          // Delete project folder if empty
+          await fs.remove(projectFolder);
+          console.log(`🗑️ Deleted empty project folder: ${projectFolder}`);
+        }
+      }
+    }
+
+    // Delete assignment record
+    db.prepare(
+      'DELETE FROM image_project_assignments WHERE image_id = ? AND project_id = ?'
+    ).run(imageId, projectId);
+
+    res.json({
+      message: 'Image unassigned from project successfully',
+      projectName: project.folder_name
+    });
+  } catch (error) {
+    console.error('Error unassigning image from project:', error);
+    res.status(500).json({ error: 'Failed to unassign image from project' });
+  }
+};
+
 module.exports = {
   getDriveSettings,
   addDrivePath,
@@ -608,5 +755,6 @@ module.exports = {
   deleteImage,
   syncDrive,
   refreshImages,
-  assignImageToProject
+  assignImageToProject,
+  unassignImageFromProject
 };
