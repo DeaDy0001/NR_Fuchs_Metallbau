@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Grid, List, RefreshCw, Search, Maximize2, Edit2, X, Play, Pause } from 'lucide-react';
+import { Grid, List, RefreshCw, Search, Maximize2, Edit2, X, Play, Pause, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import './DriveImages.css';
 
 // Helper function to format SQLite timestamps (which are in UTC)
@@ -155,6 +155,71 @@ function DriveImages() {
   const handleZoomReset = () => {
     setZoomLevel(1);
   };
+
+  const handleDelete = async () => {
+    if (!confirm(`Möchtest du das Bild "${selectedImage.name}" wirklich löschen?`)) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/drive/images/${selectedImage.id}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        // Close modal and reload images
+        setSelectedImage(null);
+        loadImages();
+        alert('✅ Bild erfolgreich gelöscht!');
+      } else {
+        const error = await response.json();
+        alert(`Fehler beim Löschen: ${error.error || 'Unbekannter Fehler'}`);
+      }
+    } catch (error) {
+      console.error('Error deleting image:', error);
+      alert(`Fehler beim Löschen: ${error.message}`);
+    }
+  };
+
+  const handlePreviousImage = () => {
+    const currentIndex = images.findIndex(img => img.id === selectedImage.id);
+    if (currentIndex > 0) {
+      const prevImage = images[currentIndex - 1];
+      setSelectedImage(prevImage);
+      setEditingName(prevImage.name);
+      setZoomLevel(1);
+    }
+  };
+
+  const handleNextImage = () => {
+    const currentIndex = images.findIndex(img => img.id === selectedImage.id);
+    if (currentIndex < images.length - 1) {
+      const nextImage = images[currentIndex + 1];
+      setSelectedImage(nextImage);
+      setEditingName(nextImage.name);
+      setZoomLevel(1);
+    }
+  };
+
+  // Keyboard shortcuts for modal
+  useEffect(() => {
+    if (!selectedImage) return;
+
+    const handleKeyPress = (e) => {
+      if (e.key === 'Escape') {
+        closeModal();
+      } else if (e.key === 'ArrowLeft') {
+        handlePreviousImage();
+      } else if (e.key === 'ArrowRight') {
+        handleNextImage();
+      } else if (e.key === 'Delete') {
+        handleDelete();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [selectedImage, images]);
 
   const handleRename = async () => {
     if (!editingName || editingName.trim() === '') {
@@ -323,6 +388,14 @@ function DriveImages() {
               {/* Scrollable Image Container (Left) */}
               <div className="modal-image-container">
                 <div className="zoom-controls">
+                  <button
+                    className="zoom-btn nav-btn"
+                    onClick={handlePreviousImage}
+                    title="Vorheriges Bild (←)"
+                    disabled={images.findIndex(img => img.id === selectedImage.id) === 0}
+                  >
+                    <ChevronLeft size={18} />
+                  </button>
                   <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= 0.5}>
                     -
                   </button>
@@ -332,6 +405,21 @@ function DriveImages() {
                   </button>
                   <button className="zoom-btn zoom-reset" onClick={handleZoomReset} title="Reset Zoom">
                     Reset
+                  </button>
+                  <button
+                    className="zoom-btn nav-btn"
+                    onClick={handleNextImage}
+                    title="Nächstes Bild (→)"
+                    disabled={images.findIndex(img => img.id === selectedImage.id) === images.length - 1}
+                  >
+                    <ChevronRight size={18} />
+                  </button>
+                  <button
+                    className="zoom-btn delete-btn"
+                    onClick={handleDelete}
+                    title="Bild löschen (Delete)"
+                  >
+                    <Trash2 size={18} />
                   </button>
                 </div>
                 <div className="modal-image-scroll">

@@ -317,6 +317,27 @@
   margin-left: auto;
 }
 
+.zoom-btn.nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.zoom-btn.delete-btn {
+  background-color: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.zoom-btn.delete-btn:hover:not(:disabled) {
+  background-color: #ef4444;
+  border-color: #dc2626;
+  color: white;
+}
+
 .zoom-level {
   font-size: 0.9rem;
   font-weight: 600;
