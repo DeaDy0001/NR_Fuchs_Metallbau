@@ -220,18 +220,18 @@ function ProjectsList() {
                     </div>
                   </div>
 
-                {project.notes && (
-                  <div className="project-notes">
-                    {project.notes}
-                  </div>
-                )}
+                  {project.notes && (
+                    <div className="project-notes">
+                      {project.notes}
+                    </div>
+                  )}
 
-                <div className="project-meta">
-                  <div>Erstellt: {new Date(project.folder_created_at || project.created_at).toLocaleDateString('de-DE')}</div>
-                  <div>Bilder: {project.image_count || 0}</div>
+                  <div className="project-meta">
+                    <div>Erstellt: {new Date(project.folder_created_at || project.created_at).toLocaleDateString('de-DE')}</div>
+                    <div>Bilder: {project.image_count || 0}</div>
+                  </div>
                 </div>
               </div>
-            </div>
             );
           })}
         </div>
