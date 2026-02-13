@@ -279,7 +279,7 @@ function DriveImages() {
 
             <div className="modal-content">
               <div className="modal-image">
-                <img src={selectedImage.file_url || selectedImage.thumbnail_url} alt={selectedImage.name} />
+                <img src={selectedImage.local_path || selectedImage.thumbnail_url} alt={selectedImage.name} />
               </div>
 
               <div className="modal-details">
