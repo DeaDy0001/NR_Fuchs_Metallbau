@@ -215,12 +215,6 @@ function DriveImages() {
         // Close modal and reload images
         setSelectedImage(null);
         loadImages();
-
-        if (deleteFromDrive) {
-          alert('✅ Bild erfolgreich aus Software UND Google Drive gelöscht!');
-        } else {
-          alert('✅ Bild aus Software gelöscht (wird nicht erneut heruntergeladen)');
-        }
       } else {
         const error = await response.json();
         alert(`Fehler beim Löschen: ${error.error || 'Unbekannter Fehler'}`);

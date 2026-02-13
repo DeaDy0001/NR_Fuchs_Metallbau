@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, Plus, Edit2, Save, X } from 'lucide-react';
+import { Search, Plus, Edit2, Save, X, CheckSquare, Square } from 'lucide-react';
 import './ProjectsList.css';
 
 function ProjectsList() {
@@ -8,6 +8,9 @@ function ProjectsList() {
   const [loading, setLoading] = useState(false);
   const [editingProject, setEditingProject] = useState(null);
   const [editForm, setEditForm] = useState({ color: '', notes: '' });
+  const [selectedProjects, setSelectedProjects] = useState([]); // Markierte Projekte
+  const [showMarked, setShowMarked] = useState(true); // Filter: Markierte anzeigen
+  const [showUnmarked, setShowUnmarked] = useState(true); // Filter: Nicht markierte anzeigen
 
   useEffect(() => {
     loadProjects();
@@ -71,6 +74,22 @@ function ProjectsList() {
     setEditForm({ color: '', notes: '' });
   };
 
+  const toggleProjectSelection = (projectId) => {
+    setSelectedProjects(prev =>
+      prev.includes(projectId)
+        ? prev.filter(id => id !== projectId)
+        : [...prev, projectId]
+    );
+  };
+
+  // Gefilterte Projekte basierend auf Markierung
+  const filteredProjects = projects.filter(project => {
+    const isSelected = selectedProjects.includes(project.id);
+    if (!showMarked && isSelected) return false;
+    if (!showUnmarked && !isSelected) return false;
+    return true;
+  });
+
   const colorPresets = [
     '#3b82f6', // blue
     '#ef4444', // red
@@ -99,6 +118,22 @@ function ProjectsList() {
             className="search-input"
           />
         </div>
+        <div className="filter-buttons">
+          <button
+            className={`filter-btn ${showMarked ? 'active' : ''}`}
+            onClick={() => setShowMarked(!showMarked)}
+            title="Markierte Projekte anzeigen/ausblenden"
+          >
+            Markiert
+          </button>
+          <button
+            className={`filter-btn ${showUnmarked ? 'active' : ''}`}
+            onClick={() => setShowUnmarked(!showUnmarked)}
+            title="Nicht markierte Projekte anzeigen/ausblenden"
+          >
+            Nicht markiert
+          </button>
+        </div>
       </div>
 
       {loading && projects.length === 0 ? (
@@ -112,24 +147,38 @@ function ProjectsList() {
         </div>
       ) : (
         <div className="projects-grid">
-          {projects.map(project => (
-            <div key={project.id} className="project-card">
+          {filteredProjects.map(project => {
+            const isSelected = selectedProjects.includes(project.id);
+            return (
               <div
-                className="project-color-bar"
-                style={{ backgroundColor: project.color }}
-              />
+                key={project.id}
+                className={`project-card ${isSelected ? 'selected' : ''}`}
+              >
+                <div
+                  className="project-color-bar"
+                  style={{ backgroundColor: project.color }}
+                />
 
-              <div className="project-content">
-                <div className="project-header">
-                  <h3 className="project-name">{project.folder_name}</h3>
-                  <button
-                    className="icon-btn"
-                    onClick={() => handleEdit(project)}
-                    title="Bearbeiten"
-                  >
-                    <Edit2 size={18} />
-                  </button>
-                </div>
+                <div className="project-content">
+                  <div className="project-header">
+                    <h3 className="project-name">{project.folder_name}</h3>
+                    <div className="project-actions">
+                      <button
+                        className="icon-btn select-btn"
+                        onClick={() => toggleProjectSelection(project.id)}
+                        title={isSelected ? "Markierung entfernen" : "Projekt markieren"}
+                      >
+                        {isSelected ? <CheckSquare size={18} /> : <Square size={18} />}
+                      </button>
+                      <button
+                        className="icon-btn"
+                        onClick={() => handleEdit(project)}
+                        title="Bearbeiten"
+                      >
+                        <Edit2 size={18} />
+                      </button>
+                    </div>
+                  </div>
 
                 {project.notes && (
                   <div className="project-notes">
@@ -142,7 +191,8 @@ function ProjectsList() {
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
