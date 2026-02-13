@@ -17,6 +17,41 @@ function App() {
     loadSettings();
   }, []);
 
+  // Update favicon and title when settings change
+  useEffect(() => {
+    // Update favicon
+    if (settings.favicon_path) {
+      const link = document.querySelector('#dynamic-favicon');
+      if (link) {
+        link.href = settings.favicon_path + '?v=' + Date.now();
+      }
+    }
+
+    // Update title
+    if (settings.company_name) {
+      document.title = settings.company_name;
+    }
+
+    // Update CSS primary color
+    if (settings.primary_color) {
+      document.documentElement.style.setProperty('--accent-primary', settings.primary_color);
+      document.documentElement.style.setProperty('--accent-hover', adjustColorBrightness(settings.primary_color, -10));
+    }
+  }, [settings.favicon_path, settings.company_name, settings.primary_color]);
+
+  // Helper function to adjust color brightness
+  const adjustColorBrightness = (color, percent) => {
+    const num = parseInt(color.replace('#', ''), 16);
+    const amt = Math.round(2.55 * percent);
+    const R = (num >> 16) + amt;
+    const G = (num >> 8 & 0x00FF) + amt;
+    const B = (num & 0x0000FF) + amt;
+    return '#' + (0x1000000 + (R < 255 ? R < 1 ? 0 : R : 255) * 0x10000 +
+      (G < 255 ? G < 1 ? 0 : G : 255) * 0x100 +
+      (B < 255 ? B < 1 ? 0 : B : 255))
+      .toString(16).slice(1);
+  };
+
   const loadSettings = async () => {
     try {
       const response = await fetch('/api/settings');

@@ -32,7 +32,7 @@ const getSettings = (req, res) => {
 // Update settings
 const updateSettings = (req, res) => {
   try {
-    const { theme, sidebar_collapsed } = req.body;
+    const { theme, sidebar_collapsed, company_name, primary_color } = req.body;
 
     const updates = [];
     const values = [];
@@ -45,6 +45,16 @@ const updateSettings = (req, res) => {
     if (sidebar_collapsed !== undefined) {
       updates.push('sidebar_collapsed = ?');
       values.push(sidebar_collapsed ? 1 : 0);
+    }
+
+    if (company_name !== undefined) {
+      updates.push('company_name = ?');
+      values.push(company_name);
+    }
+
+    if (primary_color !== undefined) {
+      updates.push('primary_color = ?');
+      values.push(primary_color);
     }
 
     if (updates.length > 0) {

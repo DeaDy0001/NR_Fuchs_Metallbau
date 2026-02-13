@@ -174,6 +174,28 @@ const migrations = [
 
       console.log('✓ Migration add_favicon_path_column completed');
     }
+  },
+  {
+    id: 8,
+    name: 'add_company_branding_columns',
+    up: () => {
+      console.log('Running migration: add_company_branding_columns');
+
+      const tableInfo = db.pragma('table_info(settings)');
+      const existingColumns = tableInfo.map(col => col.name);
+
+      // Add company_name column
+      if (!existingColumns.includes('company_name')) {
+        db.exec('ALTER TABLE settings ADD COLUMN company_name TEXT DEFAULT \'Fuchs Metallbau\'');
+      }
+
+      // Add primary_color column
+      if (!existingColumns.includes('primary_color')) {
+        db.exec('ALTER TABLE settings ADD COLUMN primary_color TEXT DEFAULT \'#3b82f6\'');
+      }
+
+      console.log('✓ Migration add_company_branding_columns completed');
+    }
   }
 ];
 

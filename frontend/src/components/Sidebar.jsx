@@ -20,6 +20,7 @@ const menuItems = [
     id: 'settings',
     label: 'Einstellungen',
     icon: Settings,
+    path: '/settings/general',
     subItems: [
       { id: 'settings-general', label: 'Allgemein', path: '/settings/general' },
       { id: 'settings-images', label: 'Bilder', path: '/settings/images' },
@@ -78,9 +79,9 @@ function Sidebar({ collapsed }) {
           // Menu item with sub-items
           return (
             <div key={item.id} className="menu-group">
-              <button
+              <Link
+                to={item.path}
                 className={`menu-item ${isItemActive ? 'active' : ''}`}
-                onClick={() => !collapsed && toggleExpand(item.id)}
                 title={collapsed ? item.label : ''}
               >
                 <div className="menu-item-content">
@@ -88,13 +89,20 @@ function Sidebar({ collapsed }) {
                   {!collapsed && (
                     <>
                       <span className="menu-item-label">{item.label}</span>
-                      <div className="menu-item-expand">
+                      <button
+                        className="menu-item-expand-btn"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          toggleExpand(item.id);
+                        }}
+                      >
                         {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      </div>
+                      </button>
                     </>
                   )}
                 </div>
-              </button>
+              </Link>
 
               {/* Sub-items */}
               {!collapsed && isExpanded && (
@@ -129,6 +137,27 @@ function Sidebar({ collapsed }) {
           );
         })}
       </nav>
+
+      {/* NetRock Footer */}
+      <div className="sidebar-footer">
+        <a
+          href="https://www.netrock.at"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="netrock-link"
+        >
+          <img
+            src="/NR_Logo.png"
+            alt="NetRock Entertainment"
+            className="netrock-logo"
+          />
+          {!collapsed && (
+            <span className="netrock-text">
+              Entwickelt von<br />NetRock Entertainment
+            </span>
+          )}
+        </a>
+      </div>
     </aside>
   );
 }

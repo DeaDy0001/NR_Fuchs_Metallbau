@@ -5,6 +5,8 @@ import './Settings.css';
 function Settings({ settings, updateSettings, onSettingsChange }) {
   const [uploading, setUploading] = useState(false);
   const [uploadingFavicon, setUploadingFavicon] = useState(false);
+  const [companyName, setCompanyName] = useState(settings.company_name || 'Fuchs Metallbau');
+  const [primaryColor, setPrimaryColor] = useState(settings.primary_color || '#3b82f6');
   const fileInputRef = useRef(null);
   const faviconInputRef = useRef(null);
 
@@ -118,6 +120,50 @@ function Settings({ settings, updateSettings, onSettingsChange }) {
     }
   };
 
+  const handleCompanyNameSave = async () => {
+    try {
+      const response = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_name: companyName })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        updateSettings({ company_name: data.company_name });
+        onSettingsChange();
+        alert('Firmenname erfolgreich gespeichert');
+      } else {
+        alert('Fehler beim Speichern des Firmennamens');
+      }
+    } catch (error) {
+      console.error('Error saving company name:', error);
+      alert('Fehler beim Speichern des Firmennamens');
+    }
+  };
+
+  const handlePrimaryColorSave = async () => {
+    try {
+      const response = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ primary_color: primaryColor })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        updateSettings({ primary_color: data.primary_color });
+        onSettingsChange();
+        alert('Hauptfarbe erfolgreich gespeichert');
+      } else {
+        alert('Fehler beim Speichern der Hauptfarbe');
+      }
+    } catch (error) {
+      console.error('Error saving primary color:', error);
+      alert('Fehler beim Speichern der Hauptfarbe');
+    }
+  };
+
   return (
     <div className="settings-page">
       <div className="page-header">
@@ -209,6 +255,60 @@ function Settings({ settings, updateSettings, onSettingsChange }) {
               </button>
             )}
           </div>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <h2>Firmenname</h2>
+        <p className="section-description">
+          Der Firmenname wird im Browser-Tab und an verschiedenen Stellen der Anwendung angezeigt.
+        </p>
+        <div className="input-group">
+          <input
+            type="text"
+            className="text-input"
+            value={companyName}
+            onChange={(e) => setCompanyName(e.target.value)}
+            placeholder="z.B. Fuchs Metallbau"
+          />
+          <button
+            className="btn btn-primary"
+            onClick={handleCompanyNameSave}
+          >
+            Speichern
+          </button>
+        </div>
+      </div>
+
+      <div className="settings-section">
+        <h2>Hauptfarbe</h2>
+        <p className="section-description">
+          Die Hauptfarbe wird für Akzente, Buttons und Links verwendet.
+        </p>
+        <div className="color-picker-group">
+          <div className="color-preview" style={{ backgroundColor: primaryColor }}>
+            <span className="color-value">{primaryColor}</span>
+          </div>
+          <input
+            type="color"
+            className="color-input"
+            value={primaryColor}
+            onChange={(e) => setPrimaryColor(e.target.value)}
+          />
+          <input
+            type="text"
+            className="text-input"
+            value={primaryColor}
+            onChange={(e) => setPrimaryColor(e.target.value)}
+            placeholder="#3b82f6"
+            pattern="^#[0-9A-Fa-f]{6}$"
+          />
+          <button
+            className="btn btn-primary"
+            onClick={handlePrimaryColorSave}
+          >
+            Speichern
+          </button>
         </div>
       </div>
 
