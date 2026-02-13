@@ -13,6 +13,9 @@ frontend/build/
 .env.local
 .env.*.local
 
+# OAuth tokens (sensitive)
+backend/config/auth.json
+
 # SQLite Database
 database/*.db
 database/*.db-shm

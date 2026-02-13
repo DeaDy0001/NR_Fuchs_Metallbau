@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Plus, Trash2, Save, Edit2, RefreshCw, ChevronDown, ChevronUp, Image, AlertCircle, Clock, CheckCircle, XCircle } from 'lucide-react';
+import AuthStatus from '../components/AuthStatus';
 import './DriveSettings.css';
 
 function DriveSettings() {
@@ -395,6 +396,8 @@ function DriveSettings() {
         <h1>Drive Einstellungen</h1>
       </div>
 
+      <AuthStatus />
+
       <div className="settings-section">
         <h2>Google Drive Pfade</h2>
         <p className="section-description">
@@ -509,8 +512,9 @@ function DriveSettings() {
       <div className="settings-section">
         <h2>Info</h2>
         <p className="section-description">
-          Die Google Drive Integration verwendet öffentliche Links für Lesezugriff.
-          Für die "Nach Sync löschen"-Funktion muss der Ordner zum Bearbeiten freigegeben sein.
+          Die Google Drive Integration verwendet OAuth 2.0 für sicheren Zugriff auf deine Drive-Ordner.
+          Nach der einmaligen Anmeldung bleiben deine Zugangsdaten dauerhaft gespeichert.
+          Du musst dich nur neu anmelden, wenn deine Session nach längerer Zeit abläuft (~30 Tage).
         </p>
       </div>
     </div>

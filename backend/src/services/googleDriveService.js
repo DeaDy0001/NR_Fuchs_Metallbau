@@ -2,10 +2,11 @@ const axios = require('axios');
 const fs = require('fs-extra');
 const path = require('path');
 const sharp = require('sharp');
+const { getDriveClient, isAuthenticated } = require('./authService');
 
 /**
  * Google Drive Service
- * Handles syncing images from public Google Drive folders
+ * Handles syncing images from Google Drive folders using OAuth 2.0
  */
 
 // Extract folder ID from Google Drive URL
@@ -31,27 +32,23 @@ const extractFolderId = (url) => {
   }
 };
 
-// List all files in a public Google Drive folder
+// List all files in a Google Drive folder using OAuth
 const listFilesInFolder = async (folderId) => {
   try {
-    // Use Google Drive API v3 (public access)
-    const apiKey = process.env.GOOGLE_DRIVE_API_KEY;
-
-    if (!apiKey) {
-      // Fallback: Try to scrape public folder (less reliable)
-      console.warn('No Google Drive API key found, using fallback method');
-      return await listFilesInFolderFallback(folderId);
+    // Check if authenticated
+    if (!await isAuthenticated()) {
+      throw new Error('Not authenticated. Please login with Google first: http://localhost:3001/api/auth/google');
     }
 
-    const url = `https://www.googleapis.com/drive/v3/files`;
-    const params = {
-      key: apiKey,
+    // Get authenticated Drive client
+    const drive = await getDriveClient();
+
+    // List files in folder
+    const response = await drive.files.list({
       q: `'${folderId}' in parents and trashed=false`,
       fields: 'files(id,name,mimeType,size,webContentLink,thumbnailLink,imageMediaMetadata)',
       pageSize: 1000
-    };
-
-    const response = await axios.get(url, { params });
+    });
 
     // Filter for image files only
     const imageFiles = response.data.files.filter(file =>
@@ -70,26 +67,24 @@ const listFilesInFolder = async (folderId) => {
     }));
   } catch (error) {
     console.error('Error listing files in folder:', error.message);
+
+    // Better error messages
+    if (error.message.includes('Not authenticated')) {
+      throw error;
+    }
+
+    if (error.code === 404) {
+      throw new Error('Ordner nicht gefunden. Überprüfe die Ordner-ID und Berechtigungen.');
+    }
+
+    if (error.code === 403) {
+      throw new Error('Keine Berechtigung zum Zugriff auf diesen Ordner. Stelle sicher, dass der Ordner für dein Google-Konto freigegeben ist.');
+    }
+
     throw error;
   }
 };
 
-// Fallback method without API key (public folder scraping)
-const listFilesInFolderFallback = async (folderId) => {
-  throw new Error(`
-Google Drive API Key benötigt!
-
-So bekommst du einen API Key:
-1. Gehe zu: https://console.cloud.google.com/apis/credentials
-2. Erstelle ein neues Projekt (falls noch keins existiert)
-3. Aktiviere die "Google Drive API"
-4. Erstelle einen API-Schlüssel (API Key)
-5. Füge ihn zur .env Datei hinzu:
-   GOOGLE_DRIVE_API_KEY=dein_api_key_hier
-
-Danach Server neu starten mit start.bat
-  `.trim());
-};
 
 // Download a file from Google Drive
 const downloadFile = async (fileId, destinationPath) => {
@@ -203,26 +198,36 @@ const generateThumbnail = async (imagePath, thumbnailPath, size = 300) => {
   }
 };
 
-// Delete file from Google Drive (requires API key and permissions)
+// Delete file from Google Drive using OAuth
 const deleteFileFromDrive = async (fileId) => {
   try {
-    const apiKey = process.env.GOOGLE_DRIVE_API_KEY;
-
-    if (!apiKey) {
-      throw new Error('Google Drive API key required for deleting files');
+    // Check if authenticated
+    if (!await isAuthenticated()) {
+      throw new Error('Not authenticated. Please login with Google first.');
     }
 
-    const url = `https://www.googleapis.com/drive/v3/files/${fileId}`;
+    // Get authenticated Drive client
+    const drive = await getDriveClient();
 
-    await axios.delete(url, {
-      params: { key: apiKey }
+    // Delete file
+    await drive.files.delete({
+      fileId: fileId
     });
+
+    console.log(`✅ Deleted file from Drive: ${fileId}`);
 
     return { success: true };
   } catch (error) {
-    if (error.response?.status === 403) {
-      throw new Error('Keine Berechtigung zum Löschen. Drive-Ordner muss zum Bearbeiten freigegeben sein.');
+    console.error('Error deleting file from Drive:', error.message);
+
+    if (error.code === 404) {
+      throw new Error('Datei nicht gefunden auf Google Drive.');
     }
+
+    if (error.code === 403) {
+      throw new Error('Keine Berechtigung zum Löschen. Stelle sicher, dass du Bearbeitungsrechte für diese Datei hast.');
+    }
+
     throw error;
   }
 };

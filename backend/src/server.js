@@ -16,6 +16,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, '../../uploads')));
 
 // Routes
+app.use('/api/auth', require('./routes/auth'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/drive', require('./routes/drive'));
 app.use('/api/projects', require('./routes/projects'));
@@ -64,6 +65,10 @@ const startServer = async () => {
     // Run database migrations
     const { runMigrations } = require('./config/migrations');
     runMigrations();
+
+    // Initialize OAuth authentication
+    const { initializeAuth } = require('./services/authService');
+    await initializeAuth();
 
     // Initialize auto-sync for Google Drive
     const { initializeAutoSync } = require('./services/driveSyncService');

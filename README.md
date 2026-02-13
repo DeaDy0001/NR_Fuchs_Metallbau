@@ -10,7 +10,10 @@ Eine lokale Webanwendung für die Verwaltung von Bildern und Projekten im Firmen
 - **Anpassbares Logo** - Eigenes Logo in der Kopfzeile
 
 ### 📁 Drive
-- **Google Drive Integration** - Öffentliche Ordner-Links einbinden
+- **Google Drive Integration** - OAuth 2.0 Login für sicheren Drive-Zugriff
+- **Automatische Synchronisation** - Bilder werden automatisch heruntergeladen
+- **Bildkomprimierung** - Automatische Optimierung (WebP, JPEG, PNG)
+- **Löschen nach Sync** - Bilder automatisch aus Drive entfernen nach Download
 - **Bilderverwaltung** - Anzeige aller Bilder aus konfigurierten Pfaden
 - **Ansichten** - Wechsel zwischen Kachel- und Listenansicht
 - **Thumbnails** - Automatisch generierte Vorschaubilder
@@ -79,6 +82,31 @@ npm run build
 
 ## Konfiguration
 
+### Google OAuth Setup (ERFORDERLICH für Drive-Sync)
+
+Die App verwendet jetzt **Google OAuth 2.0** für sicheren Zugriff auf Google Drive!
+
+**Vorteile:**
+- ✅ **Einmal anmelden** - Bleibt dauerhaft eingeloggt (keine wiederholte Authentifizierung)
+- ✅ **Einfacher** - Nur "Mit Google anmelden" Button klicken
+- ✅ **Sicherer** - Keine API Keys mehr nötig
+- ✅ **Mehr Funktionen** - Automatisches Löschen aus Drive funktioniert jetzt!
+
+**Setup:**
+Folge der detaillierten Anleitung in **[GOOGLE_OAUTH_SETUP.md](./GOOGLE_OAUTH_SETUP.md)** (dauert ca. 5 Minuten)
+
+**Kurzfassung:**
+1. Google Cloud Console öffnen
+2. OAuth 2.0 Client ID erstellen
+3. Credentials in `backend/.env` eintragen:
+   ```env
+   GOOGLE_CLIENT_ID=deine-client-id.apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=dein-secret
+   GOOGLE_REDIRECT_URI=http://localhost:3001/api/auth/google/callback
+   ```
+4. Server neu starten
+5. In der App: "Mit Google anmelden" klicken
+
 ### Port ändern (backend/.env)
 ```env
 PORT=3001
@@ -145,6 +173,12 @@ node src/utils/initDatabase.js
 ```
 
 ## API Endpoints
+
+### Authentication
+- `GET /api/auth/status` - OAuth-Status prüfen
+- `GET /api/auth/google` - Google OAuth Login initiieren
+- `GET /api/auth/google/callback` - OAuth Callback
+- `POST /api/auth/logout` - Abmelden
 
 ### Settings
 - `GET /api/settings` - Einstellungen abrufen
