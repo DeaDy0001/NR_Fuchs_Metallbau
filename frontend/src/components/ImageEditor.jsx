@@ -1015,107 +1015,216 @@ function ImageEditor({ image, onClose }) {
   };
 
   return (
-    <div className="image-editor-overlay">
-      <div className="image-editor-modal">
-        {/* Header */}
-        <div className="editor-header">
-          <h2>Bild-Editor: {image.name}</h2>
-          <button className="close-btn" onClick={onClose}>
-            <X size={24} />
-          </button>
-        </div>
+    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <button className="modal-close" onClick={onClose}>
+          <X size={24} />
+        </button>
 
-        {/* Main content */}
-        <div className="editor-body">
-          {/* Toolbar */}
-          <div className="editor-toolbar">
-            <h3>Werkzeuge</h3>
+        <div className="modal-content">
+          {/* Canvas Container (Left) */}
+          <div className="modal-image-container">
+            {/* Toolbar with tools and save buttons */}
+            <div className="zoom-controls editor-toolbar-top">
+              {/* Tool Buttons */}
+              <button
+                className={`zoom-btn ${activeTool === 'select' ? 'active' : ''}`}
+                onClick={() => handleToolChange('select')}
+                title="Auswählen"
+              >
+                <MousePointer size={18} />
+              </button>
 
-            <button
-              className={`tool-btn ${activeTool === 'select' ? 'active' : ''}`}
-              onClick={() => handleToolChange('select')}
-              title="Auswählen"
-            >
-              <MousePointer size={20} />
-              <span>Auswählen</span>
-            </button>
+              <button
+                className={`zoom-btn ${activeTool === 'measurement' ? 'active' : ''}`}
+                onClick={() => handleToolChange('measurement')}
+                title="Bemaßung"
+              >
+                <Ruler size={18} />
+              </button>
 
-            <button
-              className={`tool-btn ${activeTool === 'measurement' ? 'active' : ''}`}
-              onClick={() => handleToolChange('measurement')}
-              title="Bemaßung"
-            >
-              <Ruler size={20} />
-              <span>Bemaßung</span>
-            </button>
+              <button
+                className={`zoom-btn ${activeTool === 'line' ? 'active' : ''}`}
+                onClick={() => handleToolChange('line')}
+                title="Linie"
+              >
+                <Minus size={18} />
+              </button>
 
-            <button
-              className={`tool-btn ${activeTool === 'line' ? 'active' : ''}`}
-              onClick={() => handleToolChange('line')}
-              title="Linie"
-            >
-              <Minus size={20} />
-              <span>Linie</span>
-            </button>
+              <button
+                className={`zoom-btn ${activeTool === 'arrow' ? 'active' : ''}`}
+                onClick={() => handleToolChange('arrow')}
+                title="Pfeil"
+              >
+                <ArrowRight size={18} />
+              </button>
 
-            <button
-              className={`tool-btn ${activeTool === 'arrow' ? 'active' : ''}`}
-              onClick={() => handleToolChange('arrow')}
-              title="Pfeil"
-            >
-              <ArrowRight size={20} />
-              <span>Pfeil</span>
-            </button>
+              <button
+                className={`zoom-btn ${activeTool === 'rectangle' ? 'active' : ''}`}
+                onClick={() => handleToolChange('rectangle')}
+                title="Rechteck"
+              >
+                <Square size={18} />
+              </button>
 
-            <button
-              className={`tool-btn ${activeTool === 'rectangle' ? 'active' : ''}`}
-              onClick={() => handleToolChange('rectangle')}
-              title="Rechteck"
-            >
-              <Square size={20} />
-              <span>Rechteck</span>
-            </button>
+              <button
+                className={`zoom-btn ${activeTool === 'circle' ? 'active' : ''}`}
+                onClick={() => handleToolChange('circle')}
+                title="Kreis"
+              >
+                <Circle size={18} />
+              </button>
 
-            <button
-              className={`tool-btn ${activeTool === 'circle' ? 'active' : ''}`}
-              onClick={() => handleToolChange('circle')}
-              title="Kreis"
-            >
-              <Circle size={20} />
-              <span>Kreis</span>
-            </button>
+              <button
+                className={`zoom-btn ${activeTool === 'text' ? 'active' : ''}`}
+                onClick={() => handleToolChange('text')}
+                title="Text"
+              >
+                <Type size={18} />
+              </button>
 
-            <button
-              className={`tool-btn ${activeTool === 'text' ? 'active' : ''}`}
-              onClick={() => handleToolChange('text')}
-              title="Text"
-            >
-              <Type size={20} />
-              <span>Text</span>
-            </button>
+              <button
+                className={`zoom-btn ${activeTool === 'freehand' ? 'active' : ''}`}
+                onClick={() => handleToolChange('freehand')}
+                title="Freihand"
+              >
+                <Pencil size={18} />
+              </button>
 
-            <button
-              className={`tool-btn ${activeTool === 'freehand' ? 'active' : ''}`}
-              onClick={() => handleToolChange('freehand')}
-              title="Freihand"
-            >
-              <Pencil size={20} />
-              <span>Freihand</span>
-            </button>
+              {/* Save Buttons (Right side) */}
+              <div className="zoom-controls-right">
+                <button className="zoom-btn" onClick={handleSaveOverwrite} title="Original überschreiben">
+                  <Save size={18} />
+                  Überschreiben
+                </button>
+                <button className="zoom-btn editor-btn" onClick={handleSaveNew} title="Als neues Bild speichern">
+                  <FileDown size={18} />
+                  Neu speichern
+                </button>
+              </div>
+            </div>
 
-            <div className="tool-settings">
-              <label>
-                Farbe:
+            {/* Canvas */}
+            <div className="editor-canvas-container" ref={containerRef}>
+              <canvas ref={canvasRef} />
+            </div>
+          </div>
+
+          {/* Sidebar (Right) */}
+          <div className="modal-sidebar">
+            <h3 className="modal-title">Editor: {image.name}</h3>
+
+            {/* Layers Section */}
+            <div className="modal-section">
+              <label>📐 Ebenen ({layers.length})</label>
+              <div className="layers-list">
+                {layers.length === 0 && (
+                  <div className="layers-empty" style={{ padding: '10px', color: '#999', fontSize: '14px' }}>
+                    Keine Ebenen vorhanden
+                  </div>
+                )}
+                {layers.map((layer) => (
+                  <div
+                    key={layer.id}
+                    className={`layer-item ${selectedLayer === layer.id ? 'selected' : ''} ${!layer.object.visible ? 'hidden' : ''}`}
+                  >
+                    {editingLayerId === layer.id ? (
+                      <input
+                        type="text"
+                        className="layer-name-input"
+                        value={editingText}
+                        onChange={(e) => setEditingText(e.target.value)}
+                        onBlur={() => finishEditingLayer(layer.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') finishEditingLayer(layer.id);
+                          if (e.key === 'Escape') {
+                            setEditingLayerId(null);
+                            setEditingText('');
+                          }
+                        }}
+                        autoFocus
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    ) : (
+                      <span
+                        className="layer-name"
+                        onClick={() => selectLayer(layer.id)}
+                        onDoubleClick={() => startEditingLayer(layer.id, layer.name)}
+                      >
+                        {layer.name}
+                      </span>
+                    )}
+                    <div className="layer-actions">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleLayerVisibility(layer.id);
+                        }}
+                        title={layer.object.visible ? "Ausblenden" : "Einblenden"}
+                      >
+                        {layer.object.visible ? <Eye size={16} /> : <EyeOff size={16} />}
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startEditingLayer(layer.id, layer.name);
+                        }}
+                        title="Text bearbeiten"
+                      >
+                        <Edit2 size={16} />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          moveLayerUp(layer.id);
+                        }}
+                        title="Nach oben"
+                      >
+                        <ChevronUp size={16} />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          moveLayerDown(layer.id);
+                        }}
+                        title="Nach unten"
+                      >
+                        <ChevronDown size={16} />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteLayer(layer.id);
+                        }}
+                        title="Löschen"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Settings Section */}
+            <div className="modal-section">
+              <label>🎨 Einstellungen</label>
+
+              <div style={{ marginTop: '10px' }}>
+                <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px' }}>
+                  Farbe:
+                </label>
                 <input
                   type="color"
                   value={strokeColor}
                   onChange={(e) => setStrokeColor(e.target.value)}
+                  style={{ width: '100%', height: '35px', cursor: 'pointer' }}
                 />
-              </label>
+              </div>
 
               {/* Color Quick-Select Presets */}
-              <div className="color-presets">
-                <label style={{ marginBottom: '5px', display: 'block', fontSize: '12px' }}>
+              <div style={{ marginTop: '10px' }}>
+                <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px' }}>
                   Schnellauswahl:
                 </label>
                 <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
@@ -1128,11 +1237,13 @@ function ImageEditor({ image, onClose }) {
                         style={{
                           backgroundColor: preset ? preset.color : '#333',
                           border: preset && preset.color === strokeColor ? '2px solid white' : '1px solid #555',
-                          width: '32px',
-                          height: '32px',
+                          width: '40px',
+                          height: '40px',
                           borderRadius: '4px',
                           cursor: 'pointer',
-                          position: 'relative'
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
                         }}
                         onClick={() => {
                           if (preset) {
@@ -1141,13 +1252,12 @@ function ImageEditor({ image, onClose }) {
                         }}
                         onContextMenu={(e) => {
                           e.preventDefault();
-                          // Right-click: Save current color to this slot
                           saveColorPreset(strokeColor, index);
                         }}
                         title={preset ? `${preset.color} (Rechtsklick zum Überschreiben)` : 'Rechtsklick zum Speichern'}
                       >
                         {!preset && (
-                          <span style={{ fontSize: '16px', color: '#666' }}>+</span>
+                          <span style={{ fontSize: '18px', color: '#666' }}>+</span>
                         )}
                       </button>
                     );
@@ -1155,142 +1265,35 @@ function ImageEditor({ image, onClose }) {
                 </div>
               </div>
 
-              <label>
-                Strichstärke:
+              <div style={{ marginTop: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px' }}>
+                  Strichstärke: <strong>{strokeWidth}px</strong>
+                </label>
                 <input
                   type="range"
                   min="1"
                   max="10"
                   value={strokeWidth}
                   onChange={(e) => setStrokeWidth(Number(e.target.value))}
+                  style={{ width: '100%' }}
                 />
-                <span>{strokeWidth}px</span>
-              </label>
+              </div>
 
-              <label>
-                Schriftgröße:
+              <div style={{ marginTop: '15px' }}>
+                <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px' }}>
+                  Schriftgröße: <strong>{fontSize}px</strong>
+                </label>
                 <input
                   type="range"
                   min="12"
                   max="48"
                   value={fontSize}
                   onChange={(e) => setFontSize(Number(e.target.value))}
+                  style={{ width: '100%' }}
                 />
-                <span>{fontSize}px</span>
-              </label>
+              </div>
             </div>
           </div>
-
-          {/* Canvas */}
-          <div className="editor-canvas-container" ref={containerRef}>
-            <canvas ref={canvasRef} />
-          </div>
-
-          {/* Layers panel */}
-          <div className="editor-layers">
-            <h3>Ebenen ({layers.length})</h3>
-            <div className="layers-list">
-              {layers.length === 0 && (
-                <div className="layers-empty">Keine Ebenen vorhanden</div>
-              )}
-              {layers.map((layer) => (
-                <div
-                  key={layer.id}
-                  className={`layer-item ${selectedLayer === layer.id ? 'selected' : ''} ${!layer.object.visible ? 'hidden' : ''}`}
-                >
-                  {editingLayerId === layer.id ? (
-                    <input
-                      type="text"
-                      className="layer-name-input"
-                      value={editingText}
-                      onChange={(e) => setEditingText(e.target.value)}
-                      onBlur={() => finishEditingLayer(layer.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') finishEditingLayer(layer.id);
-                        if (e.key === 'Escape') {
-                          setEditingLayerId(null);
-                          setEditingText('');
-                        }
-                      }}
-                      autoFocus
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  ) : (
-                    <span
-                      className="layer-name"
-                      onClick={() => selectLayer(layer.id)}
-                      onDoubleClick={() => startEditingLayer(layer.id, layer.name)}
-                    >
-                      {layer.name}
-                    </span>
-                  )}
-                  <div className="layer-actions">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleLayerVisibility(layer.id);
-                      }}
-                      title={layer.object.visible ? "Ausblenden" : "Einblenden"}
-                    >
-                      {layer.object.visible ? <Eye size={16} /> : <EyeOff size={16} />}
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        startEditingLayer(layer.id, layer.name);
-                      }}
-                      title="Text bearbeiten"
-                    >
-                      <Edit2 size={16} />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        moveLayerUp(layer.id);
-                      }}
-                      title="Nach oben"
-                    >
-                      <ChevronUp size={16} />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        moveLayerDown(layer.id);
-                      }}
-                      title="Nach unten"
-                    >
-                      <ChevronDown size={16} />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteLayer(layer.id);
-                      }}
-                      title="Löschen"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="editor-footer">
-          <button className="btn btn-secondary" onClick={onClose}>
-            <XCircle size={18} />
-            Abbrechen
-          </button>
-          <button className="btn btn-warning" onClick={handleSaveOverwrite}>
-            <Save size={18} />
-            Original überschreiben
-          </button>
-          <button className="btn btn-primary" onClick={handleSaveNew}>
-            <FileDown size={18} />
-            Als neues Bild speichern
-          </button>
         </div>
       </div>
     </div>

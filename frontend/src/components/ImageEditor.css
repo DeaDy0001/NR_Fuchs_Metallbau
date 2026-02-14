@@ -1,229 +1,57 @@
-.image-editor-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.95);
-  z-index: 1000;
+/* Editor-specific styles - uses modal styles from DriveImages.css */
+
+/* Toolbar top (tools + save buttons) */
+.editor-toolbar-top {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 5px;
+  flex-wrap: wrap;
 }
 
-.image-editor-modal {
-  width: 95vw;
-  height: 95vh;
-  background-color: var(--bg-secondary);
-  border-radius: 0.5rem;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-/* Header */
-.editor-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem 1.5rem;
-  background-color: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-color);
-}
-
-.editor-header h2 {
-  font-size: 1.25rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 0.5rem;
-  border-radius: 0.25rem;
-  transition: all 0.2s;
-}
-
-.close-btn:hover {
-  background-color: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-/* Body */
-.editor-body {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
-}
-
-/* Toolbar */
-.editor-toolbar {
-  width: 200px;
-  background-color: var(--bg-tertiary);
-  border-right: 1px solid var(--border-color);
-  padding: 1rem;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.editor-toolbar h3 {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin: 0 0 0.5rem 0;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.tool-btn {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem;
-  background-color: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 0.375rem;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.2s;
-  font-size: 0.9rem;
-}
-
-.tool-btn:hover {
-  background-color: var(--bg-hover);
-  color: var(--text-primary);
-  border-color: var(--accent-primary);
-}
-
-.tool-btn.active {
+.editor-toolbar-top .zoom-btn.active {
   background-color: var(--accent-primary);
   color: white;
   border-color: var(--accent-primary);
 }
 
-.tool-settings {
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--border-color);
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.tool-settings label {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  font-size: 0.875rem;
-  color: var(--text-secondary);
-}
-
-.tool-settings input[type="color"] {
-  width: 100%;
-  height: 40px;
-  border: 1px solid var(--border-color);
-  border-radius: 0.375rem;
-  cursor: pointer;
-}
-
-.tool-settings input[type="range"] {
-  width: 100%;
-}
-
-.tool-settings label span {
-  font-size: 0.75rem;
-  color: var(--text-tertiary);
-}
-
-/* Canvas */
+/* Canvas container */
 .editor-canvas-container {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: var(--bg-primary);
+  background-color: #1a1a1a;
   position: relative;
-  overflow: auto;
-  padding: 0.5rem;
-}
-
-.measurement-hint {
-  position: absolute;
-  top: 1rem;
-  left: 50%;
-  transform: translateX(-50%);
-  background-color: var(--accent-primary);
-  color: white;
-  padding: 0.75rem 1.5rem;
-  border-radius: 0.375rem;
-  font-size: 0.9rem;
-  font-weight: 500;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  animation: fadeIn 0.3s ease;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateX(-50%) translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
-  }
-}
-
-/* Layers */
-.editor-layers {
-  width: 280px;
-  background-color: var(--bg-tertiary);
-  border-left: 1px solid var(--border-color);
+  overflow: hidden;
   padding: 1rem;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+  min-height: 400px;
 }
 
-.editor-layers h3 {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin: 0;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+.editor-canvas-container canvas {
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px solid var(--border-color);
 }
 
+/* Layers list */
 .layers-list {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-}
-
-.layers-empty {
-  padding: 2rem 1rem;
-  text-align: center;
-  color: var(--text-tertiary);
-  font-size: 0.875rem;
-  font-style: italic;
+  margin-top: 10px;
 }
 
 .layer-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.75rem;
+  padding: 0.5rem;
   background-color: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 0.375rem;
   cursor: pointer;
   transition: all 0.2s;
+  gap: 0.5rem;
 }
 
 .layer-item:hover {
@@ -234,7 +62,7 @@
 .layer-item.selected {
   background-color: var(--bg-tertiary);
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px var(--accent-primary);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
 }
 
 .layer-item.hidden {
@@ -265,6 +93,7 @@
 .layer-actions {
   display: flex;
   gap: 0.25rem;
+  flex-shrink: 0;
 }
 
 .layer-actions button {
@@ -275,6 +104,9 @@
   padding: 0.25rem;
   border-radius: 0.25rem;
   transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .layer-actions button:hover {
@@ -282,54 +114,22 @@
   color: var(--text-primary);
 }
 
-/* Footer */
-.editor-footer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  padding: 1rem 1.5rem;
-  background-color: var(--bg-tertiary);
-  border-top: 1px solid var(--border-color);
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1.5rem;
-  border-radius: 0.375rem;
-  font-size: 0.9rem;
-  font-weight: 500;
-  cursor: pointer;
+/* Color preset button */
+.color-preset-btn {
   transition: all 0.2s;
-  border: none;
 }
 
-.btn-secondary {
-  background-color: var(--bg-secondary);
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
+.color-preset-btn:hover {
+  transform: scale(1.1);
 }
 
-.btn-secondary:hover {
-  background-color: var(--bg-hover);
-}
+/* Responsive */
+@media (max-width: 768px) {
+  .editor-toolbar-top {
+    flex-wrap: wrap;
+  }
 
-.btn-warning {
-  background-color: #f59e0b;
-  color: white;
-}
-
-.btn-warning:hover {
-  background-color: #d97706;
-}
-
-.btn-primary {
-  background-color: var(--accent-primary);
-  color: white;
-}
-
-.btn-primary:hover {
-  background-color: var(--accent-hover);
+  .editor-canvas-container {
+    min-height: 300px;
+  }
 }
