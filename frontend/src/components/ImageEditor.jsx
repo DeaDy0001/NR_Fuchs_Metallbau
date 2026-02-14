@@ -353,6 +353,7 @@ function ImageEditor({ image, onClose }) {
 
       // For text tool, create immediately
       if (activeTool === 'text') {
+        const textId = `text-${Date.now()}`;
         const text = new fabric.Text('Text bearbeiten...', {
           left: pointer.x,
           top: pointer.y,
@@ -360,10 +361,18 @@ function ImageEditor({ image, onClose }) {
           fill: strokeColor,
           customType: 'text',
           customName: 'Text bearbeiten...',
-          editable: true
+          editable: true,
+          id: textId
         });
         canvas.add(text);
         canvas.setActiveObject(text);
+        updateLayers();
+
+        // ✅ Auto-start editing the text
+        setTimeout(() => {
+          startEditingLayer(textId, 'Text bearbeiten...');
+        }, 50);
+
         isDrawingRef.current = false;
         dragStartRef.current = null;
         dragStartTimeRef.current = null;
