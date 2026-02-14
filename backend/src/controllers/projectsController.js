@@ -327,6 +327,14 @@ const getProjectFiles = async (req, res) => {
         dbImageMap.set(img.name, img);
       });
 
+      // Prepare statement for getting projects per image
+      const projectsStmt = db.prepare(`
+        SELECT p.id, p.folder_name, p.color
+        FROM image_project_assignments ipa
+        JOIN projects p ON ipa.project_id = p.id
+        WHERE ipa.image_id = ?
+      `);
+
       // Helper function to get image metadata
       const sharp = require('sharp');
       const getImageMetadata = async (filePath) => {
@@ -348,9 +356,9 @@ const getProjectFiles = async (req, res) => {
       };
 
       // Helper function to auto-register image to database
-      const registerImageToDatabase = async (fileName, filePath, projectId) => {
+      const registerImageToDatabase = async (fileName, filePath, projectId, subfolder) => {
         try {
-          console.log(`📝 Auto-registering image: ${fileName}`);
+          console.log(`📝 Auto-registering image: ${fileName} ${subfolder ? `(subfolder: ${subfolder})` : ''}`);
 
           // Check if image already exists in DB (maybe with different name)
           const existingImage = db.prepare(`
@@ -393,8 +401,9 @@ const getProjectFiles = async (req, res) => {
               photo_taken_at,
               created_at,
               drive_id,
-              mime_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              mime_type,
+              subfolder
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             fileName,
             fileName,
@@ -404,7 +413,8 @@ const getProjectFiles = async (req, res) => {
             metadata.photo_taken_at || null,
             now,
             'local_project_import', // Special drive_id for auto-registered images
-            `image/${fileName.split('.').pop().toLowerCase()}`
+            `image/${fileName.split('.').pop().toLowerCase()}`,
+            subfolder || null  // Add subfolder
           );
 
           const imageId = result.lastInsertRowid;
@@ -438,13 +448,16 @@ const getProjectFiles = async (req, res) => {
               local_path: projectImageUrl,
               thumbnail_url: projectImageUrl,
               url: projectImageUrl,
-              type: 'image'
+              type: 'image',
+              projects: projectsStmt.all(dbImage.id)  // Add projects list
             };
           } else {
             // AUTO-REGISTER: Image not in DB yet, register it automatically
             console.log(`⚠️  Image "${file}" not in DB - auto-registering...`);
 
-            const imageId = await registerImageToDatabase(file, filePath, id);
+            // For now, subfolder is null since we only scan Bilder/ root
+            // TODO: Extend to scan subfolders recursively
+            const imageId = await registerImageToDatabase(file, filePath, id, null);
             const metadata = await getImageMetadata(filePath);
 
             if (imageId) {
@@ -456,7 +469,8 @@ const getProjectFiles = async (req, res) => {
                 local_path: projectImageUrl,
                 thumbnail_url: projectImageUrl,
                 url: projectImageUrl,
-                type: 'image'
+                type: 'image',
+                projects: projectsStmt.all(imageId)  // Add projects list
               };
             } else {
               // Fallback if registration failed
