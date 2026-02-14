@@ -525,7 +525,12 @@ function ProjectsList() {
       {/* Image Editor */}
       {showEditor && selectedImage && (
         <ImageEditor
-          image={selectedImage}
+          image={{
+            ...selectedImage,
+            local_path: selectedImage.url,
+            thumbnail_url: selectedImage.url,
+            id: selectedImage.id || `temp-${Date.now()}`
+          }}
           onClose={() => {
             setShowEditor(false);
             // Optionally reload project files to show newly created images
