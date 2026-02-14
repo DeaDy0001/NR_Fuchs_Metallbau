@@ -1,7 +1,24 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Search, Plus, Edit2, Save, X, CheckSquare, Square, ZoomIn, ZoomOut, RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Plus, Edit2, Save, X, CheckSquare, Square, ZoomIn, ZoomOut, RotateCcw, ChevronLeft, ChevronRight, Trash2, Pencil } from 'lucide-react';
 import ImageEditor from '../components/ImageEditor';
 import './ProjectsList.css';
+
+// Helper function to format SQLite timestamps (which are in UTC)
+const formatSQLiteDate = (dateString) => {
+  if (!dateString) return null;
+
+  // SQLite datetime('now') returns: YYYY-MM-DD HH:MM:SS (UTC)
+  // We need to append 'Z' to tell JavaScript it's UTC
+  const utcDate = dateString.endsWith('Z') ? dateString : `${dateString}Z`;
+
+  return new Date(utcDate).toLocaleString('de-DE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
 
 function ProjectsList() {
   const [projects, setProjects] = useState([]);
@@ -18,6 +35,7 @@ function ProjectsList() {
 
   // Image viewer state (for full-screen viewing of project images)
   const [selectedImage, setSelectedImage] = useState(null);
+  const [editingName, setEditingName] = useState('');
   const [zoomLevel, setZoomLevel] = useState(1);
   const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -128,6 +146,7 @@ function ProjectsList() {
   // Image viewer handlers
   const handleImageClick = useCallback((image) => {
     setSelectedImage(image);
+    setEditingName(image.name);
     setZoomLevel(1);
     setPanPosition({ x: 0, y: 0 });
   }, []);
@@ -175,6 +194,150 @@ function ProjectsList() {
 
     handleImageClick(projectFiles.images[newIndex]);
   }, [selectedImage, projectFiles.images, handleImageClick]);
+
+  // Rename image
+  const handleRename = async () => {
+    if (!editingName || editingName.trim() === '') {
+      alert('Bitte gib einen gültigen Namen ein');
+      return;
+    }
+
+    if (editingName === selectedImage.name) {
+      return; // No change
+    }
+
+    try {
+      const response = await fetch(`/api/drive/images/${selectedImage.id}/rename`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: editingName.trim() })
+      });
+
+      if (response.ok) {
+        // Update local state
+        setSelectedImage({ ...selectedImage, name: editingName.trim() });
+        // Reload project files
+        if (viewingProject) {
+          loadProjectFiles(viewingProject.id);
+        }
+      } else {
+        alert('Fehler beim Umbenennen des Bildes');
+      }
+    } catch (error) {
+      console.error('Error renaming image:', error);
+      alert('Fehler beim Umbenennen des Bildes');
+    }
+  };
+
+  // Assign image to project
+  const handleAssignToProject = async (projectId) => {
+    if (!selectedImage.id) {
+      alert('Bild muss zuerst in der Datenbank registriert sein');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/drive/images/assign-to-project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageId: selectedImage.id,
+          projectId: projectId
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        // Update selectedImage to reflect the new assignment
+        const updatedProjects = selectedImage.projects ? [...selectedImage.projects] : [];
+        const project = projects.find(p => p.id === projectId);
+        if (project && !updatedProjects.some(p => p.id === projectId)) {
+          updatedProjects.push(project);
+          setSelectedImage({ ...selectedImage, projects: updatedProjects });
+        }
+        // Reload project files
+        if (viewingProject) {
+          loadProjectFiles(viewingProject.id);
+        }
+        console.log(`✅ Bild zu "${result.projectName}" hinzugefügt`);
+      } else {
+        const error = await response.json();
+        alert(`Fehler: ${error.error}`);
+      }
+    } catch (error) {
+      console.error('Error assigning image:', error);
+      alert('Fehler beim Zuordnen des Bildes');
+    }
+  };
+
+  // Unassign image from project
+  const handleUnassignFromProject = async (projectId, e) => {
+    e?.stopPropagation();
+
+    try {
+      const response = await fetch('/api/drive/images/unassign-from-project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageId: selectedImage.id,
+          projectId: projectId
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        // Update selectedImage to reflect the removal
+        const updatedProjects = selectedImage.projects?.filter(p => p.id !== projectId) || [];
+        setSelectedImage({ ...selectedImage, projects: updatedProjects });
+        // Reload project files
+        if (viewingProject) {
+          loadProjectFiles(viewingProject.id);
+        }
+        console.log(`✅ Bild von "${result.projectName}" entfernt`);
+      } else {
+        const error = await response.json();
+        alert(`Fehler: ${error.error}`);
+      }
+    } catch (error) {
+      console.error('Error unassigning image:', error);
+      alert('Fehler beim Entfernen des Bildes');
+    }
+  };
+
+  // Delete image
+  const handleDeleteImage = async () => {
+    if (!selectedImage.id) {
+      alert('Nur registrierte Bilder können gelöscht werden');
+      return;
+    }
+
+    const confirmDelete = window.confirm(
+      `Möchtest du das Bild "${selectedImage.name}" wirklich löschen?\n\nDies löscht das Bild nur aus der Datenbank, nicht vom Laufwerk.`
+    );
+
+    if (!confirmDelete) return;
+
+    try {
+      const response = await fetch(`/api/drive/images/${selectedImage.id}?deleteFromDrive=false`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        closeImageViewer();
+        // Reload project files
+        if (viewingProject) {
+          loadProjectFiles(viewingProject.id);
+        }
+        alert('Bild erfolgreich gelöscht');
+      } else {
+        const error = await response.json();
+        alert(`Fehler beim Löschen: ${error.message}`);
+      }
+    } catch (error) {
+      console.error('Error deleting image:', error);
+      alert('Fehler beim Löschen des Bildes');
+    }
+  };
 
   // Keyboard navigation
   useEffect(() => {
@@ -432,50 +595,72 @@ function ProjectsList() {
 
       {/* Image Viewer Modal */}
       {selectedImage && !showEditor && (
-        <div className="modal-overlay" onClick={closeImageViewer}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-        >
-          <div className="modal image-viewer-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={closeImageViewer}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close" onClick={closeImageViewer}>
               <X size={24} />
             </button>
 
-            {/* Navigation Arrows */}
-            {projectFiles.images.length > 1 && (
-              <>
-                <button className="nav-arrow nav-arrow-left" onClick={(e) => { e.stopPropagation(); navigateImage('prev'); }}>
-                  <ChevronLeft size={32} />
-                </button>
-                <button className="nav-arrow nav-arrow-right" onClick={(e) => { e.stopPropagation(); navigateImage('next'); }}>
-                  <ChevronRight size={32} />
-                </button>
-              </>
-            )}
-
             <div className="modal-content">
-              {/* Image Container with Zoom & Pan */}
+              {/* Scrollable Image Container (Left) */}
               <div className="modal-image-container">
                 <div className="zoom-controls">
-                  <button className="zoom-btn" onClick={handleZoomOut} disabled={zoomLevel <= 0.5}>
-                    <ZoomOut size={18} />
+                  <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= 0.5}>
+                    -
                   </button>
                   <span className="zoom-level">{Math.round(zoomLevel * 100)}%</span>
-                  <button className="zoom-btn" onClick={handleZoomIn} disabled={zoomLevel >= 3}>
-                    <ZoomIn size={18} />
+                  <button className="zoom-btn" onClick={handleZoomIn} title="Zoom In" disabled={zoomLevel >= 3}>
+                    +
                   </button>
-                  <button className="zoom-btn zoom-reset" onClick={handleZoomReset}>
-                    <RotateCcw size={18} />
+                  <button className="zoom-btn zoom-reset" onClick={handleZoomReset} title="Zoom auf 100% zurücksetzen">
+                    Reset
                   </button>
-                </div>
 
+                  <button
+                    className="zoom-btn editor-btn"
+                    onClick={() => setShowEditor(true)}
+                    title="Editor öffnen"
+                  >
+                    <Pencil size={18} />
+                    Editor
+                  </button>
+
+                  <div className="zoom-controls-right">
+                    <button
+                      className="zoom-btn nav-btn"
+                      onClick={() => navigateImage('prev')}
+                      title="Vorheriges Bild (←)"
+                      disabled={!selectedImage.id || projectFiles.images.findIndex(img => img.id === selectedImage.id) === 0}
+                    >
+                      <ChevronLeft size={18} />
+                    </button>
+                    <button
+                      className="zoom-btn nav-btn"
+                      onClick={() => navigateImage('next')}
+                      title="Nächstes Bild (→)"
+                      disabled={!selectedImage.id || projectFiles.images.findIndex(img => img.id === selectedImage.id) === projectFiles.images.length - 1}
+                    >
+                      <ChevronRight size={18} />
+                    </button>
+                    {selectedImage.id && (
+                      <button
+                        className="zoom-btn delete-btn"
+                        onClick={handleDeleteImage}
+                        title="Bild löschen (Delete)"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    )}
+                  </div>
+                </div>
                 <div
-                  className="modal-image-wrapper"
+                  className="modal-image-scroll"
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseUp}
                   style={{
-                    cursor: zoomLevel > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default',
-                    overflow: 'hidden'
+                    cursor: isPanning ? 'grabbing' : 'grab'
                   }}
                 >
                   <img
@@ -483,39 +668,147 @@ function ProjectsList() {
                     alt={selectedImage.name}
                     style={{
                       transform: `scale(${zoomLevel}) translate(${panPosition.x / zoomLevel}px, ${panPosition.y / zoomLevel}px)`,
-                      transition: isPanning ? 'none' : 'transform 0.2s',
-                      maxWidth: '100%',
-                      maxHeight: '100%',
-                      objectFit: 'contain'
+                      transformOrigin: 'top left',
+                      transition: isPanning ? 'none' : 'transform 0.2s ease',
+                      userSelect: 'none',
+                      pointerEvents: 'none'
                     }}
                     draggable={false}
                   />
                 </div>
               </div>
 
-              {/* Image Details Sidebar */}
+              {/* Fixed Sidebar (Right) */}
               <div className="modal-sidebar">
-                <h3 className="modal-title">{selectedImage.name}</h3>
+                <div className="modal-section">
+                  <label>Name</label>
+                  <div className="rename-input-group">
+                    <input
+                      type="text"
+                      value={editingName}
+                      onChange={(e) => setEditingName(e.target.value)}
+                      className="input"
+                      disabled={!selectedImage.id}
+                    />
+                    <button
+                      className="btn btn-primary btn-sm btn-icon"
+                      onClick={handleRename}
+                      title="Umbenennen"
+                      disabled={!selectedImage.id}
+                    >
+                      <Edit2 size={16} />
+                    </button>
+                  </div>
+                </div>
 
-                {selectedImage.photo_taken_at && (
+                {selectedImage.original_name && (
                   <div className="modal-section">
-                    <label>📸 Aufgenommen am</label>
-                    <div className="detail-text">
-                      {new Date(selectedImage.photo_taken_at).toLocaleDateString('de-DE')}
+                    <label>Originalname</label>
+                    <div className="detail-text">{selectedImage.original_name}</div>
+                  </div>
+                )}
+
+                {selectedImage.subfolder && (
+                  <div className="modal-section">
+                    <label>Unterordner</label>
+                    <div className="subfolder-badge">{selectedImage.subfolder}</div>
+                  </div>
+                )}
+
+                {selectedImage.projects && selectedImage.projects.length > 0 && (
+                  <div className="modal-section">
+                    <label>🏷️ Zugeordnete Projekte</label>
+                    <div className="project-badges-modal">
+                      {selectedImage.projects.map(project => (
+                        <div
+                          key={project.id}
+                          className="project-badge"
+                          style={{ backgroundColor: project.color }}
+                          title={project.folder_name}
+                        >
+                          {project.folder_name}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
 
-                {/* Action Buttons */}
-                <div className="modal-actions">
-                  <button
-                    className="btn btn-primary"
-                    onClick={() => setShowEditor(true)}
-                  >
-                    <Edit2 size={18} />
-                    In Editor öffnen
-                  </button>
-                </div>
+                {selectedImage.file_size && (
+                  <div className="modal-section">
+                    <label>Dateigröße</label>
+                    <div className="detail-text">
+                      {(selectedImage.file_size / 1024 / 1024).toFixed(2)} MB
+                    </div>
+                  </div>
+                )}
+
+                {selectedImage.width && selectedImage.height && (
+                  <div className="modal-section">
+                    <label>Auflösung</label>
+                    <div className="detail-text">
+                      {selectedImage.width} x {selectedImage.height} px
+                    </div>
+                  </div>
+                )}
+
+                {selectedImage.photo_taken_at && (
+                  <div className="modal-section">
+                    <label>📸 Foto aufgenommen</label>
+                    <div className="detail-text">
+                      {formatSQLiteDate(selectedImage.photo_taken_at)}
+                    </div>
+                  </div>
+                )}
+
+                {selectedImage.created_at && (
+                  <div className="modal-section">
+                    <label>📅 Hochgeladen am</label>
+                    <div className="detail-text">
+                      {formatSQLiteDate(selectedImage.created_at)}
+                    </div>
+                  </div>
+                )}
+
+                {/* Projekt-Zuordnung */}
+                {selectedImage.id && (
+                  <div className="modal-section projects-section">
+                    <label>📁 Projekte</label>
+                    {selectedProjects.length === 0 ? (
+                      <div className="empty-hint">Keine Projekte markiert. Markiere Projekte in der Liste.</div>
+                    ) : (
+                      <div className="project-list">
+                        {projects
+                          .filter(p => selectedProjects.includes(p.id))
+                          .map(project => {
+                            const isAssigned = selectedImage.projects?.some(p => p.id === project.id);
+                            return (
+                              <button
+                                key={project.id}
+                                className={`project-item ${isAssigned ? 'project-assigned' : ''}`}
+                                onClick={() => !isAssigned && handleAssignToProject(project.id)}
+                                style={{ borderLeftColor: project.color }}
+                                title={isAssigned ? `✓ Bereits zugeordnet zu "${project.folder_name}"` : `Bild zu "${project.folder_name}" hinzufügen`}
+                              >
+                                <span className="project-item-name">
+                                  {isAssigned && <span className="checkmark">✓ </span>}
+                                  {project.folder_name}
+                                </span>
+                                {isAssigned && (
+                                  <button
+                                    className="project-unassign-btn"
+                                    onClick={(e) => handleUnassignFromProject(project.id, e)}
+                                    title={`Von "${project.folder_name}" entfernen`}
+                                  >
+                                    <X size={14} />
+                                  </button>
+                                )}
+                              </button>
+                            );
+                          })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
