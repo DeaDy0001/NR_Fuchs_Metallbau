@@ -129,8 +129,43 @@ const exportImageNew = async (req, res) => {
     const base64Data = dataURL.replace(/^data:image\/\w+;base64,/, '');
     const buffer = Buffer.from(base64Data, 'base64');
 
+    // Determine original file path
+    let originalPath;
+    let isProjectImage = false;
+
+    if (image.local_path && image.local_path.startsWith('/api/projects/')) {
+      // Project image - construct real file path
+      isProjectImage = true;
+
+      // Extract project ID and filename from URL: /api/projects/{id}/file/image/{filename}
+      const urlMatch = image.local_path.match(/^\/api\/projects\/(\d+)\/file\/image\/(.+)$/);
+      if (!urlMatch) {
+        throw new Error('Invalid project image path format');
+      }
+
+      const projectId = urlMatch[1];
+      const fileName = decodeURIComponent(urlMatch[2]);
+
+      // Get project info
+      const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+      if (!project) {
+        throw new Error('Project not found');
+      }
+
+      // Get project base path
+      const projectSettings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+      if (!projectSettings || !projectSettings.project_path) {
+        throw new Error('Project base path not configured');
+      }
+
+      // Construct real file path
+      originalPath = path.join(projectSettings.project_path, project.folder_name, 'Bilder', fileName);
+    } else {
+      // Regular Drive image
+      originalPath = path.join(__dirname, '../../../', image.local_path);
+    }
+
     // Generate new filename with _e1, _e2, etc. suffix
-    const originalPath = path.join(__dirname, '../../../', image.local_path);
     const ext = path.extname(originalPath);
     const dirName = path.dirname(originalPath);
 
@@ -151,11 +186,21 @@ const exportImageNew = async (req, res) => {
     // Write new image
     await fs.writeFile(newPath, buffer);
 
-    // Generate new local_path (relative)
-    const newLocalPath = image.local_path.replace(
-      path.basename(image.local_path),
-      newFileName
-    );
+    // Generate new local_path
+    let newLocalPath;
+    if (isProjectImage) {
+      // For project images, keep the API URL format
+      newLocalPath = image.local_path.replace(
+        /\/([^\/]+)$/,  // Replace last segment (filename)
+        `/${encodeURIComponent(newFileName)}`
+      );
+    } else {
+      // For regular images, use relative path
+      newLocalPath = image.local_path.replace(
+        path.basename(image.local_path),
+        newFileName
+      );
+    }
 
     // Insert new image into database
     const insertStmt = db.prepare(`
