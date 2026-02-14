@@ -312,14 +312,46 @@ const getProjectFiles = async (req, res) => {
     let images = [];
     if (await fs.pathExists(imagesFolderPath)) {
       const imageFiles = await fs.readdir(imagesFolderPath);
+
+      // Get all drive_images that are assigned to this project
+      const dbImages = db.prepare(`
+        SELECT di.*
+        FROM drive_images di
+        JOIN image_project_assignments ipa ON di.id = ipa.image_id
+        WHERE ipa.project_id = ?
+      `).all(id);
+
+      // Create a map of filename -> db image for quick lookup
+      const dbImageMap = new Map();
+      dbImages.forEach(img => {
+        dbImageMap.set(img.name, img);
+      });
+
       images = imageFiles
         .filter(file => /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(file))
-        .map(file => ({
-          name: file,
-          path: path.join(imagesFolderPath, file),
-          url: `/api/projects/${id}/file/image/${encodeURIComponent(file)}`,
-          type: 'image'
-        }));
+        .map(file => {
+          const dbImage = dbImageMap.get(file);
+
+          if (dbImage) {
+            // Use full DB info but override paths to use project copy
+            const projectImageUrl = `/api/projects/${id}/file/image/${encodeURIComponent(file)}`;
+            return {
+              ...dbImage,
+              local_path: projectImageUrl,
+              thumbnail_url: projectImageUrl,
+              url: projectImageUrl,
+              type: 'image'
+            };
+          } else {
+            // Fallback to basic file info
+            return {
+              name: file,
+              path: path.join(imagesFolderPath, file),
+              url: `/api/projects/${id}/file/image/${encodeURIComponent(file)}`,
+              type: 'image'
+            };
+          }
+        });
     }
 
     // Scan for PDFs in main folder

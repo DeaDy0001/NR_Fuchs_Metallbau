@@ -3,7 +3,7 @@ import { fabric } from 'fabric';
 import {
   X, Save, FileDown, XCircle, Minus, Square, Circle, Type,
   Ruler, MousePointer, Trash2, Edit2, ChevronUp, ChevronDown,
-  ArrowRight, Pencil, Eye, EyeOff
+  ArrowRight, Pencil, Eye, EyeOff, ZoomIn, ZoomOut, RotateCcw
 } from 'lucide-react';
 import './ImageEditor.css';
 
@@ -997,6 +997,40 @@ function ImageEditor({ image, onClose }) {
     }
   };
 
+  // Zoom functions
+  const handleZoomIn = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    let zoom = canvas.getZoom();
+    zoom = zoom * 1.1;
+    if (zoom > 20) zoom = 20;
+
+    canvas.setZoom(zoom);
+    canvas.renderAll();
+  };
+
+  const handleZoomOut = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    let zoom = canvas.getZoom();
+    zoom = zoom / 1.1;
+    if (zoom < 0.1) zoom = 0.1;
+
+    canvas.setZoom(zoom);
+    canvas.renderAll();
+  };
+
+  const handleZoomReset = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    canvas.setZoom(1);
+    canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+    canvas.renderAll();
+  };
+
   return (
     <div className="image-editor-overlay">
       <div className="image-editor-modal">
@@ -1085,6 +1119,36 @@ function ImageEditor({ image, onClose }) {
               <Pencil size={20} />
               <span>Freihand</span>
             </button>
+
+            <div style={{ borderTop: '1px solid #444', margin: '10px 0', paddingTop: '10px' }}>
+              <h4 style={{ fontSize: '14px', marginBottom: '8px' }}>Zoom</h4>
+              <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                <button
+                  className="tool-btn"
+                  onClick={handleZoomIn}
+                  title="Vergrößern (Shift + Scroll)"
+                  style={{ flex: '1' }}
+                >
+                  <ZoomIn size={20} />
+                </button>
+                <button
+                  className="tool-btn"
+                  onClick={handleZoomOut}
+                  title="Verkleinern (Shift + Scroll)"
+                  style={{ flex: '1' }}
+                >
+                  <ZoomOut size={20} />
+                </button>
+                <button
+                  className="tool-btn"
+                  onClick={handleZoomReset}
+                  title="Zurücksetzen"
+                  style={{ flex: '1' }}
+                >
+                  <RotateCcw size={20} />
+                </button>
+              </div>
+            </div>
 
             <div className="tool-settings">
               <label>
