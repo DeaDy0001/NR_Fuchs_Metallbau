@@ -536,7 +536,6 @@ function ImageEditor({ image, onClose }) {
       // Only for drawing tools
       if (!['measurement', 'arrow', 'rectangle', 'circle', 'text', 'line'].includes(activeTool)) return;
 
-      const pointer = canvas.getPointer(e.e);
       dragStartRef.current = pointer;
       dragStartTimeRef.current = Date.now();
       isDrawingRef.current = true;
