@@ -236,6 +236,32 @@ const exportImageNew = async (req, res) => {
       const copyProjectStmt = db.prepare('INSERT INTO image_project_assignments (image_id, project_id) VALUES (?, ?)');
       for (const assignment of projectAssignments) {
         copyProjectStmt.run(newImageId, assignment.project_id);
+
+        // 🔧 If this is a Drive image (not project image), copy file to project folder
+        if (!isProjectImage) {
+          // Get project info
+          const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(assignment.project_id);
+          if (!project) continue;
+
+          // Get project base path
+          const projectSettings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+          if (!projectSettings?.project_path) continue;
+
+          // Construct destination path
+          const projectFolderPath = path.join(projectSettings.project_path, project.folder_name, 'Bilder');
+          const destPath = path.join(projectFolderPath, newFileName);
+
+          try {
+            // Create Bilder folder if it doesn't exist
+            await fs.ensureDir(projectFolderPath);
+
+            // Copy file to project folder
+            await fs.copy(newPath, destPath, { overwrite: false });
+            console.log(`📂 Copied new image to project folder: ${destPath}`);
+          } catch (copyError) {
+            console.error(`⚠️  Failed to copy to project ${project.folder_name}:`, copyError);
+          }
+        }
       }
     }
 
