@@ -686,6 +686,7 @@ function ImageEditor({ image, onClose }) {
     ).toFixed(0);
 
     const defaultText = `${distance}px`;
+    const measurementId = `measurement-${Date.now()}`;
     const line = new fabric.Line([start.x, start.y, end.x, end.y], {
       stroke: strokeColor,
       strokeWidth: strokeWidth,
@@ -739,7 +740,8 @@ function ImageEditor({ image, onClose }) {
       editable: true,
       selectable: true,
       subTargetCheck: true,
-      objectCaching: false
+      objectCaching: false,
+      id: measurementId
     });
 
     // Store original coordinates for editing
@@ -747,6 +749,12 @@ function ImageEditor({ image, onClose }) {
     group.measurementEnd = { x: end.x, y: end.y };
 
     canvas.add(group);
+    updateLayers();
+
+    // ✅ Auto-start editing the measurement text
+    setTimeout(() => {
+      startEditingLayer(measurementId, defaultText);
+    }, 50);
   };
 
   const createFinalArrow = (start, end) => {
