@@ -129,13 +129,24 @@ const exportImageNew = async (req, res) => {
     const base64Data = dataURL.replace(/^data:image\/\w+;base64,/, '');
     const buffer = Buffer.from(base64Data, 'base64');
 
-    // Generate new filename
+    // Generate new filename with _e1, _e2, etc. suffix
     const originalPath = path.join(__dirname, '../../../', image.local_path);
     const ext = path.extname(originalPath);
-    const baseName = path.basename(originalPath, ext);
     const dirName = path.dirname(originalPath);
-    const newFileName = `${baseName}_annotated_${Date.now()}${ext}`;
-    const newPath = path.join(dirName, newFileName);
+
+    // Get base name without _eN suffix (if present)
+    let baseName = path.basename(originalPath, ext);
+    baseName = baseName.replace(/_e\d+$/, ''); // Remove existing _e1, _e2, etc.
+
+    // Find next available _eN suffix
+    let editNumber = 1;
+    let newFileName;
+    let newPath;
+    do {
+      newFileName = `${baseName}_e${editNumber}${ext}`;
+      newPath = path.join(dirName, newFileName);
+      editNumber++;
+    } while (await fs.pathExists(newPath));
 
     // Write new image
     await fs.writeFile(newPath, buffer);
@@ -154,13 +165,13 @@ const exportImageNew = async (req, res) => {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     `);
 
-    const newImageName = image.name.replace(/(\.\w+)$/, '_annotated$1');
+    // Use the generated filename (with _e1, _e2, etc.)
     const result = insertStmt.run(
-      newImageName,
-      newImageName, // original_name = same as name for annotated images
-      `/uploads/${newFileName}`, // file_url for accessing the file
+      newFileName,
+      newFileName, // original_name = same as name for edited images
+      newLocalPath, // ✅ file_url = full web path
       null, // No drive_file_id for local images
-      `/uploads/${newFileName}`, // ✅ Use new image as thumbnail (shows annotations!)
+      newLocalPath, // ✅ thumbnail_url = same as file (shows annotations!)
       newLocalPath,
       image.mime_type,
       image.photo_taken_at,

@@ -49,7 +49,7 @@ const loadTokens = async () => {
   try {
     if (await fs.pathExists(TOKEN_PATH)) {
       const tokens = await fs.readJson(TOKEN_PATH);
-      console.log('✅ OAuth tokens loaded successfully');
+      // Tokens loaded (silent to reduce log spam)
       return tokens;
     }
     return null;
