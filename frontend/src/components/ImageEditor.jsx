@@ -934,7 +934,15 @@ function ImageEditor({ image, onClose }) {
   // Save handlers
   const handleSaveOverwrite = async () => {
     const canvas = fabricCanvasRef.current;
-    if (!canvas || !confirm('Original-Bild überschreiben?')) return;
+    if (!canvas) return;
+
+    // Check if image has ID (required for saving)
+    if (!image.id) {
+      alert('❌ Dieses Bild ist nicht in der Datenbank registriert!\n\nUm es zu bearbeiten, musst du es zuerst über die "Bilder"-Seite in die Datenbank importieren.');
+      return;
+    }
+
+    if (!confirm('Original-Bild überschreiben?')) return;
 
     try {
       const dataURL = canvas.toDataURL({
@@ -967,6 +975,12 @@ function ImageEditor({ image, onClose }) {
   const handleSaveNew = async () => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
+
+    // Check if image has ID (required for saving)
+    if (!image.id) {
+      alert('❌ Dieses Bild ist nicht in der Datenbank registriert!\n\nUm es zu bearbeiten, musst du es zuerst über die "Bilder"-Seite in die Datenbank importieren.');
+      return;
+    }
 
     try {
       const dataURL = canvas.toDataURL({
@@ -1330,11 +1344,21 @@ function ImageEditor({ image, onClose }) {
             <XCircle size={18} />
             Abbrechen
           </button>
-          <button className="btn btn-warning" onClick={handleSaveOverwrite}>
+          <button
+            className="btn btn-warning"
+            onClick={handleSaveOverwrite}
+            disabled={!image.id}
+            title={!image.id ? 'Nur registrierte Bilder können überschrieben werden' : 'Original-Bild überschreiben'}
+          >
             <Save size={18} />
             Original überschreiben
           </button>
-          <button className="btn btn-primary" onClick={handleSaveNew}>
+          <button
+            className="btn btn-primary"
+            onClick={handleSaveNew}
+            disabled={!image.id}
+            title={!image.id ? 'Nur registrierte Bilder können gespeichert werden' : 'Als neues Bild speichern'}
+          >
             <FileDown size={18} />
             Als neues Bild speichern
           </button>

@@ -327,14 +327,34 @@ const getProjectFiles = async (req, res) => {
         dbImageMap.set(img.name, img);
       });
 
-      images = imageFiles
+      // Helper function to get image metadata
+      const sharp = require('sharp');
+      const getImageMetadata = async (filePath) => {
+        try {
+          const stats = await fs.stat(filePath);
+          const metadata = await sharp(filePath).metadata();
+
+          return {
+            file_size: stats.size,
+            width: metadata.width,
+            height: metadata.height,
+            // Try to get photo date from EXIF
+            photo_taken_at: metadata.exif?.DateTimeOriginal || null
+          };
+        } catch (error) {
+          console.error('Error reading image metadata:', error);
+          return {};
+        }
+      };
+
+      images = await Promise.all(imageFiles
         .filter(file => /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(file))
-        .map(file => {
+        .map(async file => {
           const dbImage = dbImageMap.get(file);
+          const projectImageUrl = `/api/projects/${id}/file/image/${encodeURIComponent(file)}`;
 
           if (dbImage) {
             // Use full DB info but override paths to use project copy
-            const projectImageUrl = `/api/projects/${id}/file/image/${encodeURIComponent(file)}`;
             return {
               ...dbImage,
               local_path: projectImageUrl,
@@ -343,18 +363,23 @@ const getProjectFiles = async (req, res) => {
               type: 'image'
             };
           } else {
-            // Fallback to basic file info
-            const projectImageUrl = `/api/projects/${id}/file/image/${encodeURIComponent(file)}`;
+            // Fallback to basic file info + read metadata from file
+            const filePath = path.join(imagesFolderPath, file);
+            const metadata = await getImageMetadata(filePath);
+
             return {
               name: file,
-              path: path.join(imagesFolderPath, file),
+              original_name: file,
+              path: filePath,
               url: projectImageUrl,
-              local_path: projectImageUrl,  // Add for editor compatibility
-              thumbnail_url: projectImageUrl,  // Add for editor compatibility
-              type: 'image'
+              local_path: projectImageUrl,
+              thumbnail_url: projectImageUrl,
+              type: 'image',
+              ...metadata  // Add file_size, width, height, photo_taken_at
             };
           }
-        });
+        })
+      );
     }
 
     // Scan for PDFs in main folder
