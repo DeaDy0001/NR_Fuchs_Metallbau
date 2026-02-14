@@ -347,11 +347,89 @@ const getProjectFiles = async (req, res) => {
         }
       };
 
+      // Helper function to auto-register image to database
+      const registerImageToDatabase = async (fileName, filePath, projectId) => {
+        try {
+          console.log(`📝 Auto-registering image: ${fileName}`);
+
+          // Check if image already exists in DB (maybe with different name)
+          const existingImage = db.prepare(`
+            SELECT id FROM drive_images WHERE name = ? OR original_name = ?
+          `).get(fileName, fileName);
+
+          if (existingImage) {
+            console.log(`✅ Image already exists in DB with ID: ${existingImage.id}`);
+
+            // Check if already assigned to this project
+            const assignment = db.prepare(`
+              SELECT id FROM image_project_assignments
+              WHERE image_id = ? AND project_id = ?
+            `).get(existingImage.id, projectId);
+
+            if (!assignment) {
+              // Create assignment
+              db.prepare(`
+                INSERT INTO image_project_assignments (image_id, project_id)
+                VALUES (?, ?)
+              `).run(existingImage.id, projectId);
+              console.log(`🔗 Assigned existing image to project`);
+            }
+
+            return existingImage.id;
+          }
+
+          // Get metadata
+          const metadata = await getImageMetadata(filePath);
+          const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+          // Insert into database
+          const result = db.prepare(`
+            INSERT INTO drive_images (
+              name,
+              original_name,
+              file_size,
+              width,
+              height,
+              photo_taken_at,
+              created_at,
+              drive_id,
+              mime_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            fileName,
+            fileName,
+            metadata.file_size || null,
+            metadata.width || null,
+            metadata.height || null,
+            metadata.photo_taken_at || null,
+            now,
+            'local_project_import', // Special drive_id for auto-registered images
+            `image/${fileName.split('.').pop().toLowerCase()}`
+          );
+
+          const imageId = result.lastInsertRowid;
+
+          // Create project assignment
+          db.prepare(`
+            INSERT INTO image_project_assignments (image_id, project_id)
+            VALUES (?, ?)
+          `).run(imageId, projectId);
+
+          console.log(`✅ Auto-registered image with ID: ${imageId}`);
+          return imageId;
+
+        } catch (error) {
+          console.error('Error auto-registering image:', error);
+          return null;
+        }
+      };
+
       images = await Promise.all(imageFiles
         .filter(file => /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(file))
         .map(async file => {
           const dbImage = dbImageMap.get(file);
           const projectImageUrl = `/api/projects/${id}/file/image/${encodeURIComponent(file)}`;
+          const filePath = path.join(imagesFolderPath, file);
 
           if (dbImage) {
             // Use full DB info but override paths to use project copy
@@ -363,20 +441,36 @@ const getProjectFiles = async (req, res) => {
               type: 'image'
             };
           } else {
-            // Fallback to basic file info + read metadata from file
-            const filePath = path.join(imagesFolderPath, file);
+            // AUTO-REGISTER: Image not in DB yet, register it automatically
+            console.log(`⚠️  Image "${file}" not in DB - auto-registering...`);
+
+            const imageId = await registerImageToDatabase(file, filePath, id);
             const metadata = await getImageMetadata(filePath);
 
-            return {
-              name: file,
-              original_name: file,
-              path: filePath,
-              url: projectImageUrl,
-              local_path: projectImageUrl,
-              thumbnail_url: projectImageUrl,
-              type: 'image',
-              ...metadata  // Add file_size, width, height, photo_taken_at
-            };
+            if (imageId) {
+              // Successfully registered - fetch the full DB entry
+              const newDbImage = db.prepare('SELECT * FROM drive_images WHERE id = ?').get(imageId);
+
+              return {
+                ...newDbImage,
+                local_path: projectImageUrl,
+                thumbnail_url: projectImageUrl,
+                url: projectImageUrl,
+                type: 'image'
+              };
+            } else {
+              // Fallback if registration failed
+              return {
+                name: file,
+                original_name: file,
+                path: filePath,
+                url: projectImageUrl,
+                local_path: projectImageUrl,
+                thumbnail_url: projectImageUrl,
+                type: 'image',
+                ...metadata
+              };
+            }
           }
         })
       );
