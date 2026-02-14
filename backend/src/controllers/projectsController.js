@@ -322,9 +322,17 @@ const getProjectFiles = async (req, res) => {
       `).all(id);
 
       // Create a map of filename -> db image for quick lookup
+      // Use filename from local_path to handle extension correctly
       const dbImageMap = new Map();
       dbImages.forEach(img => {
-        dbImageMap.set(img.name, img);
+        // Extract filename from local_path (handles both /api/projects/... and /uploads/drive/...)
+        const filename = path.basename(img.local_path);
+        dbImageMap.set(filename, img);
+
+        // Also add by img.name for backwards compatibility (some entries might not have extension)
+        if (img.name && img.name !== filename) {
+          dbImageMap.set(img.name, img);
+        }
       });
 
       // Prepare statement for getting projects per image
