@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
-import { Search, Plus, Edit2, Save, X, CheckSquare, Square } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Search, Plus, Edit2, Save, X, CheckSquare, Square, ZoomIn, ZoomOut, RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react';
+import ImageEditor from '../components/ImageEditor';
 import './ProjectsList.css';
 
 function ProjectsList() {
@@ -14,6 +15,14 @@ function ProjectsList() {
   const [projectFiles, setProjectFiles] = useState({ images: [], pdfs: [], hasImages: false, hasPdfs: false });
   const [activeTab, setActiveTab] = useState('images'); // Active tab in project modal
   const [loadingFiles, setLoadingFiles] = useState(false);
+
+  // Image viewer state (for full-screen viewing of project images)
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [showEditor, setShowEditor] = useState(false);
 
   useEffect(() => {
     loadProjects();
@@ -115,6 +124,78 @@ function ProjectsList() {
     setActiveTab('images');
     setEditForm({ color: '', notes: '' });
   };
+
+  // Image viewer handlers
+  const handleImageClick = useCallback((image) => {
+    setSelectedImage(image);
+    setZoomLevel(1);
+    setPanPosition({ x: 0, y: 0 });
+  }, []);
+
+  const closeImageViewer = useCallback(() => {
+    setSelectedImage(null);
+    setZoomLevel(1);
+    setPanPosition({ x: 0, y: 0 });
+    setShowEditor(false);
+  }, []);
+
+  const handleZoomIn = () => setZoomLevel(prev => Math.min(prev + 0.25, 3));
+  const handleZoomOut = () => setZoomLevel(prev => Math.max(prev - 0.25, 0.5));
+  const handleZoomReset = () => {
+    setZoomLevel(1);
+    setPanPosition({ x: 0, y: 0 });
+  };
+
+  const handleMouseDown = (e) => {
+    if (zoomLevel > 1) {
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - panPosition.x, y: e.clientY - panPosition.y });
+    }
+  };
+
+  const handleMouseMove = (e) => {
+    if (isPanning && zoomLevel > 1) {
+      setPanPosition({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
+    }
+  };
+
+  const handleMouseUp = () => setIsPanning(false);
+
+  const navigateImage = useCallback((direction) => {
+    if (!selectedImage || !projectFiles.images.length) return;
+
+    const currentIndex = projectFiles.images.findIndex(img => img.id === selectedImage.id);
+    let newIndex;
+
+    if (direction === 'prev') {
+      newIndex = currentIndex > 0 ? currentIndex - 1 : projectFiles.images.length - 1;
+    } else {
+      newIndex = currentIndex < projectFiles.images.length - 1 ? currentIndex + 1 : 0;
+    }
+
+    handleImageClick(projectFiles.images[newIndex]);
+  }, [selectedImage, projectFiles.images, handleImageClick]);
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (!selectedImage || showEditor) return;
+
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        navigateImage('prev');
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        navigateImage('next');
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeImageViewer();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedImage, showEditor, navigateImage, closeImageViewer]);
 
   // Gefilterte Projekte basierend auf Markierung
   const filteredProjects = projects.filter(project => {
@@ -313,7 +394,12 @@ function ProjectsList() {
                 ) : (
                   <div className="project-images-grid">
                     {projectFiles.images.map((image, index) => (
-                      <div key={index} className="project-image-card">
+                      <div
+                        key={index}
+                        className="project-image-card"
+                        onClick={() => handleImageClick(image)}
+                        style={{ cursor: 'pointer' }}
+                      >
                         <img src={image.url} alt={image.name} />
                         <div className="project-image-name">{image.name}</div>
                       </div>
@@ -342,6 +428,109 @@ function ProjectsList() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Image Viewer Modal */}
+      {selectedImage && !showEditor && (
+        <div className="modal-overlay" onClick={closeImageViewer}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+        >
+          <div className="modal image-viewer-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={closeImageViewer}>
+              <X size={24} />
+            </button>
+
+            {/* Navigation Arrows */}
+            {projectFiles.images.length > 1 && (
+              <>
+                <button className="nav-arrow nav-arrow-left" onClick={(e) => { e.stopPropagation(); navigateImage('prev'); }}>
+                  <ChevronLeft size={32} />
+                </button>
+                <button className="nav-arrow nav-arrow-right" onClick={(e) => { e.stopPropagation(); navigateImage('next'); }}>
+                  <ChevronRight size={32} />
+                </button>
+              </>
+            )}
+
+            <div className="modal-content">
+              {/* Image Container with Zoom & Pan */}
+              <div className="modal-image-container">
+                <div className="zoom-controls">
+                  <button className="zoom-btn" onClick={handleZoomOut} disabled={zoomLevel <= 0.5}>
+                    <ZoomOut size={18} />
+                  </button>
+                  <span className="zoom-level">{Math.round(zoomLevel * 100)}%</span>
+                  <button className="zoom-btn" onClick={handleZoomIn} disabled={zoomLevel >= 3}>
+                    <ZoomIn size={18} />
+                  </button>
+                  <button className="zoom-btn zoom-reset" onClick={handleZoomReset}>
+                    <RotateCcw size={18} />
+                  </button>
+                </div>
+
+                <div
+                  className="modal-image-wrapper"
+                  style={{
+                    cursor: zoomLevel > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default',
+                    overflow: 'hidden'
+                  }}
+                >
+                  <img
+                    src={selectedImage.local_path || selectedImage.url}
+                    alt={selectedImage.name}
+                    style={{
+                      transform: `scale(${zoomLevel}) translate(${panPosition.x / zoomLevel}px, ${panPosition.y / zoomLevel}px)`,
+                      transition: isPanning ? 'none' : 'transform 0.2s',
+                      maxWidth: '100%',
+                      maxHeight: '100%',
+                      objectFit: 'contain'
+                    }}
+                    draggable={false}
+                  />
+                </div>
+              </div>
+
+              {/* Image Details Sidebar */}
+              <div className="modal-sidebar">
+                <h3 className="modal-title">{selectedImage.name}</h3>
+
+                {selectedImage.photo_taken_at && (
+                  <div className="modal-section">
+                    <label>📸 Aufgenommen am</label>
+                    <div className="detail-text">
+                      {new Date(selectedImage.photo_taken_at).toLocaleDateString('de-DE')}
+                    </div>
+                  </div>
+                )}
+
+                {/* Action Buttons */}
+                <div className="modal-actions">
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => setShowEditor(true)}
+                  >
+                    <Edit2 size={18} />
+                    In Editor öffnen
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Image Editor */}
+      {showEditor && selectedImage && (
+        <ImageEditor
+          image={selectedImage}
+          onClose={() => {
+            setShowEditor(false);
+            // Optionally reload project files to show newly created images
+          }}
+        />
       )}
     </div>
   );

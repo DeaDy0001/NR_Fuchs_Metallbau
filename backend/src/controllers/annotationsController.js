@@ -185,6 +185,15 @@ const exportImageNew = async (req, res) => {
     const annotationStmt = db.prepare('INSERT INTO image_annotations (image_id, annotations) VALUES (?, ?)');
     annotationStmt.run(newImageId, annotations);
 
+    // ✅ Copy project assignments from original image to new image
+    const projectAssignments = db.prepare('SELECT project_id FROM image_project_assignments WHERE image_id = ?').all(imageId);
+    if (projectAssignments.length > 0) {
+      const copyProjectStmt = db.prepare('INSERT INTO image_project_assignments (image_id, project_id) VALUES (?, ?)');
+      for (const assignment of projectAssignments) {
+        copyProjectStmt.run(newImageId, assignment.project_id);
+      }
+    }
+
     // Get the newly created image
     const newImage = db.prepare('SELECT * FROM drive_images WHERE id = ?').get(newImageId);
 

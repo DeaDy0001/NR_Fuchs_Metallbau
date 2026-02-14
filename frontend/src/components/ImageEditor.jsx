@@ -30,6 +30,10 @@ function ImageEditor({ image, onClose }) {
   const [strokeWidth, setStrokeWidth] = useState(2);
   const [fontSize, setFontSize] = useState(16);
 
+  // Color presets (saved colors for quick access)
+  const [colorPresets, setColorPresets] = useState([]);
+  const NUM_COLOR_SLOTS = 6;
+
   // Initialize Fabric.js canvas
   useEffect(() => {
     if (!canvasRef.current || !containerRef.current) return;
@@ -136,6 +140,43 @@ function ImageEditor({ image, onClose }) {
       if (layer) {
         setSelectedLayer(layer.id);
       }
+    }
+  };
+
+  // Load color presets from backend
+  useEffect(() => {
+    const loadColorPresets = async () => {
+      try {
+        const response = await fetch('/api/color-presets');
+        if (response.ok) {
+          const presets = await response.json();
+          setColorPresets(presets);
+        }
+      } catch (error) {
+        console.error('Error loading color presets:', error);
+      }
+    };
+    loadColorPresets();
+  }, []);
+
+  // Save color preset to backend
+  const saveColorPreset = async (color, position) => {
+    try {
+      const response = await fetch('/api/color-presets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ color, position })
+      });
+      if (response.ok) {
+        // Reload presets
+        const presetsResponse = await fetch('/api/color-presets');
+        if (presetsResponse.ok) {
+          const presets = await presetsResponse.json();
+          setColorPresets(presets);
+        }
+      }
+    } catch (error) {
+      console.error('Error saving color preset:', error);
     }
   };
 
@@ -1054,6 +1095,48 @@ function ImageEditor({ image, onClose }) {
                   onChange={(e) => setStrokeColor(e.target.value)}
                 />
               </label>
+
+              {/* Color Quick-Select Presets */}
+              <div className="color-presets">
+                <label style={{ marginBottom: '5px', display: 'block', fontSize: '12px' }}>
+                  Schnellauswahl:
+                </label>
+                <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                  {Array.from({ length: NUM_COLOR_SLOTS }).map((_, index) => {
+                    const preset = colorPresets.find(p => p.position === index);
+                    return (
+                      <button
+                        key={index}
+                        className="color-preset-btn"
+                        style={{
+                          backgroundColor: preset ? preset.color : '#333',
+                          border: preset && preset.color === strokeColor ? '2px solid white' : '1px solid #555',
+                          width: '32px',
+                          height: '32px',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          position: 'relative'
+                        }}
+                        onClick={() => {
+                          if (preset) {
+                            setStrokeColor(preset.color);
+                          }
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          // Right-click: Save current color to this slot
+                          saveColorPreset(strokeColor, index);
+                        }}
+                        title={preset ? `${preset.color} (Rechtsklick zum Überschreiben)` : 'Rechtsklick zum Speichern'}
+                      >
+                        {!preset && (
+                          <span style={{ fontSize: '16px', color: '#666' }}>+</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
               <label>
                 Strichstärke:

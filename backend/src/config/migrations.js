@@ -223,6 +223,25 @@ const migrations = [
 
       console.log('✓ Migration create_image_annotations_table completed');
     }
+  },
+  {
+    id: 10,
+    name: 'create_color_presets_table',
+    up: () => {
+      console.log('Running migration: create_color_presets_table');
+
+      // Create table for saved color presets in image editor
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS color_presets (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          color TEXT NOT NULL,
+          position INTEGER NOT NULL,
+          created_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+
+      console.log('✓ Migration create_color_presets_table completed');
+    }
   }
 ];
 
