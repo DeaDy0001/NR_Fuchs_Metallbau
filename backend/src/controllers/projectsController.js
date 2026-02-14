@@ -344,10 +344,13 @@ const getProjectFiles = async (req, res) => {
             };
           } else {
             // Fallback to basic file info
+            const projectImageUrl = `/api/projects/${id}/file/image/${encodeURIComponent(file)}`;
             return {
               name: file,
               path: path.join(imagesFolderPath, file),
-              url: `/api/projects/${id}/file/image/${encodeURIComponent(file)}`,
+              url: projectImageUrl,
+              local_path: projectImageUrl,  // Add for editor compatibility
+              thumbnail_url: projectImageUrl,  // Add for editor compatibility
               type: 'image'
             };
           }

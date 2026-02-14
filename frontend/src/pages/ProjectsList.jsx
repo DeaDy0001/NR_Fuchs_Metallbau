@@ -143,6 +143,24 @@ function ProjectsList() {
     setEditForm({ color: '', notes: '' });
   };
 
+  // Helper function to reload project files (used after image updates)
+  const loadProjectFiles = async (projectId) => {
+    if (!projectId) return;
+
+    setLoadingFiles(true);
+    try {
+      const response = await fetch(`/api/projects/${projectId}/files`);
+      if (response.ok) {
+        const data = await response.json();
+        setProjectFiles(data);
+      }
+    } catch (error) {
+      console.error('Error loading project files:', error);
+    } finally {
+      setLoadingFiles(false);
+    }
+  };
+
   // Image viewer handlers
   const handleImageClick = useCallback((image) => {
     setSelectedImage(image);
@@ -183,9 +201,22 @@ function ProjectsList() {
   const navigateImage = useCallback((direction) => {
     if (!selectedImage || !projectFiles.images.length) return;
 
-    const currentIndex = projectFiles.images.findIndex(img => img.id === selectedImage.id);
-    let newIndex;
+    // Find current image by id (if available), otherwise by name or url
+    const currentIndex = projectFiles.images.findIndex(img => {
+      if (selectedImage.id && img.id) {
+        return img.id === selectedImage.id;
+      }
+      // Fallback to name or url comparison
+      return img.name === selectedImage.name || img.url === selectedImage.url;
+    });
 
+    // If image not found, don't navigate
+    if (currentIndex === -1) {
+      console.warn('Current image not found in project files');
+      return;
+    }
+
+    let newIndex;
     if (direction === 'prev') {
       newIndex = currentIndex > 0 ? currentIndex - 1 : projectFiles.images.length - 1;
     } else {
