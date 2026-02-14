@@ -3,9 +3,15 @@ import { fabric } from 'fabric';
 import {
   X, Save, FileDown, XCircle, Minus, Square, Circle, Type,
   Ruler, MousePointer, Trash2, Edit2, ChevronUp, ChevronDown,
-  ArrowRight, Pencil, Eye, EyeOff, ZoomIn, ZoomOut, RotateCcw
+  ArrowRight, Pencil, Eye, EyeOff, ZoomIn, ZoomOut, RotateCcw, Box
 } from 'lucide-react';
 import './ImageEditor.css';
+import {
+  computeHomography,
+  perspectiveTransform,
+  calculateRealDistance,
+  isPointInCalibration
+} from '../utils/homography';
 
 function ImageEditor({ image, onClose }) {
   const canvasRef = useRef(null);
@@ -33,6 +39,15 @@ function ImageEditor({ image, onClose }) {
   // Color presets (saved colors for quick access)
   const [colorPresets, setColorPresets] = useState([]);
   const NUM_COLOR_SLOTS = 6;
+
+  // 3D Measurement calibration state
+  const [calibrationData, setCalibrationData] = useState(null); // {matrix, realWidth, realHeight, srcPoints, dstPoints}
+  const [calibrationPoints, setCalibrationPoints] = useState([]); // Array of {x, y} during calibration
+  const [calibrationStep, setCalibrationStep] = useState(null); // null | 'points' | 'dimensions'
+  const [showCalibrationDialog, setShowCalibrationDialog] = useState(false);
+  const [calibrationRealWidth, setCalibrationRealWidth] = useState('');
+  const [calibrationRealHeight, setCalibrationRealHeight] = useState('');
+  const [measurementUnit, setMeasurementUnit] = useState('m'); // 'mm' | 'cm' | 'm'
 
   // Initialize Fabric.js canvas
   useEffect(() => {
@@ -100,9 +115,26 @@ function ImageEditor({ image, onClose }) {
         if (response.ok) {
           const data = await response.json();
           if (data.annotations) {
-            canvas.loadFromJSON(data.annotations, () => {
+            const annotationsData = typeof data.annotations === 'string'
+              ? JSON.parse(data.annotations)
+              : data.annotations;
+
+            // Load calibration data if exists
+            if (annotationsData.calibration) {
+              setCalibrationData(annotationsData.calibration);
+              setMeasurementUnit(annotationsData.calibration.unit || 'm');
+            }
+
+            // Load canvas objects
+            canvas.loadFromJSON(annotationsData, () => {
               canvas.renderAll();
               updateLayers();
+
+              // Restore calibration visualization if exists
+              if (annotationsData.calibration) {
+                // Markers and polygon are already in the canvas from loadFromJSON
+                // No need to redraw them
+              }
             });
           }
         }
@@ -203,6 +235,147 @@ function ImageEditor({ image, onClose }) {
     if (tool === 'measurement') {
       setMeasurementPoints([]);
     }
+
+    // 3D Measurement tool
+    if (tool === '3d-measurement') {
+      // Check if calibration exists
+      if (!calibrationData) {
+        // Start calibration process
+        setCalibrationStep('points');
+        setCalibrationPoints([]);
+      }
+      // If calibration exists, just switch to measurement mode
+    }
+  };
+
+  // 3D Calibration handlers
+  const handle3DCalibrationClick = (pointer) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    if (calibrationStep === 'points') {
+      // Add calibration point
+      const newPoints = [...calibrationPoints, { x: pointer.x, y: pointer.y }];
+      setCalibrationPoints(newPoints);
+
+      // Visualize point
+      const marker = new fabric.Circle({
+        left: pointer.x,
+        top: pointer.y,
+        radius: 6,
+        fill: '#00ff00',
+        stroke: '#ffffff',
+        strokeWidth: 2,
+        originX: 'center',
+        originY: 'center',
+        selectable: false,
+        evented: false,
+        calibrationMarker: true,
+        calibrationIndex: newPoints.length - 1
+      });
+
+      const label = new fabric.Text(`${newPoints.length}`, {
+        left: pointer.x + 12,
+        top: pointer.y - 6,
+        fontSize: 16,
+        fill: '#00ff00',
+        fontWeight: 'bold',
+        selectable: false,
+        evented: false,
+        calibrationMarker: true
+      });
+
+      canvas.add(marker, label);
+      canvas.renderAll();
+
+      // If 4 points are set, show dimension dialog
+      if (newPoints.length === 4) {
+        // Draw polygon connecting the points
+        const polygon = new fabric.Polygon(newPoints, {
+          fill: 'rgba(0, 255, 0, 0.1)',
+          stroke: '#00ff00',
+          strokeWidth: 2,
+          selectable: false,
+          evented: false,
+          calibrationMarker: true
+        });
+        canvas.add(polygon);
+        canvas.sendToBack(polygon);
+        canvas.renderAll();
+
+        // Show dialog for dimensions
+        setShowCalibrationDialog(true);
+        setCalibrationStep('dimensions');
+      }
+    }
+  };
+
+  const completeCalibration = () => {
+    if (calibrationPoints.length !== 4 || !calibrationRealWidth || !calibrationRealHeight) {
+      alert('Bitte alle 4 Punkte setzen und Maße eingeben');
+      return;
+    }
+
+    const realWidth = parseFloat(calibrationRealWidth);
+    const realHeight = parseFloat(calibrationRealHeight);
+
+    if (isNaN(realWidth) || isNaN(realHeight) || realWidth <= 0 || realHeight <= 0) {
+      alert('Bitte gültige Maße eingeben');
+      return;
+    }
+
+    try {
+      // Source points (image coordinates)
+      const srcPoints = calibrationPoints;
+
+      // Destination points (normalized 0-1 rectangle)
+      const dstPoints = [
+        { x: 0, y: 0 },     // Top-left
+        { x: 1, y: 0 },     // Top-right
+        { x: 1, y: 1 },     // Bottom-right
+        { x: 0, y: 1 }      // Bottom-left
+      ];
+
+      // Compute homography matrix
+      const matrix = computeHomography(srcPoints, dstPoints);
+
+      // Save calibration
+      setCalibrationData({
+        matrix,
+        realWidth,
+        realHeight,
+        srcPoints,
+        dstPoints,
+        unit: measurementUnit
+      });
+
+      setShowCalibrationDialog(false);
+      setCalibrationStep(null);
+
+      alert(`Kalibrierung erfolgreich! Sie können jetzt Messungen mit echten Maßen (${measurementUnit}) durchführen.`);
+    } catch (error) {
+      console.error('Calibration error:', error);
+      alert(`Fehler bei der Kalibrierung: ${error.message}`);
+    }
+  };
+
+  const resetCalibration = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    // Remove all calibration markers
+    const objects = canvas.getObjects();
+    const markersToRemove = objects.filter(obj => obj.calibrationMarker);
+    markersToRemove.forEach(obj => canvas.remove(obj));
+    canvas.renderAll();
+
+    // Reset state
+    setCalibrationData(null);
+    setCalibrationPoints([]);
+    setCalibrationStep(null);
+    setShowCalibrationDialog(false);
+    setCalibrationRealWidth('');
+    setCalibrationRealHeight('');
   };
 
   // Update freehand brush when color or width changes
@@ -340,8 +513,25 @@ function ImageEditor({ image, onClose }) {
     if (!canvas) return;
 
     const handleMouseDown = (e) => {
+      const pointer = canvas.getPointer(e.e);
+
+      // Handle 3D calibration clicks
+      if (activeTool === '3d-measurement' && calibrationStep === 'points') {
+        handle3DCalibrationClick(pointer);
+        return;
+      }
+
       // Don't draw if clicking on existing object
       if (e.target) return;
+
+      // For 3D measurement tool with calibration complete
+      if (activeTool === '3d-measurement' && calibrationData) {
+        // Use same drag behavior as normal measurement
+        dragStartRef.current = pointer;
+        dragStartTimeRef.current = Date.now();
+        isDrawingRef.current = true;
+        return;
+      }
 
       // Only for drawing tools
       if (!['measurement', 'arrow', 'rectangle', 'circle', 'text', 'line'].includes(activeTool)) return;
@@ -390,6 +580,11 @@ function ImageEditor({ image, onClose }) {
         case 'measurement':
           newTempObject = createTempMeasurement(dragStartRef.current, pointer);
           break;
+        case '3d-measurement':
+          if (calibrationData) {
+            newTempObject = createTemp3DMeasurement(dragStartRef.current, pointer);
+          }
+          break;
         case 'arrow':
           newTempObject = createTempArrow(dragStartRef.current, pointer);
           break;
@@ -435,6 +630,11 @@ function ImageEditor({ image, onClose }) {
           case 'measurement':
             createFinalMeasurement(dragStartRef.current, pointer);
             break;
+          case '3d-measurement':
+            if (calibrationData) {
+              createFinal3DMeasurement(dragStartRef.current, pointer);
+            }
+            break;
           case 'arrow':
             createFinalArrow(dragStartRef.current, pointer);
             break;
@@ -462,7 +662,7 @@ function ImageEditor({ image, onClose }) {
       canvas.off('mouse:move', handleMouseMove);
       canvas.off('mouse:up', handleMouseUp);
     };
-  }, [activeTool, strokeColor, strokeWidth, fontSize]);
+  }, [activeTool, strokeColor, strokeWidth, fontSize, calibrationStep, calibrationPoints, calibrationData]);
 
   // Temporary object creation for drag preview
   const createTempLine = (start, end) => {
@@ -526,6 +726,74 @@ function ImageEditor({ image, onClose }) {
     });
 
     return new fabric.Group([line, arrow1, arrow2, text]);
+  };
+
+  const createTemp3DMeasurement = (start, end) => {
+    try {
+      // Calculate real distance using calibration
+      const realDistance = calculateRealDistance(start, end, calibrationData.matrix, {
+        width: calibrationData.realWidth,
+        height: calibrationData.realHeight
+      });
+
+      // Check if points are within calibration area
+      const startInBounds = isPointInCalibration(start, calibrationData.matrix);
+      const endInBounds = isPointInCalibration(end, calibrationData.matrix);
+      const color = (startInBounds && endInBounds) ? strokeColor : '#ff8800'; // Orange if out of bounds
+
+      const line = new fabric.Line([start.x, start.y, end.x, end.y], {
+        stroke: color,
+        strokeWidth: strokeWidth,
+        opacity: 0.6
+      });
+
+      const angle = Math.atan2(end.y - start.y, end.x - start.x);
+      const arrowSize = 10;
+
+      const arrow1 = new fabric.Triangle({
+        left: start.x,
+        top: start.y,
+        width: arrowSize,
+        height: arrowSize,
+        fill: color,
+        angle: (angle * 180 / Math.PI) + 90,
+        originX: 'center',
+        originY: 'center',
+        opacity: 0.6
+      });
+
+      const arrow2 = new fabric.Triangle({
+        left: end.x,
+        top: end.y,
+        width: arrowSize,
+        height: arrowSize,
+        fill: color,
+        angle: (angle * 180 / Math.PI) - 90,
+        originX: 'center',
+        originY: 'center',
+        opacity: 0.6
+      });
+
+      const midX = (start.x + end.x) / 2;
+      const midY = (start.y + end.y) / 2;
+
+      const distanceText = `${realDistance.toFixed(2)}${calibrationData.unit}`;
+      const text = new fabric.Text(distanceText, {
+        left: midX,
+        top: midY - 20,
+        fontSize: fontSize,
+        fill: color,
+        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+        padding: 4,
+        originX: 'center',
+        opacity: 0.6
+      });
+
+      return new fabric.Group([line, arrow1, arrow2, text]);
+    } catch (error) {
+      console.error('Error creating 3D measurement:', error);
+      return null;
+    }
   };
 
   const createTempArrow = (start, end) => {
@@ -740,6 +1008,93 @@ function ImageEditor({ image, onClose }) {
     canvas.add(group);
   };
 
+  const createFinal3DMeasurement = (start, end) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    try {
+      // Calculate real distance using calibration
+      const realDistance = calculateRealDistance(start, end, calibrationData.matrix, {
+        width: calibrationData.realWidth,
+        height: calibrationData.realHeight
+      });
+
+      // Check if points are within calibration area
+      const startInBounds = isPointInCalibration(start, calibrationData.matrix);
+      const endInBounds = isPointInCalibration(end, calibrationData.matrix);
+      const color = (startInBounds && endInBounds) ? strokeColor : '#ff8800'; // Orange if out of bounds
+
+      const distanceText = `${realDistance.toFixed(2)}${calibrationData.unit}`;
+
+      const line = new fabric.Line([start.x, start.y, end.x, end.y], {
+        stroke: color,
+        strokeWidth: strokeWidth,
+        selectable: false
+      });
+
+      const angle = Math.atan2(end.y - start.y, end.x - start.x);
+      const arrowSize = 10;
+
+      const arrow1 = new fabric.Triangle({
+        left: start.x,
+        top: start.y,
+        width: arrowSize,
+        height: arrowSize,
+        fill: color,
+        angle: (angle * 180 / Math.PI) + 90,
+        originX: 'center',
+        originY: 'center',
+        selectable: false
+      });
+
+      const arrow2 = new fabric.Triangle({
+        left: end.x,
+        top: end.y,
+        width: arrowSize,
+        height: arrowSize,
+        fill: color,
+        angle: (angle * 180 / Math.PI) - 90,
+        originX: 'center',
+        originY: 'center',
+        selectable: false
+      });
+
+      const midX = (start.x + end.x) / 2;
+      const midY = (start.y + end.y) / 2;
+
+      const textObj = new fabric.Text(distanceText, {
+        left: midX,
+        top: midY - 20,
+        fontSize: fontSize,
+        fill: color,
+        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+        padding: 4,
+        originX: 'center',
+        selectable: false
+      });
+
+      const group = new fabric.Group([line, arrow1, arrow2, textObj], {
+        customType: '3d-measurement',
+        customName: distanceText,
+        editable: false, // 3D measurements are calculated, not manually editable
+        selectable: true,
+        subTargetCheck: true,
+        objectCaching: false
+      });
+
+      // Store original coordinates and real distance
+      group.measurementStart = { x: start.x, y: start.y };
+      group.measurementEnd = { x: end.x, y: end.y };
+      group.realDistance = realDistance;
+      group.unit = calibrationData.unit;
+
+      canvas.add(group);
+    } catch (error) {
+      console.error('Error creating final 3D measurement:', error);
+      alert(`Fehler beim Erstellen der 3D-Messung: ${error.message}`);
+    }
+  };
+
   const createFinalArrow = (start, end) => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
@@ -950,7 +1305,15 @@ function ImageEditor({ image, onClose }) {
         quality: 1
       });
 
-      const annotations = JSON.stringify(canvas.toJSON(['customType', 'customName']));
+      const canvasData = canvas.toJSON(['customType', 'customName']);
+
+      // Add calibration data to annotations
+      const annotationsData = {
+        ...canvasData,
+        calibration: calibrationData // Include 3D calibration if exists
+      };
+
+      const annotations = JSON.stringify(annotationsData);
 
       const response = await fetch(`/api/annotations/${image.id}/export/overwrite`, {
         method: 'POST',
@@ -988,7 +1351,15 @@ function ImageEditor({ image, onClose }) {
         quality: 1
       });
 
-      const annotations = JSON.stringify(canvas.toJSON(['customType', 'customName']));
+      const canvasData = canvas.toJSON(['customType', 'customName']);
+
+      // Add calibration data to annotations
+      const annotationsData = {
+        ...canvasData,
+        calibration: calibrationData // Include 3D calibration if exists
+      };
+
+      const annotations = JSON.stringify(annotationsData);
 
       const response = await fetch(`/api/annotations/${image.id}/export/new`, {
         method: 'POST',
@@ -1078,6 +1449,15 @@ function ImageEditor({ image, onClose }) {
             >
               <Ruler size={20} />
               <span>Bemaßung</span>
+            </button>
+
+            <button
+              className={`tool-btn ${activeTool === '3d-measurement' ? 'active' : ''}`}
+              onClick={() => handleToolChange('3d-measurement')}
+              title="3D Bemaßung (Perspektive)"
+            >
+              <Box size={20} />
+              <span>3D Bemaßung</span>
             </button>
 
             <button
@@ -1337,6 +1717,135 @@ function ImageEditor({ image, onClose }) {
             </div>
           </div>
         </div>
+
+        {/* 3D Calibration Dialog */}
+        {showCalibrationDialog && (
+          <div className="modal-overlay" onClick={() => {}} style={{ zIndex: 2000 }}>
+            <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
+              <h3>3D Kalibrierung - Maße eingeben</h3>
+              <p>Sie haben 4 Eckpunkte der Referenzebene markiert. Geben Sie jetzt die echten Maße ein:</p>
+
+              <div style={{ marginTop: '20px' }}>
+                <label>
+                  <strong>Breite (horizontal):</strong>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={calibrationRealWidth}
+                    onChange={(e) => setCalibrationRealWidth(e.target.value)}
+                    placeholder="z.B. 10.4"
+                    style={{ width: '100%', marginTop: '5px', padding: '8px' }}
+                    autoFocus
+                  />
+                </label>
+              </div>
+
+              <div style={{ marginTop: '15px' }}>
+                <label>
+                  <strong>Höhe (vertikal):</strong>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={calibrationRealHeight}
+                    onChange={(e) => setCalibrationRealHeight(e.target.value)}
+                    placeholder="z.B. 3.4"
+                    style={{ width: '100%', marginTop: '5px', padding: '8px' }}
+                  />
+                </label>
+              </div>
+
+              <div style={{ marginTop: '15px' }}>
+                <label>
+                  <strong>Einheit:</strong>
+                  <select
+                    value={measurementUnit}
+                    onChange={(e) => setMeasurementUnit(e.target.value)}
+                    style={{ width: '100%', marginTop: '5px', padding: '8px' }}
+                  >
+                    <option value="mm">Millimeter (mm)</option>
+                    <option value="cm">Zentimeter (cm)</option>
+                    <option value="m">Meter (m)</option>
+                  </select>
+                </label>
+              </div>
+
+              <div style={{ marginTop: '25px', display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button className="btn btn-secondary" onClick={resetCalibration}>
+                  Abbrechen
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={completeCalibration}
+                  disabled={!calibrationRealWidth || !calibrationRealHeight}
+                >
+                  Kalibrierung abschließen
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Calibration Info/Reset */}
+        {activeTool === '3d-measurement' && (
+          <div style={{
+            position: 'absolute',
+            top: '70px',
+            right: '20px',
+            background: 'rgba(0, 0, 0, 0.8)',
+            padding: '15px',
+            borderRadius: '8px',
+            color: '#fff',
+            maxWidth: '300px',
+            zIndex: 100
+          }}>
+            {calibrationData ? (
+              <>
+                <div style={{ marginBottom: '10px' }}>
+                  <strong>✅ Kalibrierung aktiv</strong>
+                  <div style={{ fontSize: '12px', marginTop: '5px', opacity: 0.8 }}>
+                    Ebene: {calibrationData.realWidth} × {calibrationData.realHeight} {calibrationData.unit}
+                  </div>
+                </div>
+                <button
+                  className="btn btn-warning btn-sm"
+                  onClick={resetCalibration}
+                  style={{ width: '100%' }}
+                >
+                  Kalibrierung zurücksetzen
+                </button>
+              </>
+            ) : calibrationStep === 'points' ? (
+              <>
+                <div style={{ marginBottom: '10px' }}>
+                  <strong>📐 Kalibrierung läuft...</strong>
+                  <div style={{ fontSize: '12px', marginTop: '5px' }}>
+                    Schritt 1: Klicken Sie auf die 4 Eckpunkte<br />
+                    der rechteckigen Referenzebene.<br />
+                    ({calibrationPoints.length}/4 Punkte gesetzt)
+                  </div>
+                </div>
+                {calibrationPoints.length > 0 && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={resetCalibration}
+                    style={{ width: '100%' }}
+                  >
+                    Abbrechen
+                  </button>
+                )}
+              </>
+            ) : (
+              <div>
+                <strong>📐 3D Bemaßung</strong>
+                <div style={{ fontSize: '12px', marginTop: '5px', opacity: 0.8 }}>
+                  Klicken Sie auf das Bild um die Kalibrierung zu starten.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Footer */}
         <div className="editor-footer">
