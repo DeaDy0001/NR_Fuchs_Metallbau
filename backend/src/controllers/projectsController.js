@@ -389,8 +389,9 @@ const getProjectFiles = async (req, res) => {
           // Get metadata
           const metadata = await getImageMetadata(filePath);
           const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+          const projectImageUrl = `/api/projects/${projectId}/file/image/${encodeURIComponent(fileName)}`;
 
-          // Insert into database
+          // Insert into database (using correct column names from schema)
           const result = db.prepare(`
             INSERT INTO drive_images (
               name,
@@ -400,10 +401,13 @@ const getProjectFiles = async (req, res) => {
               height,
               photo_taken_at,
               created_at,
-              drive_id,
+              file_url,
+              local_path,
+              thumbnail_url,
               mime_type,
-              subfolder
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              subfolder,
+              drive_path_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             fileName,
             fileName,
@@ -412,9 +416,12 @@ const getProjectFiles = async (req, res) => {
             metadata.height || null,
             metadata.photo_taken_at || null,
             now,
-            'local_project_import', // Special drive_id for auto-registered images
+            projectImageUrl,  // file_url (required!)
+            projectImageUrl,  // local_path
+            projectImageUrl,  // thumbnail_url
             `image/${fileName.split('.').pop().toLowerCase()}`,
-            subfolder || null  // Add subfolder
+            subfolder || null,
+            null  // drive_path_id = NULL for project images
           );
 
           const imageId = result.lastInsertRowid;
