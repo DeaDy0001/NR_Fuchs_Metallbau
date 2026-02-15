@@ -618,7 +618,6 @@ function ImageEditor({ image, onClose }) {
       const distanceText = `${realDistance.toFixed(2)}${actualUnit}`;
 
       // Update text in group
-      const group = measurement.group;
       const objects = group.getObjects();
 
       // Index 0: line, Index 1: labelText, Index 2: distanceText
