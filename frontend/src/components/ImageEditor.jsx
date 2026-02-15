@@ -178,8 +178,8 @@ function ImageEditor({ image, onClose }) {
 
     const allObjects = canvas.getObjects();
 
-    // Filter out reference objects (they should not appear in layers)
-    const visibleObjects = allObjects.filter(obj => !obj.referenceObject);
+    // Filter out reference objects AND measurement handles
+    const visibleObjects = allObjects.filter(obj => !obj.referenceObject && !obj.measurementHandle);
 
     const objects = visibleObjects.map((obj, index) => ({
       id: obj.id || `layer-${index}`,
@@ -193,7 +193,7 @@ function ImageEditor({ image, onClose }) {
       objects.unshift({
         id: '3d-reference',
         type: '3d-reference',
-        name: '3D Referenz-Rechteck',
+        name: '3D Bemaßung',
         object: null, // special layer without canvas object
         isReferenceLayer: true
       });
@@ -288,14 +288,18 @@ function ImageEditor({ image, onClose }) {
       { x: centerX - visualWidth / 2, y: centerY + visualHeight / 2, corner: 'bl' }  // bottom-left
     ];
 
-    // Create 4 corner points (draggable)
-    const corners = cornerPositions.map((pos, idx) => {
-      const circle = new fabric.Circle({
+    // Create 4 corner points (draggable) - outer ring + inner dot
+    const corners = [];
+    const cornerDots = []; // Inner solid dots
+
+    cornerPositions.forEach((pos, idx) => {
+      // Outer circle (transparent fill, solid stroke)
+      const outerCircle = new fabric.Circle({
         left: pos.x,
         top: pos.y,
         radius: 8,
-        fill: '#00ffff',
-        stroke: '#ffffff',
+        fill: 'rgba(0, 255, 255, 0.2)',
+        stroke: '#00ffff',
         strokeWidth: 2,
         originX: 'center',
         originY: 'center',
@@ -308,27 +312,46 @@ function ImageEditor({ image, onClose }) {
         cornerType: pos.corner
       });
 
+      // Inner dot (solid, non-selectable, follows outer circle)
+      const innerDot = new fabric.Circle({
+        left: pos.x,
+        top: pos.y,
+        radius: 2,
+        fill: '#00ffff',
+        originX: 'center',
+        originY: 'center',
+        selectable: false,
+        evented: false,
+        referenceObject: true,
+        objectType: 'referencePointDot',
+        parentCornerIndex: idx
+      });
+
       // Hover effect
-      circle.on('mouseover', function() {
-        this.set('fill', '#00ff00');
+      outerCircle.on('mouseover', function() {
+        this.set('fill', 'rgba(0, 255, 0, 0.2)', 'stroke', '#00ff00');
+        innerDot.set('fill', '#00ff00');
         canvas.renderAll();
       });
 
-      circle.on('mouseout', function() {
-        this.set('fill', '#00ffff');
+      outerCircle.on('mouseout', function() {
+        this.set('fill', 'rgba(0, 255, 255, 0.2)', 'stroke', '#00ffff');
+        innerDot.set('fill', '#00ffff');
         canvas.renderAll();
       });
 
-      // Update on move
-      circle.on('moving', function() {
+      // Update on move - also move inner dot
+      outerCircle.on('moving', function() {
+        innerDot.set({ left: this.left, top: this.top });
         updateReferenceRectangle();
       });
 
-      circle.on('modified', function() {
+      outerCircle.on('modified', function() {
         updateAll3DMeasurements();
       });
 
-      return circle;
+      corners.push(outerCircle);
+      cornerDots.push(innerDot);
     });
 
     // Create 4 lines connecting the corners (perspective quadrilateral)
@@ -339,8 +362,8 @@ function ImageEditor({ image, onClose }) {
 
       const line = new fabric.Line([start.x, start.y, end.x, end.y], {
         stroke: '#00ffff',
-        strokeWidth: 2,
-        strokeDashArray: [5, 5],
+        strokeWidth: 1,
+        opacity: 0.5,
         selectable: false,
         evented: false,
         referenceObject: true,
@@ -386,14 +409,16 @@ function ImageEditor({ image, onClose }) {
     // Add all to canvas
     lines.forEach(line => canvas.add(line));
     corners.forEach(c => canvas.add(c));
+    cornerDots.forEach(dot => canvas.add(dot));
     canvas.add(topIconPoly);
     canvas.add(topLabel);
 
-    // Store references: [line0, line1, line2, line3, corner0, corner1, corner2, corner3, icon, label]
-    referenceObjectsRef.current = [...lines, ...corners, topIconPoly, topLabel];
+    // Store references: [line0-3, corner0-3, cornerDot0-3, icon, label]
+    referenceObjectsRef.current = [...lines, ...corners, ...cornerDots, topIconPoly, topLabel];
 
     setHas3DReference(true);
     canvas.renderAll();
+    updateLayers(); // Force layer update
   }, [referenceWidth, referenceHeight]);
 
   // Update rectangle shape when corners are moved
@@ -403,8 +428,9 @@ function ImageEditor({ image, onClose }) {
 
     const lines = referenceObjectsRef.current.slice(0, 4);
     const corners = referenceObjectsRef.current.slice(4, 8);
-    const topIconPoly = referenceObjectsRef.current[8];
-    const topLabel = referenceObjectsRef.current[9];
+    const cornerDots = referenceObjectsRef.current.slice(8, 12);
+    const topIconPoly = referenceObjectsRef.current[12];
+    const topLabel = referenceObjectsRef.current[13];
 
     // Get corner positions
     const positions = corners.map(c => ({ x: c.left, y: c.top }));
@@ -472,15 +498,15 @@ function ImageEditor({ image, onClose }) {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !measurement || !measurement.group) return;
 
-    const corners = referenceObjectsRef.current.slice(4, 8);
+    const corners = referenceObjectsRef.current.slice(4, 8); // Outer circles
     const srcPoints = corners.map(c => ({ x: c.left, y: c.top }));
 
-    // Destination points for homography (normalized rectangle)
+    // Destination points for homography (normalized 0-1 rectangle)
     const dstPoints = [
       { x: 0, y: 0 },
-      { x: referenceWidth, y: 0 },
-      { x: referenceWidth, y: referenceHeight },
-      { x: 0, y: referenceHeight }
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 }
     ];
 
     try {
@@ -595,6 +621,38 @@ function ImageEditor({ image, onClose }) {
 
     startHandle.on('moving', updateMeasurement);
     endHandle.on('moving', updateMeasurement);
+
+    // Store initial group position for tracking movement
+    let lastGroupLeft = measurementGroup.left;
+    let lastGroupTop = measurementGroup.top;
+
+    // Move handles when measurement group is moved
+    measurementGroup.on('moving', function() {
+      const deltaX = this.left - lastGroupLeft;
+      const deltaY = this.top - lastGroupTop;
+
+      // Update stored coordinates
+      this.measurementStart.x += deltaX;
+      this.measurementStart.y += deltaY;
+      this.measurementEnd.x += deltaX;
+      this.measurementEnd.y += deltaY;
+
+      // Move handles
+      startHandle.set({
+        left: startHandle.left + deltaX,
+        top: startHandle.top + deltaY
+      });
+      endHandle.set({
+        left: endHandle.left + deltaX,
+        top: endHandle.top + deltaY
+      });
+
+      // Update last position
+      lastGroupLeft = this.left;
+      lastGroupTop = this.top;
+
+      canvas.renderAll();
+    });
 
     canvas.add(startHandle);
     canvas.add(endHandle);
@@ -1407,12 +1465,13 @@ function ImageEditor({ image, onClose }) {
       const corners = referenceObjectsRef.current.slice(4, 8);
       const srcPoints = corners.map(c => ({ x: c.left, y: c.top }));
 
-      // Destination points for homography (normalized rectangle)
+      // Destination points for homography (normalized 0-1 rectangle)
+      // calculateRealDistance will scale by realDimensions
       const dstPoints = [
         { x: 0, y: 0 },
-        { x: referenceWidth, y: 0 },
-        { x: referenceWidth, y: referenceHeight },
-        { x: 0, y: referenceHeight }
+        { x: 1, y: 0 },
+        { x: 1, y: 1 },
+        { x: 0, y: 1 }
       ];
 
       // Compute homography matrix
