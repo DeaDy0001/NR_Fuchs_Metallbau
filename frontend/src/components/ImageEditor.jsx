@@ -593,7 +593,10 @@ function ImageEditor({ image, onClose }) {
 
       if (textObj) {
         textObj.set('text', distanceText);
+        // Also update the group's customName so it shows in the layers list
+        group.customName = distanceText;
         canvas.renderAll();
+        updateLayers(); // Refresh the layers list to show updated name
       }
     } catch (error) {
       console.error('Error recalculating 3D measurement:', error);
@@ -1945,7 +1948,25 @@ function ImageEditor({ image, onClose }) {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    const layer = layers.find(l => l.id === layerId);
+    // First try to find in top-level layers
+    let layer = layers.find(l => l.id === layerId);
+    let isChildLayer = false;
+
+    // If not found, search in children of parent layers
+    if (!layer) {
+      for (const parentLayer of layers) {
+        if (parentLayer.children) {
+          const childLayer = parentLayer.children.find(c => c.id === layerId);
+          if (childLayer) {
+            layer = childLayer;
+            isChildLayer = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!layer) return;
 
     // Special handling for 3D reference parent layer - delete all children and reference
     if (layerId === '3d-reference') {
@@ -1993,6 +2014,7 @@ function ImageEditor({ image, onClose }) {
 
       canvas.remove(obj);
       canvas.renderAll();
+      updateLayers(); // Update layers to refresh the hierarchy
     }
   };
 
