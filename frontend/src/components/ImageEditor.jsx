@@ -88,14 +88,16 @@ function ImageEditor({ image, onClose }) {
       canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas));
     });
 
-    // Pan with Shift + Drag
+    // Pan with Middle Mouse Button
     let isPanning = false;
     let lastPosX = 0;
     let lastPosY = 0;
 
     canvas.on('mouse:down', function(opt) {
       const evt = opt.e;
-      if (evt.shiftKey) {
+      // Middle mouse button (button === 1)
+      if (evt.button === 1) {
+        evt.preventDefault(); // Prevent default middle-click behavior
         isPanning = true;
         canvas.selection = false;
         lastPosX = evt.clientX;
@@ -120,8 +122,10 @@ function ImageEditor({ image, onClose }) {
       }
     });
 
-    canvas.on('mouse:up', function() {
-      if (isPanning) {
+    canvas.on('mouse:up', function(opt) {
+      const evt = opt.e;
+      // Middle mouse button released
+      if (evt.button === 1 && isPanning) {
         isPanning = false;
         canvas.selection = activeTool === 'select';
         canvas.setCursor('default');
