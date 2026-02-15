@@ -2217,6 +2217,15 @@ function ImageEditor({ image, onClose }) {
       const corners = referenceObjectsRef.current.slice(4, 8);
       const srcPoints = corners.map(c => ({ x: c.left, y: c.top }));
 
+      // DEBUG: Log reference values
+      console.log('=== 3D MEASUREMENT DEBUG ===');
+      console.log('referenceWidth:', referenceWidth);
+      console.log('referenceHeight:', referenceHeight);
+      console.log('referenceUnit:', referenceUnit);
+      console.log('srcPoints:', srcPoints);
+      console.log('start:', start);
+      console.log('end:', end);
+
       // Destination points for homography (normalized 0-1 rectangle)
       // calculateRealDistance will scale by realDimensions
       const dstPoints = [
@@ -2228,12 +2237,16 @@ function ImageEditor({ image, onClose }) {
 
       // Compute homography matrix
       const matrix = computeHomography(srcPoints, dstPoints);
+      console.log('Homography matrix:', matrix);
 
       // Calculate real distance
       const realDistance = calculateRealDistance(start, end, matrix, {
         width: referenceWidth,
         height: referenceHeight
       });
+
+      console.log('Calculated realDistance:', realDistance);
+      console.log('===========================');
 
       // Use selected stroke color
       const color = strokeColor; // Orange if out of bounds
