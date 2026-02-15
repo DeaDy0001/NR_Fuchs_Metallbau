@@ -1080,6 +1080,48 @@ function ImageEditor({ image, onClose }) {
         return;
       }
 
+      // Polyline mode with Shift for line tool
+      if (activeTool === 'line' && evt.shiftKey) {
+        // Check for snapping to existing points
+        let snapPoint = null;
+        const snapDistance = 10;
+
+        linesRef.current.forEach(lineData => {
+          if (lineData.handles) {
+            for (let i = 0; i < lineData.handles.length; i += 2) {
+              const handle = lineData.handles[i];
+              const dx = handle.left - pointer.x;
+              const dy = handle.top - pointer.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              if (dist < snapDistance) {
+                snapPoint = { x: handle.left, y: handle.top };
+                break;
+              }
+            }
+          }
+        });
+
+        const pointToAdd = snapPoint || pointer;
+
+        // Start or continue polyline
+        if (!isPolylineModeRef.current) {
+          // Start new polyline
+          isPolylineModeRef.current = true;
+          polylinePointsRef.current = [pointToAdd];
+        } else {
+          // Add point to existing polyline
+          polylinePointsRef.current.push(pointToAdd);
+
+          // Create line segment between last two points
+          const points = polylinePointsRef.current;
+          const start = points[points.length - 2];
+          const end = points[points.length - 1];
+
+          createFinalLine(start, end);
+        }
+        return;
+      }
+
       // Only for drawing tools
       if (!['measurement', 'arrow', 'rectangle', 'circle', 'text', 'line'].includes(activeTool)) return;
 
@@ -1118,6 +1160,32 @@ function ImageEditor({ image, onClose }) {
 
         lastPanPosRef.current = { x: evt.clientX, y: evt.clientY };
         canvas.setCursor('grabbing');
+        canvas.renderAll();
+        return;
+      }
+
+      // Handle polyline preview
+      if (isPolylineModeRef.current && polylinePointsRef.current.length > 0) {
+        const pointer = canvas.getPointer(evt);
+
+        // Remove previous preview
+        if (polylinePreviewRef.current) {
+          canvas.remove(polylinePreviewRef.current);
+          polylinePreviewRef.current = null;
+        }
+
+        // Draw preview line from last point to cursor
+        const lastPoint = polylinePointsRef.current[polylinePointsRef.current.length - 1];
+        const previewLine = new fabric.Line([lastPoint.x, lastPoint.y, pointer.x, pointer.y], {
+          stroke: strokeColor,
+          strokeWidth: strokeWidth,
+          opacity: 0.6,
+          selectable: false,
+          evented: false
+        });
+
+        canvas.add(previewLine);
+        polylinePreviewRef.current = previewLine;
         canvas.renderAll();
         return;
       }
@@ -1224,14 +1292,32 @@ function ImageEditor({ image, onClose }) {
       canvas.renderAll();
     };
 
+    const handleKeyUp = (e) => {
+      // End polyline mode when Shift is released
+      if (e.key === 'Shift' && isPolylineModeRef.current) {
+        // Remove preview line
+        if (polylinePreviewRef.current) {
+          canvas.remove(polylinePreviewRef.current);
+          polylinePreviewRef.current = null;
+        }
+
+        // Reset polyline mode
+        isPolylineModeRef.current = false;
+        polylinePointsRef.current = [];
+        canvas.renderAll();
+      }
+    };
+
     canvas.on('mouse:down', handleMouseDown);
     canvas.on('mouse:move', handleMouseMove);
     canvas.on('mouse:up', handleMouseUp);
+    window.addEventListener('keyup', handleKeyUp);
 
     return () => {
       canvas.off('mouse:down', handleMouseDown);
       canvas.off('mouse:move', handleMouseMove);
       canvas.off('mouse:up', handleMouseUp);
+      window.removeEventListener('keyup', handleKeyUp);
     };
   }, [activeTool, strokeColor, strokeWidth, fontSize, has3DReference]);
 
