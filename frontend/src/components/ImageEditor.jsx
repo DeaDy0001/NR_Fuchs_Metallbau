@@ -23,6 +23,7 @@ function ImageEditor({ image, onClose }) {
   const [measurementPoints, setMeasurementPoints] = useState([]);
   const [editingLayerId, setEditingLayerId] = useState(null);
   const [editingText, setEditingText] = useState('');
+  const [collapsedLayers, setCollapsedLayers] = useState(new Set());
 
   // Drag drawing state (use ref to avoid useEffect re-runs)
   const dragStartRef = useRef(null);
@@ -43,13 +44,14 @@ function ImageEditor({ image, onClose }) {
   // 3D Measurement reference rectangle state
   const referenceObjectsRef = useRef([]); // All reference objects (rect, points, icon)
   const threeDMeasurementsRef = useRef([]); // All 3D measurements for live updates
+  const normalMeasurementsRef = useRef([]); // All normal measurements for permanent handles
   const [referenceWidth, setReferenceWidth] = useState(100); // cm
   const [referenceHeight, setReferenceHeight] = useState(50); // cm
   const [referenceUnit, setReferenceUnit] = useState('cm');
   const [has3DReference, setHas3DReference] = useState(false);
   const [referenceCollapsed, setReferenceCollapsed] = useState(false);
 
-  // Measurement editing handles
+  // Measurement editing handles (deprecated - now using permanent handles)
   const measurementHandlesRef = useRef([]);
 
   // Initialize Fabric.js canvas
@@ -232,19 +234,31 @@ function ImageEditor({ image, onClose }) {
       object: obj
     }));
 
-    // Add 3D reference layer if reference objects exist
+    // Add hierarchical 3D reference layer if reference objects exist
     // Check referenceObjectsRef instead of has3DReference state for immediate update
     if (referenceObjectsRef.current.length > 0) {
-      objects.unshift({
+      // Find all 3D measurements
+      const threeDMeasurements = objects.filter(obj => obj.type === '3d-measurement');
+
+      // Remove 3D measurements from top-level objects
+      const objectsWithout3D = objects.filter(obj => obj.type !== '3d-measurement');
+
+      // Create parent layer with children
+      const parentLayer = {
         id: '3d-reference',
         type: '3d-reference',
         name: '3D Bemaßung',
         object: null, // special layer without canvas object
-        isReferenceLayer: true
-      });
-    }
+        isReferenceLayer: true,
+        isParent: true,
+        children: threeDMeasurements
+      };
 
-    setLayers(objects);
+      objectsWithout3D.unshift(parentLayer);
+      setLayers(objectsWithout3D);
+    } else {
+      setLayers(objects);
+    }
   };
 
   // Handle selection
@@ -859,9 +873,12 @@ function ImageEditor({ image, onClose }) {
     referenceObjectsRef.current.forEach(obj => canvas.remove(obj));
     referenceObjectsRef.current = [];
 
-    // Remove all 3D measurements
+    // Remove all 3D measurements AND their handles
     threeDMeasurementsRef.current.forEach(m => {
       if (m.group) canvas.remove(m.group);
+      if (m.handles) {
+        m.handles.forEach(handle => canvas.remove(handle));
+      }
     });
     threeDMeasurementsRef.current = [];
 
@@ -1513,6 +1530,125 @@ function ImageEditor({ image, onClose }) {
     group.measurementEnd = { x: end.x, y: end.y };
 
     canvas.add(group);
+
+    // Create measurement data and permanent handles
+    const measurementData = {
+      group: group,
+      startX: start.x,
+      startY: start.y,
+      endX: end.x,
+      endY: end.y
+    };
+    normalMeasurementsRef.current.push(measurementData);
+    createPermanentNormalHandles(measurementData);
+  };
+
+  // Create permanent handles for normal measurement
+  const createPermanentNormalHandles = (measurementData) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || !measurementData) return;
+
+    const { startX, startY, endX, endY, group } = measurementData;
+
+    // Create start handle - outer circle (white/light gray)
+    const startHandle = new fabric.Circle({
+      left: startX,
+      top: startY,
+      radius: 8,
+      fill: 'rgba(255, 255, 255, 0.2)',
+      stroke: '#ffffff',
+      strokeWidth: 2,
+      originX: 'center',
+      originY: 'center',
+      selectable: true,
+      hasControls: false,
+      hasBorders: false,
+      measurementHandle: true,
+      permanentNormalHandle: true,
+      parentMeasurement: group
+    });
+
+    // Create start handle - inner dot
+    const startDot = new fabric.Circle({
+      left: startX,
+      top: startY,
+      radius: 2,
+      fill: '#ffffff',
+      originX: 'center',
+      originY: 'center',
+      selectable: false,
+      evented: false,
+      measurementHandle: true,
+      permanentNormalHandle: true
+    });
+
+    // Create end handle - outer circle
+    const endHandle = new fabric.Circle({
+      left: endX,
+      top: endY,
+      radius: 8,
+      fill: 'rgba(255, 255, 255, 0.2)',
+      stroke: '#ffffff',
+      strokeWidth: 2,
+      originX: 'center',
+      originY: 'center',
+      selectable: true,
+      hasControls: false,
+      hasBorders: false,
+      measurementHandle: true,
+      permanentNormalHandle: true,
+      parentMeasurement: group
+    });
+
+    // Create end handle - inner dot
+    const endDot = new fabric.Circle({
+      left: endX,
+      top: endY,
+      radius: 2,
+      fill: '#ffffff',
+      originX: 'center',
+      originY: 'center',
+      selectable: false,
+      evented: false,
+      measurementHandle: true,
+      permanentNormalHandle: true
+    });
+
+    // Update measurement on handle move
+    const updateMeasurement = () => {
+      const newStartX = startHandle.left;
+      const newStartY = startHandle.top;
+      const newEndX = endHandle.left;
+      const newEndY = endHandle.top;
+
+      // Move dots with handles
+      startDot.set({ left: newStartX, top: newStartY });
+      endDot.set({ left: newEndX, top: newEndY });
+
+      // Update stored coordinates
+      measurementData.startX = newStartX;
+      measurementData.startY = newStartY;
+      measurementData.endX = newEndX;
+      measurementData.endY = newEndY;
+      group.measurementStart = { x: newStartX, y: newStartY };
+      group.measurementEnd = { x: newEndX, y: newEndY };
+
+      // Recreate measurement
+      recreateNormalMeasurement(group, { x: newStartX, y: newStartY }, { x: newEndX, y: newEndY });
+    };
+
+    startHandle.on('moving', updateMeasurement);
+    endHandle.on('moving', updateMeasurement);
+
+    canvas.add(startHandle);
+    canvas.add(endHandle);
+    canvas.add(startDot);
+    canvas.add(endDot);
+
+    // Store handles in measurement data
+    measurementData.handles = [startHandle, endHandle, startDot, endDot];
+
+    canvas.renderAll();
   };
 
   const createFinal3DMeasurement = (start, end) => {
@@ -1599,10 +1735,121 @@ function ImageEditor({ image, onClose }) {
       threeDMeasurementsRef.current.push(measurementData);
 
       canvas.add(group);
+
+      // Create permanent handles for this measurement
+      createPermanent3DHandles(measurementData);
     } catch (error) {
       console.error('Error creating final 3D measurement:', error);
       alert(`Fehler beim Erstellen der 3D-Messung: ${error.message}`);
     }
+  };
+
+  // Create permanent handles for 3D measurement
+  const createPermanent3DHandles = (measurementData) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || !measurementData) return;
+
+    const { startX, startY, endX, endY, group } = measurementData;
+
+    // Create start handle - outer circle
+    const startHandle = new fabric.Circle({
+      left: startX,
+      top: startY,
+      radius: 8,
+      fill: 'rgba(255, 140, 0, 0.2)',
+      stroke: '#ff8c00',
+      strokeWidth: 2,
+      originX: 'center',
+      originY: 'center',
+      selectable: true,
+      hasControls: false,
+      hasBorders: false,
+      measurementHandle: true,
+      permanent3DHandle: true,
+      parentMeasurement: group
+    });
+
+    // Create start handle - inner dot
+    const startDot = new fabric.Circle({
+      left: startX,
+      top: startY,
+      radius: 2,
+      fill: '#ff8c00',
+      originX: 'center',
+      originY: 'center',
+      selectable: false,
+      evented: false,
+      measurementHandle: true,
+      permanent3DHandle: true
+    });
+
+    // Create end handle - outer circle
+    const endHandle = new fabric.Circle({
+      left: endX,
+      top: endY,
+      radius: 8,
+      fill: 'rgba(255, 140, 0, 0.2)',
+      stroke: '#ff8c00',
+      strokeWidth: 2,
+      originX: 'center',
+      originY: 'center',
+      selectable: true,
+      hasControls: false,
+      hasBorders: false,
+      measurementHandle: true,
+      permanent3DHandle: true,
+      parentMeasurement: group
+    });
+
+    // Create end handle - inner dot
+    const endDot = new fabric.Circle({
+      left: endX,
+      top: endY,
+      radius: 2,
+      fill: '#ff8c00',
+      originX: 'center',
+      originY: 'center',
+      selectable: false,
+      evented: false,
+      measurementHandle: true,
+      permanent3DHandle: true
+    });
+
+    // Update measurement on handle move
+    const updateMeasurement = () => {
+      const newStartX = startHandle.left;
+      const newStartY = startHandle.top;
+      const newEndX = endHandle.left;
+      const newEndY = endHandle.top;
+
+      // Move dots with handles
+      startDot.set({ left: newStartX, top: newStartY });
+      endDot.set({ left: newEndX, top: newEndY });
+
+      // Update stored coordinates
+      measurementData.startX = newStartX;
+      measurementData.startY = newStartY;
+      measurementData.endX = newEndX;
+      measurementData.endY = newEndY;
+      group.measurementStart = { x: newStartX, y: newStartY };
+      group.measurementEnd = { x: newEndX, y: newEndY };
+
+      // Recreate measurement
+      recreate3DMeasurement(group, { x: newStartX, y: newStartY }, { x: newEndX, y: newEndY });
+    };
+
+    startHandle.on('moving', updateMeasurement);
+    endHandle.on('moving', updateMeasurement);
+
+    canvas.add(startHandle);
+    canvas.add(endHandle);
+    canvas.add(startDot);
+    canvas.add(endDot);
+
+    // Store handles in measurement data
+    measurementData.handles = [startHandle, endHandle, startDot, endDot];
+
+    canvas.renderAll();
   };
 
   const createFinalArrow = (start, end) => {
@@ -1700,17 +1947,48 @@ function ImageEditor({ image, onClose }) {
 
     const layer = layers.find(l => l.id === layerId);
 
-    // Special handling for 3D reference layer
+    // Special handling for 3D reference parent layer - delete all children and reference
     if (layerId === '3d-reference') {
+      // If it's the parent layer, delete all children first
+      if (layer && layer.isParent && layer.children) {
+        layer.children.forEach(child => {
+          if (child.object) {
+            // Remove permanent handles for 3D measurements
+            const measurementData = threeDMeasurementsRef.current.find(m => m.group === child.object);
+            if (measurementData && measurementData.handles) {
+              measurementData.handles.forEach(handle => canvas.remove(handle));
+            }
+            canvas.remove(child.object);
+          }
+        });
+        // Clear the 3D measurements array
+        threeDMeasurementsRef.current = [];
+      }
+      // Then remove the reference rectangle
       remove3DReference();
       return;
     }
 
     const obj = layer?.object;
     if (obj) {
-      // If deleting a measurement, remove its handles
-      if (obj.customType === 'measurement' || obj.customType === '3d-measurement') {
-        removeMeasurementHandles();
+      // If deleting a 3D measurement, remove its permanent handles
+      if (obj.customType === '3d-measurement') {
+        const measurementData = threeDMeasurementsRef.current.find(m => m.group === obj);
+        if (measurementData && measurementData.handles) {
+          measurementData.handles.forEach(handle => canvas.remove(handle));
+        }
+        // Remove from array
+        threeDMeasurementsRef.current = threeDMeasurementsRef.current.filter(m => m.group !== obj);
+      }
+
+      // If deleting a normal measurement, remove its permanent handles
+      if (obj.customType === 'measurement') {
+        const measurementData = normalMeasurementsRef.current.find(m => m.group === obj);
+        if (measurementData && measurementData.handles) {
+          measurementData.handles.forEach(handle => canvas.remove(handle));
+        }
+        // Remove from array
+        normalMeasurementsRef.current = normalMeasurementsRef.current.filter(m => m.group !== obj);
       }
 
       canvas.remove(obj);
@@ -1718,15 +1996,46 @@ function ImageEditor({ image, onClose }) {
     }
   };
 
+  const toggleLayerCollapse = (layerId) => {
+    setCollapsedLayers(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(layerId)) {
+        newSet.delete(layerId);
+      } else {
+        newSet.add(layerId);
+      }
+      return newSet;
+    });
+  };
+
   const toggleLayerVisibility = (layerId) => {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    const obj = layers.find(l => l.id === layerId)?.object;
-    if (obj) {
-      obj.visible = !obj.visible;
+    const layer = layers.find(l => l.id === layerId);
+    if (!layer) return;
+
+    // If it's a parent layer, toggle visibility of all children
+    if (layer.isParent && layer.children) {
+      // Check if any child is currently visible
+      const anyVisible = layer.children.some(child => child.object && child.object.visible);
+      // Set all children to opposite of current state
+      const newVisibility = !anyVisible;
+
+      layer.children.forEach(child => {
+        if (child.object) {
+          child.object.visible = newVisibility;
+        }
+      });
       canvas.renderAll();
       updateLayers();
+    } else {
+      const obj = layer.object;
+      if (obj) {
+        obj.visible = !obj.visible;
+        canvas.renderAll();
+        updateLayers();
+      }
     }
   };
 
@@ -2200,36 +2509,80 @@ function ImageEditor({ image, onClose }) {
                 >
                   {/* Special rendering for 3D reference layer */}
                   {layer.isReferenceLayer ? (
-                    <div style={{ padding: '10px', background: 'rgba(0, 255, 255, 0.1)', borderRadius: '4px' }}>
+                    <div style={{ background: 'rgba(0, 255, 255, 0.1)', borderRadius: '4px' }}>
+                      {/* Parent layer header */}
                       <div style={{
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        marginBottom: referenceCollapsed ? '0' : '10px',
+                        padding: '10px',
                         cursor: 'pointer'
                       }}
                       onClick={() => setReferenceCollapsed(!referenceCollapsed)}
                       >
-                        <div style={{ fontWeight: 'bold', color: '#00ffff' }}>
-                          {layer.name}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <button
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#00ffff',
+                              cursor: 'pointer',
+                              padding: '0',
+                              display: 'flex',
+                              alignItems: 'center'
+                            }}
+                            title={referenceCollapsed ? "Ausklappen" : "Einklappen"}
+                          >
+                            {referenceCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+                          </button>
+                          <div style={{ fontWeight: 'bold', color: '#00ffff' }}>
+                            {layer.name} {layer.children && layer.children.length > 0 && `(${layer.children.length})`}
+                          </div>
                         </div>
-                        <button
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: '#00ffff',
-                            cursor: 'pointer',
-                            padding: '2px'
-                          }}
-                          title={referenceCollapsed ? "Ausklappen" : "Einklappen"}
-                        >
-                          {referenceCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
-                        </button>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleLayerVisibility(layer.id);
+                            }}
+                            title="Alle ein-/ausblenden"
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#00ffff',
+                              cursor: 'pointer',
+                              padding: '4px',
+                              display: 'flex',
+                              alignItems: 'center'
+                            }}
+                          >
+                            {layer.children && layer.children.length > 0 && layer.children.some(c => c.object && c.object.visible) ? <Eye size={16} /> : <EyeOff size={16} />}
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteLayer(layer.id);
+                            }}
+                            title="Alles löschen"
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#00ffff',
+                              cursor: 'pointer',
+                              padding: '4px',
+                              display: 'flex',
+                              alignItems: 'center'
+                            }}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       </div>
 
+                      {/* Reference settings and children */}
                       {!referenceCollapsed && (
-                        <>
-                          <div style={{ fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <div style={{ padding: '0 10px 10px 10px' }}>
+                          <div style={{ fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '10px' }}>
                             <label style={{ color: '#ccc' }}>
                               Horizontal (cm):
                               <input
@@ -2301,19 +2654,85 @@ function ImageEditor({ image, onClose }) {
                               </select>
                             </label>
                           </div>
-                          <div className="layer-actions" style={{ marginTop: '10px' }}>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                remove3DReference();
-                              }}
-                              title="3D Referenz löschen"
-                              style={{ width: '100%' }}
-                            >
-                              <Trash2 size={16} /> Löschen
-                            </button>
-                          </div>
-                        </>
+
+                          {/* Render child measurements */}
+                          {layer.children && layer.children.length > 0 && (
+                            <div style={{ borderTop: '1px solid rgba(0, 255, 255, 0.2)', paddingTop: '8px' }}>
+                              <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px' }}>Messungen:</div>
+                              {layer.children.map((child) => (
+                                <div
+                                  key={child.id}
+                                  className={`layer-item ${selectedLayer === child.id ? 'selected' : ''} ${child.object && !child.object.visible ? 'hidden' : ''}`}
+                                  style={{
+                                    marginLeft: '0',
+                                    marginBottom: '4px',
+                                    padding: '6px',
+                                    background: 'rgba(0, 0, 0, 0.2)',
+                                    borderRadius: '4px',
+                                    fontSize: '12px'
+                                  }}
+                                >
+                                  {editingLayerId === child.id ? (
+                                    <input
+                                      type="text"
+                                      className="layer-name-input"
+                                      value={editingText}
+                                      onChange={(e) => setEditingText(e.target.value)}
+                                      onBlur={() => finishEditingLayer(child.id)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') finishEditingLayer(child.id);
+                                        if (e.key === 'Escape') {
+                                          setEditingLayerId(null);
+                                          setEditingText('');
+                                        }
+                                      }}
+                                      autoFocus
+                                      onClick={(e) => e.stopPropagation()}
+                                    />
+                                  ) : (
+                                    <span
+                                      className="layer-name"
+                                      onClick={() => selectLayer(child.id)}
+                                      onDoubleClick={() => startEditingLayer(child.id, child.name)}
+                                      style={{ flex: 1, color: '#ccc' }}
+                                    >
+                                      {child.name}
+                                    </span>
+                                  )}
+                                  <div className="layer-actions">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        toggleLayerVisibility(child.id);
+                                      }}
+                                      title={child.object && child.object.visible ? "Ausblenden" : "Einblenden"}
+                                    >
+                                      {child.object && child.object.visible ? <Eye size={14} /> : <EyeOff size={14} />}
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        startEditingLayer(child.id, child.name);
+                                      }}
+                                      title="Text bearbeiten"
+                                    >
+                                      <Edit2 size={14} />
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        deleteLayer(child.id);
+                                      }}
+                                      title="Löschen"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
                   ) : (
