@@ -61,6 +61,13 @@ function ImageEditor({ image, onClose }) {
   const [has3DReference, setHas3DReference] = useState(false);
   const [referenceCollapsed, setReferenceCollapsed] = useState(false);
 
+  // Ref to store current reference values (always up-to-date, no closure issues)
+  const referenceValuesRef = useRef({
+    width: 100,
+    height: 50,
+    unit: 'cm'
+  });
+
   // Measurement editing handles (deprecated - now using permanent handles)
   const measurementHandlesRef = useRef([]);
 
@@ -316,6 +323,15 @@ function ImageEditor({ image, onClose }) {
     };
     loadColorPresets();
   }, []);
+
+  // Keep ref in sync with state (solves closure problem in event handlers)
+  useEffect(() => {
+    referenceValuesRef.current = {
+      width: referenceWidth,
+      height: referenceHeight,
+      unit: referenceUnit
+    };
+  }, [referenceWidth, referenceHeight, referenceUnit]);
 
   // Update all 3D measurements when reference dimensions or unit changes
   useEffect(() => {
@@ -575,9 +591,10 @@ function ImageEditor({ image, onClose }) {
     const canvas = fabricCanvasRef.current;
     if (!canvas || referenceObjectsRef.current.length === 0) return;
 
-    const width = newWidth !== null ? newWidth : referenceWidth;
-    const height = newHeight !== null ? newHeight : referenceHeight;
-    const unit = newUnit !== null ? newUnit : referenceUnit;
+    // Use ref values to avoid closure issues
+    const width = newWidth !== null ? newWidth : referenceValuesRef.current.width;
+    const height = newHeight !== null ? newHeight : referenceValuesRef.current.height;
+    const unit = newUnit !== null ? newUnit : referenceValuesRef.current.unit;
 
     threeDMeasurementsRef.current.forEach(measurement => {
       recalculate3DMeasurement(measurement, width, height, unit);
@@ -589,9 +606,10 @@ function ImageEditor({ image, onClose }) {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !measurement || !measurement.group) return;
 
-    const actualWidth = width !== null ? width : referenceWidth;
-    const actualHeight = height !== null ? height : referenceHeight;
-    const actualUnit = unit !== null ? unit : referenceUnit;
+    // Use ref values to avoid closure issues
+    const actualWidth = width !== null ? width : referenceValuesRef.current.width;
+    const actualHeight = height !== null ? height : referenceValuesRef.current.height;
+    const actualUnit = unit !== null ? unit : referenceValuesRef.current.unit;
 
     const corners = referenceObjectsRef.current.slice(4, 8); // Outer circles
     const srcPoints = corners.map(c => ({ x: c.left, y: c.top }));
@@ -798,14 +816,14 @@ function ImageEditor({ image, onClose }) {
 
       const matrix = computeHomography(srcPoints, dstPoints);
       const realDistance = calculateRealDistance(start, end, matrix, {
-        width: referenceWidth,
-        height: referenceHeight
+        width: referenceValuesRef.current.width,
+        height: referenceValuesRef.current.height
       });
 
       // Keep the original color from the measurement
       const color = group.getObjects()[0].stroke;
 
-      const distanceText = `${realDistance.toFixed(2)}${referenceUnit}`;
+      const distanceText = `${realDistance.toFixed(2)}${referenceValuesRef.current.unit}`;
 
       // Update line (index 0)
       const line = group.getObjects()[0];
@@ -1514,10 +1532,10 @@ function ImageEditor({ image, onClose }) {
 
       const matrix = computeHomography(srcPoints, dstPoints);
 
-      // Calculate real distance
+      // Calculate real distance using ref values (no closure issues!)
       const realDistance = calculateRealDistance(start, end, matrix, {
-        width: referenceWidth,
-        height: referenceHeight
+        width: referenceValuesRef.current.width,
+        height: referenceValuesRef.current.height
       });
 
       // Use selected stroke color
@@ -1559,7 +1577,7 @@ function ImageEditor({ image, onClose }) {
       const midX = (start.x + end.x) / 2;
       const midY = (start.y + end.y) / 2;
 
-      const distanceText = `${realDistance.toFixed(2)}${referenceUnit}`;
+      const distanceText = `${realDistance.toFixed(2)}${referenceValuesRef.current.unit}`;
       const text = new fabric.Text(distanceText, {
         left: midX,
         top: midY - 20,
@@ -2219,9 +2237,9 @@ function ImageEditor({ image, onClose }) {
 
       // DEBUG: Log reference values
       console.log('=== 3D MEASUREMENT DEBUG ===');
-      console.log('referenceWidth:', referenceWidth);
-      console.log('referenceHeight:', referenceHeight);
-      console.log('referenceUnit:', referenceUnit);
+      console.log('referenceWidth (ref):', referenceValuesRef.current.width);
+      console.log('referenceHeight (ref):', referenceValuesRef.current.height);
+      console.log('referenceUnit (ref):', referenceValuesRef.current.unit);
       console.log('srcPoints:', srcPoints);
       console.log('start:', start);
       console.log('end:', end);
@@ -2239,10 +2257,10 @@ function ImageEditor({ image, onClose }) {
       const matrix = computeHomography(srcPoints, dstPoints);
       console.log('Homography matrix:', matrix);
 
-      // Calculate real distance
+      // Calculate real distance using ref values (no closure issues!)
       const realDistance = calculateRealDistance(start, end, matrix, {
-        width: referenceWidth,
-        height: referenceHeight
+        width: referenceValuesRef.current.width,
+        height: referenceValuesRef.current.height
       });
 
       console.log('Calculated realDistance:', realDistance);
@@ -2251,7 +2269,7 @@ function ImageEditor({ image, onClose }) {
       // Use selected stroke color
       const color = strokeColor; // Orange if out of bounds
 
-      const distanceText = `${realDistance.toFixed(2)}${referenceUnit}`;
+      const distanceText = `${realDistance.toFixed(2)}${referenceValuesRef.current.unit}`;
 
       const line = new fabric.Line([start.x, start.y, end.x, end.y], {
         stroke: color,
@@ -2310,7 +2328,7 @@ function ImageEditor({ image, onClose }) {
         endX: end.x,
         endY: end.y,
         realDistance: realDistance,
-        unit: referenceUnit,
+        unit: referenceValuesRef.current.unit,
         label: ''  // User-defined label/description
       };
 
