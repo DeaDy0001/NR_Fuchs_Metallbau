@@ -1553,13 +1553,25 @@ function ImageEditor({ image, onClose }) {
 
     const { startX, startY, endX, endY, group } = measurementData;
 
-    // Create start handle - outer circle (white/light gray)
+    // Get color from the measurement line
+    const line = group.getObjects()[0];
+    const color = line.stroke || strokeColor;
+
+    // Convert hex color to rgba for transparent fill
+    const hexToRgba = (hex, alpha) => {
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    };
+
+    // Create start handle - outer circle
     const startHandle = new fabric.Circle({
       left: startX,
       top: startY,
       radius: 8,
-      fill: 'rgba(255, 255, 255, 0.2)',
-      stroke: '#ffffff',
+      fill: hexToRgba(color, 0.2),
+      stroke: color,
       strokeWidth: 2,
       originX: 'center',
       originY: 'center',
@@ -1576,7 +1588,7 @@ function ImageEditor({ image, onClose }) {
       left: startX,
       top: startY,
       radius: 2,
-      fill: '#ffffff',
+      fill: color,
       originX: 'center',
       originY: 'center',
       selectable: false,
@@ -1590,8 +1602,8 @@ function ImageEditor({ image, onClose }) {
       left: endX,
       top: endY,
       radius: 8,
-      fill: 'rgba(255, 255, 255, 0.2)',
-      stroke: '#ffffff',
+      fill: hexToRgba(color, 0.2),
+      stroke: color,
       strokeWidth: 2,
       originX: 'center',
       originY: 'center',
@@ -1608,7 +1620,7 @@ function ImageEditor({ image, onClose }) {
       left: endX,
       top: endY,
       radius: 2,
-      fill: '#ffffff',
+      fill: color,
       originX: 'center',
       originY: 'center',
       selectable: false,
@@ -1754,13 +1766,25 @@ function ImageEditor({ image, onClose }) {
 
     const { startX, startY, endX, endY, group } = measurementData;
 
+    // Get color from the measurement line
+    const line = group.getObjects()[0];
+    const color = line.stroke || strokeColor;
+
+    // Convert hex color to rgba for transparent fill
+    const hexToRgba = (hex, alpha) => {
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    };
+
     // Create start handle - outer circle
     const startHandle = new fabric.Circle({
       left: startX,
       top: startY,
       radius: 8,
-      fill: 'rgba(255, 140, 0, 0.2)',
-      stroke: '#ff8c00',
+      fill: hexToRgba(color, 0.2),
+      stroke: color,
       strokeWidth: 2,
       originX: 'center',
       originY: 'center',
@@ -1777,7 +1801,7 @@ function ImageEditor({ image, onClose }) {
       left: startX,
       top: startY,
       radius: 2,
-      fill: '#ff8c00',
+      fill: color,
       originX: 'center',
       originY: 'center',
       selectable: false,
@@ -1791,8 +1815,8 @@ function ImageEditor({ image, onClose }) {
       left: endX,
       top: endY,
       radius: 8,
-      fill: 'rgba(255, 140, 0, 0.2)',
-      stroke: '#ff8c00',
+      fill: hexToRgba(color, 0.2),
+      stroke: color,
       strokeWidth: 2,
       originX: 'center',
       originY: 'center',
@@ -1809,7 +1833,7 @@ function ImageEditor({ image, onClose }) {
       left: endX,
       top: endY,
       radius: 2,
-      fill: '#ff8c00',
+      fill: color,
       originX: 'center',
       originY: 'center',
       selectable: false,
