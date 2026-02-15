@@ -199,11 +199,11 @@ function ImageEditor({ image, onClose }) {
               canvas.renderAll();
               updateLayers();
 
-              // Collect 3D measurements for live updates
+              // Collect 3D measurements for live updates and create handles
               const objects = canvas.getObjects();
               objects.forEach(obj => {
                 if (obj.customType === '3d-measurement') {
-                  threeDMeasurementsRef.current.push({
+                  const measurementData = {
                     group: obj,
                     startX: obj.measurementStart?.x,
                     startY: obj.measurementStart?.y,
@@ -211,7 +211,13 @@ function ImageEditor({ image, onClose }) {
                     endY: obj.measurementEnd?.y,
                     realDistance: obj.realDistance,
                     unit: obj.unit
-                  });
+                  };
+                  threeDMeasurementsRef.current.push(measurementData);
+
+                  // Create permanent handles for this measurement
+                  if (obj.measurementStart && obj.measurementEnd) {
+                    createPermanent3DHandles(measurementData);
+                  }
                 }
               });
             });
@@ -2834,7 +2840,7 @@ function ImageEditor({ image, onClose }) {
       });
       canvas.renderAll();
 
-      const canvasData = canvas.toJSON(['customType', 'customName']);
+      const canvasData = canvas.toJSON(['customType', 'customName', 'measurementStart', 'measurementEnd', 'realDistance', 'unit']);
 
       // Add 3D reference data to annotations
       const annotationsData = {
@@ -2898,7 +2904,7 @@ function ImageEditor({ image, onClose }) {
       });
       canvas.renderAll();
 
-      const canvasData = canvas.toJSON(['customType', 'customName']);
+      const canvasData = canvas.toJSON(['customType', 'customName', 'measurementStart', 'measurementEnd', 'realDistance', 'unit']);
 
       // Add 3D reference data to annotations
       const annotationsData = {
