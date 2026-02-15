@@ -88,6 +88,46 @@ function ImageEditor({ image, onClose }) {
       canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas));
     });
 
+    // Pan with Shift + Drag
+    let isPanning = false;
+    let lastPosX = 0;
+    let lastPosY = 0;
+
+    canvas.on('mouse:down', function(opt) {
+      const evt = opt.e;
+      if (evt.shiftKey) {
+        isPanning = true;
+        canvas.selection = false;
+        lastPosX = evt.clientX;
+        lastPosY = evt.clientY;
+        canvas.setCursor('grab');
+      }
+    });
+
+    canvas.on('mouse:move', function(opt) {
+      if (isPanning) {
+        const evt = opt.e;
+        const deltaX = evt.clientX - lastPosX;
+        const deltaY = evt.clientY - lastPosY;
+
+        canvas.relativePan({ x: deltaX, y: deltaY });
+
+        lastPosX = evt.clientX;
+        lastPosY = evt.clientY;
+
+        canvas.setCursor('grabbing');
+        canvas.renderAll();
+      }
+    });
+
+    canvas.on('mouse:up', function() {
+      if (isPanning) {
+        isPanning = false;
+        canvas.selection = activeTool === 'select';
+        canvas.setCursor('default');
+      }
+    });
+
     // Object events
     canvas.on('object:added', updateLayers);
     canvas.on('object:removed', updateLayers);
@@ -188,8 +228,9 @@ function ImageEditor({ image, onClose }) {
       object: obj
     }));
 
-    // Add 3D reference layer if it exists
-    if (has3DReference) {
+    // Add 3D reference layer if reference objects exist
+    // Check referenceObjectsRef instead of has3DReference state for immediate update
+    if (referenceObjectsRef.current.length > 0) {
       objects.unshift({
         id: '3d-reference',
         type: '3d-reference',
@@ -564,13 +605,13 @@ function ImageEditor({ image, onClose }) {
       endY = line.y2 + measurementGroup.top + measurementGroup.height / 2;
     }
 
-    // Create start handle
+    // Create start handle - outer circle
     const startHandle = new fabric.Circle({
       left: startX,
       top: startY,
-      radius: 6,
-      fill: '#ff0000',
-      stroke: '#ffffff',
+      radius: 8,
+      fill: 'rgba(255, 140, 0, 0.2)',  // Orange transparent
+      stroke: '#ff8c00',  // Orange
       strokeWidth: 2,
       originX: 'center',
       originY: 'center',
@@ -582,13 +623,28 @@ function ImageEditor({ image, onClose }) {
       parentMeasurement: measurementGroup
     });
 
-    // Create end handle
+    // Create start handle - inner dot
+    const startDot = new fabric.Circle({
+      left: startX,
+      top: startY,
+      radius: 2,
+      fill: '#ff8c00',  // Orange solid
+      originX: 'center',
+      originY: 'center',
+      selectable: false,
+      evented: false,
+      measurementHandle: true,
+      measurementHandleDot: true,
+      parentHandle: startHandle
+    });
+
+    // Create end handle - outer circle
     const endHandle = new fabric.Circle({
       left: endX,
       top: endY,
-      radius: 6,
-      fill: '#ff0000',
-      stroke: '#ffffff',
+      radius: 8,
+      fill: 'rgba(255, 140, 0, 0.2)',  // Orange transparent
+      stroke: '#ff8c00',  // Orange
       strokeWidth: 2,
       originX: 'center',
       originY: 'center',
@@ -600,12 +656,31 @@ function ImageEditor({ image, onClose }) {
       parentMeasurement: measurementGroup
     });
 
+    // Create end handle - inner dot
+    const endDot = new fabric.Circle({
+      left: endX,
+      top: endY,
+      radius: 2,
+      fill: '#ff8c00',  // Orange solid
+      originX: 'center',
+      originY: 'center',
+      selectable: false,
+      evented: false,
+      measurementHandle: true,
+      measurementHandleDot: true,
+      parentHandle: endHandle
+    });
+
     // Update measurement on handle move
     const updateMeasurement = () => {
       const newStartX = startHandle.left;
       const newStartY = startHandle.top;
       const newEndX = endHandle.left;
       const newEndY = endHandle.top;
+
+      // Move dots with handles
+      startDot.set({ left: newStartX, top: newStartY });
+      endDot.set({ left: newEndX, top: newEndY });
 
       // Update stored coordinates
       measurementGroup.measurementStart = { x: newStartX, y: newStartY };
@@ -622,42 +697,12 @@ function ImageEditor({ image, onClose }) {
     startHandle.on('moving', updateMeasurement);
     endHandle.on('moving', updateMeasurement);
 
-    // Store initial group position for tracking movement
-    let lastGroupLeft = measurementGroup.left;
-    let lastGroupTop = measurementGroup.top;
-
-    // Move handles when measurement group is moved
-    measurementGroup.on('moving', function() {
-      const deltaX = this.left - lastGroupLeft;
-      const deltaY = this.top - lastGroupTop;
-
-      // Update stored coordinates
-      this.measurementStart.x += deltaX;
-      this.measurementStart.y += deltaY;
-      this.measurementEnd.x += deltaX;
-      this.measurementEnd.y += deltaY;
-
-      // Move handles
-      startHandle.set({
-        left: startHandle.left + deltaX,
-        top: startHandle.top + deltaY
-      });
-      endHandle.set({
-        left: endHandle.left + deltaX,
-        top: endHandle.top + deltaY
-      });
-
-      // Update last position
-      lastGroupLeft = this.left;
-      lastGroupTop = this.top;
-
-      canvas.renderAll();
-    });
-
     canvas.add(startHandle);
     canvas.add(endHandle);
+    canvas.add(startDot);
+    canvas.add(endDot);
 
-    measurementHandlesRef.current = [startHandle, endHandle];
+    measurementHandlesRef.current = [startHandle, endHandle, startDot, endDot];
     canvas.renderAll();
   };
 
@@ -1496,33 +1541,6 @@ function ImageEditor({ image, onClose }) {
         selectable: false
       });
 
-      const angle = Math.atan2(end.y - start.y, end.x - start.x);
-      const arrowSize = 10;
-
-      const arrow1 = new fabric.Triangle({
-        left: start.x,
-        top: start.y,
-        width: arrowSize,
-        height: arrowSize,
-        fill: color,
-        angle: (angle * 180 / Math.PI) + 90,
-        originX: 'center',
-        originY: 'center',
-        selectable: false
-      });
-
-      const arrow2 = new fabric.Triangle({
-        left: end.x,
-        top: end.y,
-        width: arrowSize,
-        height: arrowSize,
-        fill: color,
-        angle: (angle * 180 / Math.PI) - 90,
-        originX: 'center',
-        originY: 'center',
-        selectable: false
-      });
-
       const midX = (start.x + end.x) / 2;
       const midY = (start.y + end.y) / 2;
 
@@ -1537,14 +1555,14 @@ function ImageEditor({ image, onClose }) {
         selectable: false
       });
 
-      const group = new fabric.Group([line, arrow1, arrow2, textObj], {
+      const group = new fabric.Group([line, textObj], {
         customType: '3d-measurement',
         customName: distanceText,
         editable: false,
-        selectable: true,
+        selectable: false,  // Not movable - only via handles
         hasControls: false,
         hasBorders: false,
-        subTargetCheck: true,
+        evented: false,  // No events on group
         objectCaching: false
       });
 
