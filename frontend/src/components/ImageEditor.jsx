@@ -1094,6 +1094,7 @@ function ImageEditor({ image, onClose }) {
       if (activeTool === 'line' && evt.shiftKey) {
         // Check for snapping to existing points
         let snapPoint = null;
+        let snapHandle = null;
         const snapDistance = 30;
 
         // Check snapping to existing polyline points
@@ -1103,30 +1104,34 @@ function ImageEditor({ image, onClose }) {
               const dx = handle.left - pointer.x;
               const dy = handle.top - pointer.y;
               const dist = Math.sqrt(dx * dx + dy * dy);
-              if (dist < snapDistance) {
+              if (dist < snapDistance && !snapPoint) {
                 snapPoint = { x: handle.left, y: handle.top };
+                snapHandle = handle;
               }
             });
           }
         });
 
         // Check snapping to normal line points
-        linesRef.current.forEach(lineData => {
-          if (lineData.handles) {
-            for (let i = 0; i < lineData.handles.length; i += 2) {
-              const handle = lineData.handles[i];
-              const dx = handle.left - pointer.x;
-              const dy = handle.top - pointer.y;
-              const dist = Math.sqrt(dx * dx + dy * dy);
-              if (dist < snapDistance) {
-                snapPoint = { x: handle.left, y: handle.top };
-                break;
+        if (!snapPoint) {
+          linesRef.current.forEach(lineData => {
+            if (lineData.handles) {
+              for (let i = 0; i < lineData.handles.length; i += 2) {
+                const handle = lineData.handles[i];
+                const dx = handle.left - pointer.x;
+                const dy = handle.top - pointer.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < snapDistance) {
+                  snapPoint = { x: handle.left, y: handle.top };
+                  snapHandle = handle;
+                  break;
+                }
               }
             }
-          }
-        });
+          });
+        }
 
-        const pointToAdd = snapPoint || pointer;
+        const pointToAdd = snapPoint ? { x: snapPoint.x, y: snapPoint.y, snapHandle: snapHandle } : { x: pointer.x, y: pointer.y, snapHandle: null };
 
         // Start or continue polyline
         if (!isPolylineModeRef.current) {
@@ -1919,7 +1924,8 @@ function ImageEditor({ image, onClose }) {
         lineHandle: true,
         permanentLineHandle: true,
         parentLine: line,
-        pointIndex: index
+        pointIndex: index,
+        connectedSegments: []
       });
 
       // Create handle - inner dot
@@ -1936,6 +1942,13 @@ function ImageEditor({ image, onClose }) {
         permanentLineHandle: true
       });
 
+      // Add this line segment to handle's connected segments
+      if (index === 0) {
+        handle.connectedSegments.push({ segment: line, isStart: true });
+      } else if (index === 1) {
+        handle.connectedSegments.push({ segment: line, isStart: false });
+      }
+
       // Update line on handle move
       handle.on('moving', () => {
         const newX = handle.left;
@@ -1947,14 +1960,18 @@ function ImageEditor({ image, onClose }) {
         // Update point in lineData
         lineData.points[index] = { x: newX, y: newY };
 
-        // Update line coordinates
-        if (index === 0) {
-          line.set({ x1: newX, y1: newY });
-        } else if (index === 1) {
-          line.set({ x2: newX, y2: newY });
+        // Update all connected segments
+        if (handle.connectedSegments) {
+          handle.connectedSegments.forEach(conn => {
+            if (conn.isStart) {
+              conn.segment.set({ x1: newX, y1: newY });
+            } else {
+              conn.segment.set({ x2: newX, y2: newY });
+            }
+            conn.segment.setCoords();
+          });
         }
 
-        line.setCoords();
         canvas.renderAll();
       });
 
@@ -1986,77 +2003,152 @@ function ImageEditor({ image, onClose }) {
 
     const handles = [];
 
-    // Create one handle per point
+    // Create one handle per point (or reuse existing)
     points.forEach((point, pointIndex) => {
-      // Create handle - outer circle
-      const handle = new fabric.Circle({
-        left: point.x,
-        top: point.y,
-        radius: 8,
-        fill: hexToRgba(color, 0.2),
-        stroke: color,
-        strokeWidth: 2,
-        originX: 'center',
-        originY: 'center',
-        selectable: true,
-        hasControls: false,
-        hasBorders: false,
-        polylineHandle: true,
-        permanentLineHandle: true,
-        pointIndex: pointIndex
-      });
+      let handle, dot;
 
-      // Create handle - inner dot
-      const dot = new fabric.Circle({
-        left: point.x,
-        top: point.y,
-        radius: 2,
-        fill: color,
-        originX: 'center',
-        originY: 'center',
-        selectable: false,
-        evented: false,
-        polylineHandle: true,
-        permanentLineHandle: true
-      });
+      // Check if this point snapped to an existing handle
+      if (point.snapHandle) {
+        // Reuse existing handle
+        handle = point.snapHandle;
 
-      // Update all connected line segments when handle moves
-      handle.on('moving', () => {
-        const newX = handle.left;
-        const newY = handle.top;
+        // Find associated dot (should be in canvas, right after handle)
+        const allObjects = canvas.getObjects();
+        const handleIndex = allObjects.indexOf(handle);
+        dot = allObjects[handleIndex + 1]; // Dot is typically added right after handle
 
-        // Move dot with handle
-        dot.set({ left: newX, top: newY });
+        // Initialize connectedSegments if not exists (for normal line handles)
+        if (!handle.connectedSegments) {
+          handle.connectedSegments = [];
 
-        // Update point in polylineData
-        polylineData.points[pointIndex] = { x: newX, y: newY };
+          // Convert normal line handle to polyline handle
+          // Remove old event handlers
+          handle.off('moving');
 
-        // Update all line segments that use this point
-        // Point can be the end of previous segment and/or start of next segment
+          // Set up new event handler that works with connectedSegments
+          handle.on('moving', () => {
+            const newX = handle.left;
+            const newY = handle.top;
 
-        // If not first point: update end of previous segment
+            // Move all associated dots
+            const allObjects = canvas.getObjects();
+            allObjects.forEach(obj => {
+              if ((obj.polylineHandle || obj.lineHandle) && !obj.evented &&
+                  Math.abs(obj.left - handle.left) < 1 && Math.abs(obj.top - handle.top) < 1) {
+                obj.set({ left: newX, top: newY });
+              }
+            });
+
+            // Update all connected segments
+            if (handle.connectedSegments) {
+              handle.connectedSegments.forEach(conn => {
+                if (conn.isStart) {
+                  conn.segment.set({ x1: newX, y1: newY });
+                } else {
+                  conn.segment.set({ x2: newX, y2: newY });
+                }
+                conn.segment.setCoords();
+              });
+            }
+
+            canvas.renderAll();
+          });
+        }
+
+        // Add segments to handle's connected list
         if (pointIndex > 0) {
           const prevSegment = segments[pointIndex - 1];
           if (prevSegment) {
-            prevSegment.set({ x2: newX, y2: newY });
-            prevSegment.setCoords();
+            handle.connectedSegments.push({ segment: prevSegment, isStart: false }); // This point is END of segment
           }
         }
-
-        // If not last point: update start of next segment
         if (pointIndex < points.length - 1) {
           const nextSegment = segments[pointIndex];
           if (nextSegment) {
-            nextSegment.set({ x1: newX, y1: newY });
-            nextSegment.setCoords();
+            handle.connectedSegments.push({ segment: nextSegment, isStart: true }); // This point is START of segment
+          }
+        }
+      } else {
+        // Create new handle - outer circle
+        handle = new fabric.Circle({
+          left: point.x,
+          top: point.y,
+          radius: 8,
+          fill: hexToRgba(color, 0.2),
+          stroke: color,
+          strokeWidth: 2,
+          originX: 'center',
+          originY: 'center',
+          selectable: true,
+          hasControls: false,
+          hasBorders: false,
+          polylineHandle: true,
+          permanentLineHandle: true,
+          pointIndex: pointIndex,
+          connectedSegments: []
+        });
+
+        // Create handle - inner dot
+        dot = new fabric.Circle({
+          left: point.x,
+          top: point.y,
+          radius: 2,
+          fill: color,
+          originX: 'center',
+          originY: 'center',
+          selectable: false,
+          evented: false,
+          polylineHandle: true,
+          permanentLineHandle: true
+        });
+
+        // Add segments to handle's connected list
+        if (pointIndex > 0) {
+          const prevSegment = segments[pointIndex - 1];
+          if (prevSegment) {
+            handle.connectedSegments.push({ segment: prevSegment, isStart: false });
+          }
+        }
+        if (pointIndex < points.length - 1) {
+          const nextSegment = segments[pointIndex];
+          if (nextSegment) {
+            handle.connectedSegments.push({ segment: nextSegment, isStart: true });
           }
         }
 
-        canvas.renderAll();
-      });
+        // Set up event handler for new handles
+        handle.on('moving', () => {
+          const newX = handle.left;
+          const newY = handle.top;
 
-      canvas.add(handle);
-      canvas.add(dot);
+          // Move all associated dots
+          const allObjects = canvas.getObjects();
+          allObjects.forEach(obj => {
+            if (obj.polylineHandle && !obj.evented &&
+                Math.abs(obj.left - handle.left) < 1 && Math.abs(obj.top - handle.top) < 1) {
+              obj.set({ left: newX, top: newY });
+            }
+          });
+
+          // Update all connected segments
+          if (handle.connectedSegments) {
+            handle.connectedSegments.forEach(conn => {
+              if (conn.isStart) {
+                conn.segment.set({ x1: newX, y1: newY });
+              } else {
+                conn.segment.set({ x2: newX, y2: newY });
+              }
+              conn.segment.setCoords();
+            });
+          }
+
+          canvas.renderAll();
+        });
+
+        canvas.add(handle);
+        canvas.add(dot);
+      }
+
       handles.push(handle);
     });
 
