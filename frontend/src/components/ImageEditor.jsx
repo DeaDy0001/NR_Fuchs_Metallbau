@@ -765,9 +765,8 @@ function ImageEditor({ image, onClose }) {
         height: referenceHeight
       });
 
-      const startInBounds = isPointInCalibration(start, matrix);
-      const endInBounds = isPointInCalibration(end, matrix);
-      const color = (startInBounds && endInBounds) ? group.getObjects()[0].stroke : '#ff8800';
+      // Keep the original color from the measurement
+      const color = group.getObjects()[0].stroke;
 
       const distanceText = `${realDistance.toFixed(2)}${referenceUnit}`;
 
@@ -1245,12 +1244,13 @@ function ImageEditor({ image, onClose }) {
       const corners = referenceObjectsRef.current.slice(4, 8);
       const srcPoints = corners.map(c => ({ x: c.left, y: c.top }));
 
-      // Destination points for homography
+      // Destination points for homography (normalized 0-1 rectangle)
+      // IMPORTANT: Use normalized values to avoid double scaling!
       const dstPoints = [
         { x: 0, y: 0 },
-        { x: referenceWidth, y: 0 },
-        { x: referenceWidth, y: referenceHeight },
-        { x: 0, y: referenceHeight }
+        { x: 1, y: 0 },
+        { x: 1, y: 1 },
+        { x: 0, y: 1 }
       ];
 
       const matrix = computeHomography(srcPoints, dstPoints);
@@ -1261,10 +1261,8 @@ function ImageEditor({ image, onClose }) {
         height: referenceHeight
       });
 
-      // Check if points are within reference area
-      const startInBounds = isPointInCalibration(start, matrix);
-      const endInBounds = isPointInCalibration(end, matrix);
-      const color = (startInBounds && endInBounds) ? strokeColor : '#ff8800';
+      // Use selected stroke color
+      const color = strokeColor;
 
       const line = new fabric.Line([start.x, start.y, end.x, end.y], {
         stroke: color,
@@ -1693,10 +1691,8 @@ function ImageEditor({ image, onClose }) {
         height: referenceHeight
       });
 
-      // Check if points are within reference area
-      const startInBounds = isPointInCalibration(start, matrix);
-      const endInBounds = isPointInCalibration(end, matrix);
-      const color = (startInBounds && endInBounds) ? strokeColor : '#ff8800'; // Orange if out of bounds
+      // Use selected stroke color
+      const color = strokeColor; // Orange if out of bounds
 
       const distanceText = `${realDistance.toFixed(2)}${referenceUnit}`;
 
