@@ -234,8 +234,8 @@ function ImageEditor({ image, onClose }) {
 
     const allObjects = canvas.getObjects();
 
-    // Filter out reference objects AND measurement handles
-    const visibleObjects = allObjects.filter(obj => !obj.referenceObject && !obj.measurementHandle);
+    // Filter out reference objects, measurement handles, and line handles
+    const visibleObjects = allObjects.filter(obj => !obj.referenceObject && !obj.measurementHandle && !obj.lineHandle);
 
     const objects = visibleObjects.map((obj, index) => ({
       id: obj.id || `layer-${index}`,
@@ -601,8 +601,14 @@ function ImageEditor({ image, onClose }) {
     try {
       const matrix = computeHomography(srcPoints, dstPoints);
 
-      const start = { x: measurement.startX, y: measurement.startY };
-      const end = { x: measurement.endX, y: measurement.endY };
+      // Use current positions from group (in case user moved handles)
+      const group = measurement.group;
+      const start = group.measurementStart
+        ? { x: group.measurementStart.x, y: group.measurementStart.y }
+        : { x: measurement.startX, y: measurement.startY };
+      const end = group.measurementEnd
+        ? { x: group.measurementEnd.x, y: group.measurementEnd.y }
+        : { x: measurement.endX, y: measurement.endY };
 
       const realDistance = calculateRealDistance(start, end, matrix, {
         width: actualWidth,
@@ -1095,7 +1101,7 @@ function ImageEditor({ image, onClose }) {
         // Check for snapping to existing points
         let snapPoint = null;
         let snapHandle = null;
-        const snapDistance = 30;
+        const snapDistance = 50; // Increased snap distance for better UX
 
         // Check snapping to existing polyline points
         polylinesRef.current.forEach(polyline => {
@@ -1220,9 +1226,48 @@ function ImageEditor({ image, onClose }) {
           polylinePreviewRef.current = null;
         }
 
-        // Draw preview line from last point to cursor
+        // Check for snapping to existing points during preview
+        let snapPoint = null;
+        const snapDistance = 50; // Increased snap distance for better UX
+
+        // Check snapping to existing polyline points
+        polylinesRef.current.forEach(polyline => {
+          if (polyline.handles) {
+            polyline.handles.forEach(handle => {
+              const dx = handle.left - pointer.x;
+              const dy = handle.top - pointer.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              if (dist < snapDistance && !snapPoint) {
+                snapPoint = { x: handle.left, y: handle.top };
+              }
+            });
+          }
+        });
+
+        // Check snapping to normal line points
+        if (!snapPoint) {
+          linesRef.current.forEach(lineData => {
+            if (lineData.handles) {
+              for (let i = 0; i < lineData.handles.length; i += 2) {
+                const handle = lineData.handles[i];
+                const dx = handle.left - pointer.x;
+                const dy = handle.top - pointer.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < snapDistance) {
+                  snapPoint = { x: handle.left, y: handle.top };
+                  break;
+                }
+              }
+            }
+          });
+        }
+
+        // Use snap point if found, otherwise use pointer
+        const targetPoint = snapPoint || { x: pointer.x, y: pointer.y };
+
+        // Draw preview line from last point to cursor (or snap point)
         const lastPoint = polylinePointsRef.current[polylinePointsRef.current.length - 1];
-        const previewLine = new fabric.Line([lastPoint.x, lastPoint.y, pointer.x, pointer.y], {
+        const previewLine = new fabric.Line([lastPoint.x, lastPoint.y, targetPoint.x, targetPoint.y], {
           stroke: strokeColor,
           strokeWidth: strokeWidth,
           opacity: 0.6,
