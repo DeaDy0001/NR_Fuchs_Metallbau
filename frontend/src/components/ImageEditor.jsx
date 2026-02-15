@@ -38,7 +38,9 @@ function ImageEditor({ image, onClose }) {
   const polylinePointsRef = useRef([]);
   const isPolylineModeRef = useRef(false);
   const polylinePreviewRef = useRef(null);
+  const polylineSegmentsRef = useRef([]);  // Track line segments in current polyline
   const linesRef = useRef([]);  // Track all lines with handles
+  const polylinesRef = useRef([]);  // Track polyline groups
 
   // Tool colors and settings
   const [strokeColor, setStrokeColor] = useState('#ff0000');
@@ -563,19 +565,27 @@ function ImageEditor({ image, onClose }) {
   };
 
   // Update all 3D measurements when reference changes
-  const updateAll3DMeasurements = () => {
+  const updateAll3DMeasurements = (newWidth = null, newHeight = null, newUnit = null) => {
     const canvas = fabricCanvasRef.current;
     if (!canvas || referenceObjectsRef.current.length === 0) return;
 
+    const width = newWidth !== null ? newWidth : referenceWidth;
+    const height = newHeight !== null ? newHeight : referenceHeight;
+    const unit = newUnit !== null ? newUnit : referenceUnit;
+
     threeDMeasurementsRef.current.forEach(measurement => {
-      recalculate3DMeasurement(measurement);
+      recalculate3DMeasurement(measurement, width, height, unit);
     });
   };
 
   // Recalculate a single 3D measurement
-  const recalculate3DMeasurement = (measurement) => {
+  const recalculate3DMeasurement = (measurement, width = null, height = null, unit = null) => {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !measurement || !measurement.group) return;
+
+    const actualWidth = width !== null ? width : referenceWidth;
+    const actualHeight = height !== null ? height : referenceHeight;
+    const actualUnit = unit !== null ? unit : referenceUnit;
 
     const corners = referenceObjectsRef.current.slice(4, 8); // Outer circles
     const srcPoints = corners.map(c => ({ x: c.left, y: c.top }));
@@ -595,11 +605,11 @@ function ImageEditor({ image, onClose }) {
       const end = { x: measurement.endX, y: measurement.endY };
 
       const realDistance = calculateRealDistance(start, end, matrix, {
-        width: referenceWidth,
-        height: referenceHeight
+        width: actualWidth,
+        height: actualHeight
       });
 
-      const distanceText = `${realDistance.toFixed(2)}${referenceUnit}`;
+      const distanceText = `${realDistance.toFixed(2)}${actualUnit}`;
 
       // Update text in group
       const group = measurement.group;
@@ -1084,8 +1094,23 @@ function ImageEditor({ image, onClose }) {
       if (activeTool === 'line' && evt.shiftKey) {
         // Check for snapping to existing points
         let snapPoint = null;
-        const snapDistance = 10;
+        const snapDistance = 30;
 
+        // Check snapping to existing polyline points
+        polylinesRef.current.forEach(polyline => {
+          if (polyline.handles) {
+            polyline.handles.forEach(handle => {
+              const dx = handle.left - pointer.x;
+              const dy = handle.top - pointer.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              if (dist < snapDistance) {
+                snapPoint = { x: handle.left, y: handle.top };
+              }
+            });
+          }
+        });
+
+        // Check snapping to normal line points
         linesRef.current.forEach(lineData => {
           if (lineData.handles) {
             for (let i = 0; i < lineData.handles.length; i += 2) {
@@ -1108,16 +1133,32 @@ function ImageEditor({ image, onClose }) {
           // Start new polyline
           isPolylineModeRef.current = true;
           polylinePointsRef.current = [pointToAdd];
+          polylineSegmentsRef.current = [];
         } else {
           // Add point to existing polyline
           polylinePointsRef.current.push(pointToAdd);
 
-          // Create line segment between last two points
+          // Create line segment between last two points (but don't add handles yet)
           const points = polylinePointsRef.current;
           const start = points[points.length - 2];
           const end = points[points.length - 1];
 
-          createFinalLine(start, end);
+          const canvas = fabricCanvasRef.current;
+          const line = new fabric.Line([start.x, start.y, end.x, end.y], {
+            stroke: strokeColor,
+            strokeWidth: strokeWidth,
+            customType: 'line',
+            customName: 'Linie',
+            selectable: true,
+            hasControls: false,
+            hasBorders: false,
+            lockMovementX: true,
+            lockMovementY: true,
+            objectCaching: false
+          });
+
+          canvas.add(line);
+          polylineSegmentsRef.current.push(line);
         }
         return;
       }
@@ -1301,9 +1342,23 @@ function ImageEditor({ image, onClose }) {
           polylinePreviewRef.current = null;
         }
 
+        // Create handles for the completed polyline
+        if (polylineSegmentsRef.current.length > 0) {
+          const polylineData = {
+            points: polylinePointsRef.current,
+            segments: polylineSegmentsRef.current,
+            color: strokeColor,
+            handles: []
+          };
+
+          createPolylineHandles(polylineData);
+          polylinesRef.current.push(polylineData);
+        }
+
         // Reset polyline mode
         isPolylineModeRef.current = false;
         polylinePointsRef.current = [];
+        polylineSegmentsRef.current = [];
         canvas.renderAll();
       }
     };
@@ -1910,6 +1965,103 @@ function ImageEditor({ image, onClose }) {
 
     // Store handles in line data
     lineData.handles = handles;
+
+    canvas.renderAll();
+  };
+
+  // Create shared handles for polylines
+  const createPolylineHandles = (polylineData) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || !polylineData) return;
+
+    const { points, segments, color } = polylineData;
+
+    // Convert hex color to rgba for transparent fill
+    const hexToRgba = (hex, alpha) => {
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    };
+
+    const handles = [];
+
+    // Create one handle per point
+    points.forEach((point, pointIndex) => {
+      // Create handle - outer circle
+      const handle = new fabric.Circle({
+        left: point.x,
+        top: point.y,
+        radius: 8,
+        fill: hexToRgba(color, 0.2),
+        stroke: color,
+        strokeWidth: 2,
+        originX: 'center',
+        originY: 'center',
+        selectable: true,
+        hasControls: false,
+        hasBorders: false,
+        polylineHandle: true,
+        permanentLineHandle: true,
+        pointIndex: pointIndex
+      });
+
+      // Create handle - inner dot
+      const dot = new fabric.Circle({
+        left: point.x,
+        top: point.y,
+        radius: 2,
+        fill: color,
+        originX: 'center',
+        originY: 'center',
+        selectable: false,
+        evented: false,
+        polylineHandle: true,
+        permanentLineHandle: true
+      });
+
+      // Update all connected line segments when handle moves
+      handle.on('moving', () => {
+        const newX = handle.left;
+        const newY = handle.top;
+
+        // Move dot with handle
+        dot.set({ left: newX, top: newY });
+
+        // Update point in polylineData
+        polylineData.points[pointIndex] = { x: newX, y: newY };
+
+        // Update all line segments that use this point
+        // Point can be the end of previous segment and/or start of next segment
+
+        // If not first point: update end of previous segment
+        if (pointIndex > 0) {
+          const prevSegment = segments[pointIndex - 1];
+          if (prevSegment) {
+            prevSegment.set({ x2: newX, y2: newY });
+            prevSegment.setCoords();
+          }
+        }
+
+        // If not last point: update start of next segment
+        if (pointIndex < points.length - 1) {
+          const nextSegment = segments[pointIndex];
+          if (nextSegment) {
+            nextSegment.set({ x1: newX, y1: newY });
+            nextSegment.setCoords();
+          }
+        }
+
+        canvas.renderAll();
+      });
+
+      canvas.add(handle);
+      canvas.add(dot);
+      handles.push(handle);
+    });
+
+    // Store handles in polyline data
+    polylineData.handles = handles;
 
     canvas.renderAll();
   };
@@ -2986,8 +3138,9 @@ function ImageEditor({ image, onClose }) {
                                 min="1"
                                 value={referenceWidth}
                                 onChange={(e) => {
-                                  setReferenceWidth(parseFloat(e.target.value) || 100);
-                                  updateAll3DMeasurements();
+                                  const newWidth = parseFloat(e.target.value) || 100;
+                                  setReferenceWidth(newWidth);
+                                  updateAll3DMeasurements(newWidth, null, null);
                                 }}
                                 style={{
                                   width: '100%',
@@ -3009,8 +3162,9 @@ function ImageEditor({ image, onClose }) {
                                 min="1"
                                 value={referenceHeight}
                                 onChange={(e) => {
-                                  setReferenceHeight(parseFloat(e.target.value) || 50);
-                                  updateAll3DMeasurements();
+                                  const newHeight = parseFloat(e.target.value) || 50;
+                                  setReferenceHeight(newHeight);
+                                  updateAll3DMeasurements(null, newHeight, null);
                                 }}
                                 style={{
                                   width: '100%',
@@ -3029,8 +3183,9 @@ function ImageEditor({ image, onClose }) {
                               <select
                                 value={referenceUnit}
                                 onChange={(e) => {
-                                  setReferenceUnit(e.target.value);
-                                  updateAll3DMeasurements();
+                                  const newUnit = e.target.value;
+                                  setReferenceUnit(newUnit);
+                                  updateAll3DMeasurements(null, null, newUnit);
                                 }}
                                 style={{
                                   width: '100%',
