@@ -528,7 +528,7 @@ const syncDrive = async (req, res) => {
 const deleteImage = async (req, res) => {
   try {
     const { id } = req.params;
-    const { deleteFromDrive = false } = req.query; // Query parameter: deleteFromDrive=true/false
+    const { deleteFromDrive = false, deleteFromProjects = false } = req.query; // Query parameters
 
     // Get current image info
     const image = db.prepare('SELECT * FROM drive_images WHERE id = ?').get(id);
@@ -537,7 +537,43 @@ const deleteImage = async (req, res) => {
       return res.status(404).json({ error: 'Image not found' });
     }
 
-    // Delete from Google Drive if requested
+    // Delete from all projects if requested
+    if (deleteFromProjects === 'true') {
+      try {
+        // Get project settings
+        const projectSettings = db.prepare('SELECT * FROM project_settings LIMIT 1').get();
+
+        if (projectSettings?.project_path) {
+          // Get all projects where this image is assigned
+          const assignments = db.prepare(`
+            SELECT p.* FROM projects p
+            JOIN image_project_assignments ipa ON p.id = ipa.project_id
+            WHERE ipa.image_id = ?
+          `).all(id);
+
+          // Delete from each project folder
+          for (const project of assignments) {
+            const projectFolderPath = path.join(projectSettings.project_path, project.folder_name, 'Bilder');
+            const fileName = path.basename(image.local_path);
+            const imagePathInProject = path.join(projectFolderPath, fileName);
+
+            if (await fs.pathExists(imagePathInProject)) {
+              await fs.remove(imagePathInProject);
+              console.log(`🗑️ Deleted image from project folder: ${imagePathInProject}`);
+            }
+          }
+        }
+
+        // Delete all assignment records
+        db.prepare('DELETE FROM image_project_assignments WHERE image_id = ?').run(id);
+        console.log(`✓ Removed image from all project assignments`);
+      } catch (err) {
+        console.error('Error deleting from projects:', err);
+        // Continue with deletion even if project cleanup fails
+      }
+    }
+
+    // Delete from Google Drive if requested (only if image is from Drive)
     if (deleteFromDrive === 'true' && image.drive_file_id) {
       try {
         await deleteFile(image.drive_file_id);
@@ -588,12 +624,22 @@ const deleteImage = async (req, res) => {
     // Delete from database
     db.prepare('DELETE FROM drive_images WHERE id = ?').run(id);
 
+    // Build response message
+    let message = 'Image deleted from software';
+    if (deleteFromProjects === 'true') {
+      message += ' and all projects';
+    }
+    if (deleteFromDrive === 'true' && image.drive_file_id) {
+      message += ' and Google Drive';
+    } else if (image.drive_file_id) {
+      message += ' (will not be re-downloaded from Drive)';
+    }
+
     res.json({
       success: true,
-      deletedFromDrive: deleteFromDrive === 'true',
-      message: deleteFromDrive === 'true'
-        ? 'Image deleted from software and Google Drive'
-        : 'Image deleted from software only (will not be re-downloaded)'
+      deletedFromDrive: deleteFromDrive === 'true' && !!image.drive_file_id,
+      deletedFromProjects: deleteFromProjects === 'true',
+      message: message
     });
   } catch (error) {
     console.error('Error deleting image:', error);

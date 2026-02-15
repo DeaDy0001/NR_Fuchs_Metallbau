@@ -31,6 +31,7 @@ function DriveImages() {
   const [newImagesCount, setNewImagesCount] = useState(0);
   const [zoomLevel, setZoomLevel] = useState(1); // Zoom level (1 = 100%)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false); // Delete confirmation dialog
+  const [deleteFromProjects, setDeleteFromProjects] = useState(false); // Delete from all projects checkbox
   const [showEditor, setShowEditor] = useState(false); // Image editor
   const [panPosition, setPanPosition] = useState({ x: 0, y: 0 }); // Pan position for zoomed image
   const [isDragging, setIsDragging] = useState(false); // Is user dragging the image
@@ -415,7 +416,7 @@ function DriveImages() {
     setShowDeleteDialog(false);
 
     try {
-      const url = `/api/drive/images/${selectedImage.id}?deleteFromDrive=${deleteFromDrive}`;
+      const url = `/api/drive/images/${selectedImage.id}?deleteFromDrive=${deleteFromDrive}&deleteFromProjects=${deleteFromProjects}`;
       const response = await fetch(url, {
         method: 'DELETE'
       });
@@ -424,6 +425,7 @@ function DriveImages() {
         const result = await response.json();
         // Close modal and reload images
         setSelectedImage(null);
+        setDeleteFromProjects(false); // Reset checkbox
         loadImages();
       } else {
         const error = await response.json();
@@ -964,10 +966,31 @@ function DriveImages() {
 
       {/* Delete Confirmation Dialog */}
       {showDeleteDialog && selectedImage && (
-        <div className="modal-overlay" onClick={() => setShowDeleteDialog(false)}>
+        <div className="modal-overlay" onClick={() => {setShowDeleteDialog(false); setDeleteFromProjects(false);}}>
           <div className="delete-dialog" onClick={(e) => e.stopPropagation()}>
             <h3>Bild löschen</h3>
             <p>Möchtest du das Bild <strong>"{selectedImage.name}"</strong> löschen?</p>
+
+            {/* Checkbox: Delete from projects */}
+            {selectedImage.projects && selectedImage.projects.length > 0 && (
+              <div style={{ margin: '15px 0', padding: '10px', backgroundColor: '#2a2a2a', borderRadius: '4px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '14px' }}>
+                  <input
+                    type="checkbox"
+                    checked={deleteFromProjects}
+                    onChange={(e) => setDeleteFromProjects(e.target.checked)}
+                    style={{ marginRight: '10px', width: '18px', height: '18px', cursor: 'pointer' }}
+                  />
+                  <span>
+                    Auch von {selectedImage.projects.length === 1 ? 'Projekt' : 'allen Projekten'} löschen?
+                    <span style={{ display: 'block', fontSize: '12px', color: '#888', marginTop: '4px' }}>
+                      {selectedImage.projects.map(p => p.folder_name).join(', ')}
+                    </span>
+                  </span>
+                </label>
+              </div>
+            )}
+
             <div className="delete-options">
               <button
                 className="delete-option-btn software-only"
@@ -975,22 +998,26 @@ function DriveImages() {
               >
                 <div className="option-title">🗑️ Nur aus Software</div>
                 <div className="option-description">
-                  Bleibt auf Google Drive, wird aber nicht mehr heruntergeladen
+                  {selectedImage.drive_file_id
+                    ? 'Bleibt auf Google Drive, wird aber nicht mehr heruntergeladen'
+                    : 'Bild wird aus der Software gelöscht'}
                 </div>
               </button>
-              <button
-                className="delete-option-btn full-delete"
-                onClick={() => performDelete(true)}
-              >
-                <div className="option-title">🔥 Auch von Google Drive</div>
-                <div className="option-description">
-                  Wird permanent von Google Drive gelöscht
-                </div>
-              </button>
+              {selectedImage.drive_file_id && (
+                <button
+                  className="delete-option-btn full-delete"
+                  onClick={() => performDelete(true)}
+                >
+                  <div className="option-title">🔥 Auch von Google Drive</div>
+                  <div className="option-description">
+                    Wird permanent von Google Drive gelöscht
+                  </div>
+                </button>
+              )}
             </div>
             <button
               className="delete-cancel-btn"
-              onClick={() => setShowDeleteDialog(false)}
+              onClick={() => {setShowDeleteDialog(false); setDeleteFromProjects(false);}}
             >
               Abbrechen
             </button>
