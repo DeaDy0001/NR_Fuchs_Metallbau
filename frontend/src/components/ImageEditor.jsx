@@ -729,11 +729,12 @@ function ImageEditor({ image, onClose }) {
       const corners = referenceObjectsRef.current.slice(4, 8);
       const srcPoints = corners.map(c => ({ x: c.left, y: c.top }));
 
+      // Normalized destination points (0-1)
       const dstPoints = [
         { x: 0, y: 0 },
-        { x: referenceWidth, y: 0 },
-        { x: referenceWidth, y: referenceHeight },
-        { x: 0, y: referenceHeight }
+        { x: 1, y: 0 },
+        { x: 1, y: 1 },
+        { x: 0, y: 1 }
       ];
 
       const matrix = computeHomography(srcPoints, dstPoints);
@@ -748,22 +749,26 @@ function ImageEditor({ image, onClose }) {
 
       const distanceText = `${realDistance.toFixed(2)}${referenceUnit}`;
 
-      // Update line
+      // Update line (index 0)
       const line = group.getObjects()[0];
-      line.set({ x1: start.x - group.left - group.width / 2, y1: start.y - group.top - group.height / 2, x2: end.x - group.left - group.width / 2, y2: end.y - group.top - group.height / 2, stroke: color });
+      line.set({
+        x1: start.x - group.left - group.width / 2,
+        y1: start.y - group.top - group.height / 2,
+        x2: end.x - group.left - group.width / 2,
+        y2: end.y - group.top - group.height / 2,
+        stroke: color
+      });
 
-      // Update arrows
-      const angle = Math.atan2(end.y - start.y, end.x - start.x);
-      const arrow1 = group.getObjects()[1];
-      const arrow2 = group.getObjects()[2];
-      arrow1.set({ left: start.x - group.left - group.width / 2, top: start.y - group.top - group.height / 2, angle: (angle * 180 / Math.PI) + 90, fill: color });
-      arrow2.set({ left: end.x - group.left - group.width / 2, top: end.y - group.top - group.height / 2, angle: (angle * 180 / Math.PI) - 90, fill: color });
-
-      // Update text
+      // Update text (index 1, no arrows anymore!)
       const midX = (start.x + end.x) / 2;
       const midY = (start.y + end.y) / 2;
-      const text = group.getObjects()[3];
-      text.set({ left: midX - group.left - group.width / 2, top: midY - 20 - group.top - group.height / 2, text: distanceText, fill: color });
+      const text = group.getObjects()[1];
+      text.set({
+        left: midX - group.left - group.width / 2,
+        top: midY - 20 - group.top - group.height / 2,
+        text: distanceText,
+        fill: color
+      });
 
       group.customName = distanceText;
       group.realDistance = realDistance;
@@ -1563,10 +1568,11 @@ function ImageEditor({ image, onClose }) {
         customType: '3d-measurement',
         customName: distanceText,
         editable: false,
-        selectable: false,  // Not movable - only via handles
+        selectable: true,  // Selectable but not movable
+        lockMovementX: true,  // Block movement
+        lockMovementY: true,
         hasControls: false,
         hasBorders: false,
-        evented: false,  // No events on group
         objectCaching: false
       });
 
@@ -1687,8 +1693,21 @@ function ImageEditor({ image, onClose }) {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    const obj = layers.find(l => l.id === layerId)?.object;
+    const layer = layers.find(l => l.id === layerId);
+
+    // Special handling for 3D reference layer
+    if (layerId === '3d-reference') {
+      remove3DReference();
+      return;
+    }
+
+    const obj = layer?.object;
     if (obj) {
+      // If deleting a measurement, remove its handles
+      if (obj.customType === 'measurement' || obj.customType === '3d-measurement') {
+        removeMeasurementHandles();
+      }
+
       canvas.remove(obj);
       canvas.renderAll();
     }
