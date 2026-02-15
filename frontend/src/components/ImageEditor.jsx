@@ -30,6 +30,8 @@ function ImageEditor({ image, onClose }) {
   const dragStartTimeRef = useRef(null);
   const tempObjectRef = useRef(null);
   const isDrawingRef = useRef(false);
+  const isPanningRef = useRef(false);
+  const lastPanPosRef = useRef({ x: 0, y: 0 });
   const [activeFreehandPath, setActiveFreehandPath] = useState(null);
 
   // Tool colors and settings
@@ -300,6 +302,13 @@ function ImageEditor({ image, onClose }) {
     };
     loadColorPresets();
   }, []);
+
+  // Update all 3D measurements when reference dimensions or unit changes
+  useEffect(() => {
+    if (has3DReference && threeDMeasurementsRef.current.length > 0) {
+      updateAll3DMeasurements();
+    }
+  }, [referenceWidth, referenceHeight, referenceUnit]);
 
   // Save color preset to backend
   const saveColorPreset = async (color, position) => {
@@ -589,10 +598,11 @@ function ImageEditor({ image, onClose }) {
       // Update text in group
       const group = measurement.group;
       const objects = group.getObjects();
-      const textObj = objects.find(obj => obj.type === 'text');
 
-      if (textObj) {
-        textObj.set('text', distanceText);
+      // Index 0: line, Index 1: labelText, Index 2: distanceText
+      const distText = objects[2];
+      if (distText && distText.type === 'text') {
+        distText.set('text', distanceText);
         // Also update the group's customName so it shows in the layers list
         group.customName = distanceText;
         canvas.renderAll();
@@ -780,11 +790,22 @@ function ImageEditor({ image, onClose }) {
         stroke: color
       });
 
-      // Update text (index 1, no arrows anymore!)
       const midX = (start.x + end.x) / 2;
       const midY = (start.y + end.y) / 2;
-      const text = group.getObjects()[1];
-      text.set({
+
+      // Update label text (index 1) if it exists
+      const labelText = group.getObjects()[1];
+      if (labelText) {
+        labelText.set({
+          left: midX - group.left - group.width / 2,
+          top: midY - 40 - group.top - group.height / 2,
+          fill: color
+        });
+      }
+
+      // Update distance text (index 2)
+      const distText = group.getObjects()[2];
+      distText.set({
         left: midX - group.left - group.width / 2,
         top: midY - 20 - group.top - group.height / 2,
         text: distanceText,
@@ -1023,7 +1044,18 @@ function ImageEditor({ image, onClose }) {
     if (!canvas) return;
 
     const handleMouseDown = (e) => {
-      const pointer = canvas.getPointer(e.e);
+      const evt = e.e;
+      const pointer = canvas.getPointer(evt);
+
+      // Middle mouse button (button === 1) - start panning
+      if (evt.button === 1) {
+        evt.preventDefault();
+        isPanningRef.current = true;
+        canvas.selection = false;
+        lastPanPosRef.current = { x: evt.clientX, y: evt.clientY };
+        canvas.setCursor('grab');
+        return;
+      }
 
       // Don't draw if clicking on existing object (except for reference points which are selectable)
       if (e.target && !e.target.referenceObject) return;
@@ -1069,9 +1101,24 @@ function ImageEditor({ image, onClose }) {
     };
 
     const handleMouseMove = (e) => {
+      const evt = e.e;
+
+      // Handle panning with middle mouse button
+      if (isPanningRef.current) {
+        const deltaX = evt.clientX - lastPanPosRef.current.x;
+        const deltaY = evt.clientY - lastPanPosRef.current.y;
+
+        canvas.relativePan({ x: deltaX, y: deltaY });
+
+        lastPanPosRef.current = { x: evt.clientX, y: evt.clientY };
+        canvas.setCursor('grabbing');
+        canvas.renderAll();
+        return;
+      }
+
       if (!isDrawingRef.current || !dragStartRef.current) return;
 
-      const pointer = canvas.getPointer(e.e);
+      const pointer = canvas.getPointer(evt);
 
       // Remove previous temp object
       if (tempObjectRef.current) {
@@ -1114,6 +1161,16 @@ function ImageEditor({ image, onClose }) {
     };
 
     const handleMouseUp = (e) => {
+      const evt = e.e;
+
+      // Handle panning end
+      if (evt.button === 1 && isPanningRef.current) {
+        isPanningRef.current = false;
+        canvas.selection = true;
+        canvas.setCursor('default');
+        return;
+      }
+
       if (!isDrawingRef.current || !dragStartRef.current) return;
 
       const pointer = canvas.getPointer(e.e);
@@ -1705,6 +1762,19 @@ function ImageEditor({ image, onClose }) {
       const midX = (start.x + end.x) / 2;
       const midY = (start.y + end.y) / 2;
 
+      // Create label text (initially empty, above the distance)
+      const labelText = new fabric.Text('', {
+        left: midX,
+        top: midY - 40,
+        fontSize: fontSize - 2,
+        fill: color,
+        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+        padding: 4,
+        originX: 'center',
+        selectable: false,
+        visible: false  // Hidden by default until user adds a label
+      });
+
       const textObj = new fabric.Text(distanceText, {
         left: midX,
         top: midY - 20,
@@ -1716,7 +1786,7 @@ function ImageEditor({ image, onClose }) {
         selectable: false
       });
 
-      const group = new fabric.Group([line, textObj], {
+      const group = new fabric.Group([line, labelText, textObj], {
         customType: '3d-measurement',
         customName: distanceText,
         editable: false,
@@ -1740,7 +1810,8 @@ function ImageEditor({ image, onClose }) {
         endX: end.x,
         endY: end.y,
         realDistance: realDistance,
-        unit: referenceUnit
+        unit: referenceUnit,
+        label: ''  // User-defined label/description
       };
 
       threeDMeasurementsRef.current.push(measurementData);
@@ -2067,6 +2138,16 @@ function ImageEditor({ image, onClose }) {
       layer.children.forEach(child => {
         if (child.object) {
           child.object.visible = newVisibility;
+
+          // Also toggle handles visibility for 3D measurements
+          if (child.object.customType === '3d-measurement') {
+            const measurementData = threeDMeasurementsRef.current.find(m => m.group === child.object);
+            if (measurementData && measurementData.handles) {
+              measurementData.handles.forEach(handle => {
+                handle.visible = newVisibility;
+              });
+            }
+          }
         }
       });
       canvas.renderAll();
@@ -2075,6 +2156,24 @@ function ImageEditor({ image, onClose }) {
       const obj = layer.object;
       if (obj) {
         obj.visible = !obj.visible;
+
+        // Also toggle handles visibility for individual measurements
+        if (obj.customType === '3d-measurement') {
+          const measurementData = threeDMeasurementsRef.current.find(m => m.group === obj);
+          if (measurementData && measurementData.handles) {
+            measurementData.handles.forEach(handle => {
+              handle.visible = obj.visible;
+            });
+          }
+        } else if (obj.customType === 'measurement') {
+          const measurementData = normalMeasurementsRef.current.find(m => m.group === obj);
+          if (measurementData && measurementData.handles) {
+            measurementData.handles.forEach(handle => {
+              handle.visible = obj.visible;
+            });
+          }
+        }
+
         canvas.renderAll();
         updateLayers();
       }
@@ -2100,6 +2199,28 @@ function ImageEditor({ image, onClose }) {
   };
 
   const startEditingLayer = (layerId, currentName) => {
+    // Find the layer (could be in top-level or in children)
+    let layer = layers.find(l => l.id === layerId);
+    if (!layer) {
+      // Search in children
+      for (const parentLayer of layers) {
+        if (parentLayer.children) {
+          layer = parentLayer.children.find(c => c.id === layerId);
+          if (layer) break;
+        }
+      }
+    }
+
+    // For 3D measurements, edit the label instead of the name
+    if (layer && layer.object && layer.object.customType === '3d-measurement') {
+      const measurementData = threeDMeasurementsRef.current.find(m => m.group === layer.object);
+      if (measurementData) {
+        setEditingLayerId(layerId);
+        setEditingText(measurementData.label || '');
+        return;
+      }
+    }
+
     setEditingLayerId(layerId);
     setEditingText(currentName);
   };
@@ -2108,17 +2229,56 @@ function ImageEditor({ image, onClose }) {
     const canvas = fabricCanvasRef.current;
     if (!canvas) return;
 
-    const obj = layers.find(l => l.id === layerId)?.object;
-    if (obj && editingText.trim()) {
-      // Update customName
+    // Find the layer (could be in top-level or in children)
+    let layer = layers.find(l => l.id === layerId);
+    if (!layer) {
+      // Search in children
+      for (const parentLayer of layers) {
+        if (parentLayer.children) {
+          layer = parentLayer.children.find(c => c.id === layerId);
+          if (layer) break;
+        }
+      }
+    }
+
+    if (!layer || !layer.object) {
+      setEditingLayerId(null);
+      setEditingText('');
+      return;
+    }
+
+    const obj = layer.object;
+
+    // Special handling for 3D measurements - update label
+    if (obj.customType === '3d-measurement') {
+      const measurementData = threeDMeasurementsRef.current.find(m => m.group === obj);
+      if (measurementData) {
+        measurementData.label = editingText.trim();
+
+        // Update label text in canvas (index 1)
+        const labelTextObj = obj.getObjects()[1];
+        if (labelTextObj && labelTextObj.type === 'text') {
+          labelTextObj.set({
+            text: editingText.trim(),
+            visible: editingText.trim().length > 0  // Show only if not empty
+          });
+        }
+
+        canvas.renderAll();
+      }
+      setEditingLayerId(null);
+      setEditingText('');
+      return;
+    }
+
+    // For other objects, update customName as before
+    if (editingText.trim()) {
       obj.customName = editingText.trim();
 
-      // If it's a text object, update the actual text
       if (obj.type === 'text') {
         obj.set('text', editingText.trim());
       }
 
-      // If it's a group with text (like measurement), update the text element
       if (obj.type === 'group' && obj.editable) {
         const items = obj._objects || obj.getObjects();
         const textItem = items.find(item => item.type === 'text');
