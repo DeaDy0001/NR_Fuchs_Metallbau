@@ -47,6 +47,10 @@ function ImageEditor({ image, onClose }) {
   const [referenceHeight, setReferenceHeight] = useState(50); // cm
   const [referenceUnit, setReferenceUnit] = useState('cm');
   const [has3DReference, setHas3DReference] = useState(false);
+  const [referenceCollapsed, setReferenceCollapsed] = useState(false);
+
+  // Measurement editing handles
+  const measurementHandlesRef = useRef([]);
 
   // Initialize Fabric.js canvas
   useEffect(() => {
@@ -96,6 +100,8 @@ function ImageEditor({ image, onClose }) {
       if (activeTool === 'freehand') {
         setActiveFreehandPath(null);
       }
+      // Remove measurement handles when deselected
+      removeMeasurementHandles();
     });
 
     return () => {
@@ -200,10 +206,22 @@ function ImageEditor({ image, onClose }) {
   const handleSelection = (e) => {
     const obj = e.selected ? e.selected[0] : e.target;
     if (obj) {
+      // Skip if selecting a measurement handle
+      if (obj.measurementHandle) {
+        return;
+      }
+
       // Find the layer ID by matching the object
       const layer = layers.find(l => l.object === obj);
       if (layer) {
         setSelectedLayer(layer.id);
+      }
+
+      // If it's a measurement, create draggable handles
+      if (obj.customType === 'measurement' || obj.customType === '3d-measurement') {
+        createMeasurementHandles(obj);
+      } else {
+        removeMeasurementHandles();
       }
     }
   };
@@ -260,32 +278,17 @@ function ImageEditor({ image, onClose }) {
 
     // Visual size (pixels) - proportional to real size
     const visualWidth = 200;
-    const visualHeight = (referenceHeight / referenceWidth) * visualWidth; // maintain aspect ratio
+    const visualHeight = (referenceHeight / referenceWidth) * visualWidth;
 
-    // Create semi-transparent rectangle
-    const rect = new fabric.Rect({
-      left: centerX - visualWidth / 2,
-      top: centerY - visualHeight / 2,
-      width: visualWidth,
-      height: visualHeight,
-      fill: 'rgba(0, 255, 255, 0.1)',
-      stroke: '#00ffff',
-      strokeWidth: 2,
-      strokeDashArray: [5, 5],
-      selectable: false,
-      evented: false,
-      referenceObject: true,
-      objectType: 'referenceRect'
-    });
-
-    // Create 4 corner points (draggable)
+    // Initial corner positions (rectangle)
     const cornerPositions = [
-      { x: rect.left, y: rect.top, corner: 'tl' }, // top-left
-      { x: rect.left + visualWidth, y: rect.top, corner: 'tr' }, // top-right
-      { x: rect.left + visualWidth, y: rect.top + visualHeight, corner: 'br' }, // bottom-right
-      { x: rect.left, y: rect.top + visualHeight, corner: 'bl' } // bottom-left
+      { x: centerX - visualWidth / 2, y: centerY - visualHeight / 2, corner: 'tl' }, // top-left
+      { x: centerX + visualWidth / 2, y: centerY - visualHeight / 2, corner: 'tr' }, // top-right
+      { x: centerX + visualWidth / 2, y: centerY + visualHeight / 2, corner: 'br' }, // bottom-right
+      { x: centerX - visualWidth / 2, y: centerY + visualHeight / 2, corner: 'bl' }  // bottom-left
     ];
 
+    // Create 4 corner points (draggable)
     const corners = cornerPositions.map((pos, idx) => {
       const circle = new fabric.Circle({
         left: pos.x,
@@ -328,18 +331,36 @@ function ImageEditor({ image, onClose }) {
       return circle;
     });
 
-    // Create "TOP" icon (arrow pointing up) in center
-    const topIcon = new fabric.Triangle({
-      left: centerX,
-      top: centerY,
-      width: 20,
-      height: 20,
+    // Create 4 lines connecting the corners (perspective quadrilateral)
+    const lines = [];
+    for (let i = 0; i < 4; i++) {
+      const start = cornerPositions[i];
+      const end = cornerPositions[(i + 1) % 4];
+
+      const line = new fabric.Line([start.x, start.y, end.x, end.y], {
+        stroke: '#00ffff',
+        strokeWidth: 2,
+        strokeDashArray: [5, 5],
+        selectable: false,
+        evented: false,
+        referenceObject: true,
+        objectType: 'referenceLine',
+        lineIndex: i
+      });
+
+      lines.push(line);
+    }
+
+    // Create "TOP" icon as polygon (perspective-aware)
+    const iconSize = 15;
+    const topIconPoly = new fabric.Polygon([
+      { x: centerX, y: centerY - iconSize },
+      { x: centerX - iconSize * 0.6, y: centerY + iconSize * 0.5 },
+      { x: centerX + iconSize * 0.6, y: centerY + iconSize * 0.5 }
+    ], {
       fill: '#ffff00',
       stroke: '#ffffff',
       strokeWidth: 1,
-      angle: 0, // pointing up
-      originX: 'center',
-      originY: 'center',
       selectable: false,
       evented: false,
       referenceObject: true,
@@ -348,7 +369,7 @@ function ImageEditor({ image, onClose }) {
 
     const topLabel = new fabric.Text('OBEN', {
       left: centerX,
-      top: centerY + 15,
+      top: centerY + iconSize + 8,
       fontSize: 12,
       fill: '#ffff00',
       stroke: '#000000',
@@ -363,13 +384,13 @@ function ImageEditor({ image, onClose }) {
     });
 
     // Add all to canvas
-    canvas.add(rect);
+    lines.forEach(line => canvas.add(line));
     corners.forEach(c => canvas.add(c));
-    canvas.add(topIcon);
+    canvas.add(topIconPoly);
     canvas.add(topLabel);
 
-    // Store references
-    referenceObjectsRef.current = [rect, ...corners, topIcon, topLabel];
+    // Store references: [line0, line1, line2, line3, corner0, corner1, corner2, corner3, icon, label]
+    referenceObjectsRef.current = [...lines, ...corners, topIconPoly, topLabel];
 
     setHas3DReference(true);
     canvas.renderAll();
@@ -380,34 +401,58 @@ function ImageEditor({ image, onClose }) {
     const canvas = fabricCanvasRef.current;
     if (!canvas || referenceObjectsRef.current.length === 0) return;
 
-    const rect = referenceObjectsRef.current[0];
-    const corners = referenceObjectsRef.current.slice(1, 5);
-    const topIcon = referenceObjectsRef.current[5];
-    const topLabel = referenceObjectsRef.current[6];
+    const lines = referenceObjectsRef.current.slice(0, 4);
+    const corners = referenceObjectsRef.current.slice(4, 8);
+    const topIconPoly = referenceObjectsRef.current[8];
+    const topLabel = referenceObjectsRef.current[9];
 
     // Get corner positions
     const positions = corners.map(c => ({ x: c.left, y: c.top }));
 
-    // Update rectangle to fit corners (simple approach - use bounding box)
-    const xs = positions.map(p => p.x);
-    const ys = positions.map(p => p.y);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
+    // Update lines to connect corners
+    for (let i = 0; i < 4; i++) {
+      const start = positions[i];
+      const end = positions[(i + 1) % 4];
 
-    rect.set({
-      left: minX,
-      top: minY,
-      width: maxX - minX,
-      height: maxY - minY
+      lines[i].set({
+        x1: start.x,
+        y1: start.y,
+        x2: end.x,
+        y2: end.y
+      });
+    }
+
+    // Calculate perspective center (intersection of diagonals)
+    // Diagonal 1: corners[0] to corners[2]
+    // Diagonal 2: corners[1] to corners[3]
+    const centerX = (positions[0].x + positions[1].x + positions[2].x + positions[3].x) / 4;
+    const centerY = (positions[0].y + positions[1].y + positions[2].y + positions[3].y) / 4;
+
+    // Update TOP icon polygon to fit perspective
+    const iconSize = 15;
+
+    // Calculate top edge midpoint (for icon orientation)
+    const topMidX = (positions[0].x + positions[1].x) / 2;
+    const topMidY = (positions[0].y + positions[1].y) / 2;
+
+    // Create triangle pointing towards top edge
+    const dx = topMidX - centerX;
+    const dy = topMidY - centerY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const scale = iconSize / (dist || 1);
+
+    topIconPoly.set({
+      points: [
+        { x: centerX + dx * scale * 0.8, y: centerY + dy * scale * 0.8 },
+        { x: centerX - dy * scale * 0.4, y: centerY + dx * scale * 0.4 },
+        { x: centerX + dy * scale * 0.4, y: centerY - dx * scale * 0.4 }
+      ]
     });
 
-    // Update icon position (center)
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
-    topIcon.set({ left: centerX, top: centerY });
-    topLabel.set({ left: centerX, top: centerY + 15 });
+    topLabel.set({
+      left: centerX,
+      top: centerY + iconSize + 8
+    });
 
     canvas.renderAll();
   };
@@ -427,7 +472,7 @@ function ImageEditor({ image, onClose }) {
     const canvas = fabricCanvasRef.current;
     if (!canvas || !measurement || !measurement.group) return;
 
-    const corners = referenceObjectsRef.current.slice(1, 5);
+    const corners = referenceObjectsRef.current.slice(4, 8);
     const srcPoints = corners.map(c => ({ x: c.left, y: c.top }));
 
     // Destination points for homography (normalized rectangle)
@@ -463,6 +508,197 @@ function ImageEditor({ image, onClose }) {
     } catch (error) {
       console.error('Error recalculating 3D measurement:', error);
     }
+  };
+
+  // Create draggable handles for measurement editing
+  const createMeasurementHandles = (measurementGroup) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || !measurementGroup) return;
+
+    // Remove existing handles
+    removeMeasurementHandles();
+
+    // Get measurement data
+    const is3D = measurementGroup.customType === '3d-measurement';
+    let startX, startY, endX, endY;
+
+    if (measurementGroup.measurementStart && measurementGroup.measurementEnd) {
+      startX = measurementGroup.measurementStart.x;
+      startY = measurementGroup.measurementStart.y;
+      endX = measurementGroup.measurementEnd.x;
+      endY = measurementGroup.measurementEnd.y;
+    } else {
+      // Fallback: extract from line object
+      const line = measurementGroup.getObjects().find(obj => obj.type === 'line');
+      if (!line) return;
+
+      startX = line.x1 + measurementGroup.left + measurementGroup.width / 2;
+      startY = line.y1 + measurementGroup.top + measurementGroup.height / 2;
+      endX = line.x2 + measurementGroup.left + measurementGroup.width / 2;
+      endY = line.y2 + measurementGroup.top + measurementGroup.height / 2;
+    }
+
+    // Create start handle
+    const startHandle = new fabric.Circle({
+      left: startX,
+      top: startY,
+      radius: 6,
+      fill: '#ff0000',
+      stroke: '#ffffff',
+      strokeWidth: 2,
+      originX: 'center',
+      originY: 'center',
+      selectable: true,
+      hasControls: false,
+      hasBorders: false,
+      measurementHandle: true,
+      handleType: 'start',
+      parentMeasurement: measurementGroup
+    });
+
+    // Create end handle
+    const endHandle = new fabric.Circle({
+      left: endX,
+      top: endY,
+      radius: 6,
+      fill: '#ff0000',
+      stroke: '#ffffff',
+      strokeWidth: 2,
+      originX: 'center',
+      originY: 'center',
+      selectable: true,
+      hasControls: false,
+      hasBorders: false,
+      measurementHandle: true,
+      handleType: 'end',
+      parentMeasurement: measurementGroup
+    });
+
+    // Update measurement on handle move
+    const updateMeasurement = () => {
+      const newStartX = startHandle.left;
+      const newStartY = startHandle.top;
+      const newEndX = endHandle.left;
+      const newEndY = endHandle.top;
+
+      // Update stored coordinates
+      measurementGroup.measurementStart = { x: newStartX, y: newStartY };
+      measurementGroup.measurementEnd = { x: newEndX, y: newEndY };
+
+      // Recreate measurement with new coordinates
+      if (is3D) {
+        recreate3DMeasurement(measurementGroup, { x: newStartX, y: newStartY }, { x: newEndX, y: newEndY });
+      } else {
+        recreateNormalMeasurement(measurementGroup, { x: newStartX, y: newStartY }, { x: newEndX, y: newEndY });
+      }
+    };
+
+    startHandle.on('moving', updateMeasurement);
+    endHandle.on('moving', updateMeasurement);
+
+    canvas.add(startHandle);
+    canvas.add(endHandle);
+
+    measurementHandlesRef.current = [startHandle, endHandle];
+    canvas.renderAll();
+  };
+
+  // Remove measurement handles
+  const removeMeasurementHandles = () => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    measurementHandlesRef.current.forEach(handle => canvas.remove(handle));
+    measurementHandlesRef.current = [];
+    canvas.renderAll();
+  };
+
+  // Recreate 3D measurement with new coordinates
+  const recreate3DMeasurement = (group, start, end) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || referenceObjectsRef.current.length === 0) return;
+
+    try {
+      const corners = referenceObjectsRef.current.slice(4, 8);
+      const srcPoints = corners.map(c => ({ x: c.left, y: c.top }));
+
+      const dstPoints = [
+        { x: 0, y: 0 },
+        { x: referenceWidth, y: 0 },
+        { x: referenceWidth, y: referenceHeight },
+        { x: 0, y: referenceHeight }
+      ];
+
+      const matrix = computeHomography(srcPoints, dstPoints);
+      const realDistance = calculateRealDistance(start, end, matrix, {
+        width: referenceWidth,
+        height: referenceHeight
+      });
+
+      const startInBounds = isPointInCalibration(start, matrix);
+      const endInBounds = isPointInCalibration(end, matrix);
+      const color = (startInBounds && endInBounds) ? group.getObjects()[0].stroke : '#ff8800';
+
+      const distanceText = `${realDistance.toFixed(2)}${referenceUnit}`;
+
+      // Update line
+      const line = group.getObjects()[0];
+      line.set({ x1: start.x - group.left - group.width / 2, y1: start.y - group.top - group.height / 2, x2: end.x - group.left - group.width / 2, y2: end.y - group.top - group.height / 2, stroke: color });
+
+      // Update arrows
+      const angle = Math.atan2(end.y - start.y, end.x - start.x);
+      const arrow1 = group.getObjects()[1];
+      const arrow2 = group.getObjects()[2];
+      arrow1.set({ left: start.x - group.left - group.width / 2, top: start.y - group.top - group.height / 2, angle: (angle * 180 / Math.PI) + 90, fill: color });
+      arrow2.set({ left: end.x - group.left - group.width / 2, top: end.y - group.top - group.height / 2, angle: (angle * 180 / Math.PI) - 90, fill: color });
+
+      // Update text
+      const midX = (start.x + end.x) / 2;
+      const midY = (start.y + end.y) / 2;
+      const text = group.getObjects()[3];
+      text.set({ left: midX - group.left - group.width / 2, top: midY - 20 - group.top - group.height / 2, text: distanceText, fill: color });
+
+      group.customName = distanceText;
+      group.realDistance = realDistance;
+
+      canvas.renderAll();
+      updateLayers();
+    } catch (error) {
+      console.error('Error recreating 3D measurement:', error);
+    }
+  };
+
+  // Recreate normal measurement with new coordinates
+  const recreateNormalMeasurement = (group, start, end) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas) return;
+
+    const distance = Math.sqrt(Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2));
+    const distanceText = `${Math.round(distance)}px`;
+
+    const color = group.getObjects()[0].stroke;
+
+    // Update line
+    const line = group.getObjects()[0];
+    line.set({ x1: start.x - group.left - group.width / 2, y1: start.y - group.top - group.height / 2, x2: end.x - group.left - group.width / 2, y2: end.y - group.top - group.height / 2 });
+
+    // Update arrows
+    const angle = Math.atan2(end.y - start.y, end.x - start.x);
+    const arrow1 = group.getObjects()[1];
+    const arrow2 = group.getObjects()[2];
+    arrow1.set({ left: start.x - group.left - group.width / 2, top: start.y - group.top - group.height / 2, angle: (angle * 180 / Math.PI) + 90 });
+    arrow2.set({ left: end.x - group.left - group.width / 2, top: end.y - group.top - group.height / 2, angle: (angle * 180 / Math.PI) - 90 });
+
+    // Update text
+    const midX = (start.x + end.x) / 2;
+    const midY = (start.y + end.y) / 2;
+    const text = group.getObjects()[3];
+    text.set({ left: midX - group.left - group.width / 2, top: midY - 20 - group.top - group.height / 2, text: distanceText });
+
+    group.customName = distanceText;
+
+    canvas.renderAll();
+    updateLayers();
   };
 
   // Tool handlers
@@ -869,7 +1105,7 @@ function ImageEditor({ image, onClose }) {
 
     try {
       // Get corner positions from reference points
-      const corners = referenceObjectsRef.current.slice(1, 5);
+      const corners = referenceObjectsRef.current.slice(4, 8);
       const srcPoints = corners.map(c => ({ x: c.left, y: c.top }));
 
       // Destination points for homography
@@ -1149,6 +1385,8 @@ function ImageEditor({ image, onClose }) {
       customName: defaultText,
       editable: true,
       selectable: true,
+      hasControls: false,
+      hasBorders: false,
       subTargetCheck: true,
       objectCaching: false
     });
@@ -1166,7 +1404,7 @@ function ImageEditor({ image, onClose }) {
 
     try {
       // Get corner positions from reference points
-      const corners = referenceObjectsRef.current.slice(1, 5);
+      const corners = referenceObjectsRef.current.slice(4, 8);
       const srcPoints = corners.map(c => ({ x: c.left, y: c.top }));
 
       // Destination points for homography (normalized rectangle)
@@ -1245,9 +1483,15 @@ function ImageEditor({ image, onClose }) {
         customName: distanceText,
         editable: false,
         selectable: true,
+        hasControls: false,
+        hasBorders: false,
         subTargetCheck: true,
         objectCaching: false
       });
+
+      // Store measurement coordinates
+      group.measurementStart = { x: start.x, y: start.y };
+      group.measurementEnd = { x: end.x, y: end.y };
 
       // Store measurement data for live updates
       const measurementData = {
@@ -1851,67 +2095,121 @@ function ImageEditor({ image, onClose }) {
                 >
                   {/* Special rendering for 3D reference layer */}
                   {layer.isReferenceLayer ? (
-                    <div style={{ padding: '10px' }}>
-                      <div style={{ fontWeight: 'bold', marginBottom: '10px', color: '#00ffff' }}>
-                        {layer.name}
-                      </div>
-                      <div style={{ fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        <label>
-                          Horizontal (cm):
-                          <input
-                            type="number"
-                            step="1"
-                            min="1"
-                            value={referenceWidth}
-                            onChange={(e) => {
-                              setReferenceWidth(parseFloat(e.target.value) || 100);
-                              updateAll3DMeasurements();
-                            }}
-                            style={{ width: '100%', marginTop: '3px', padding: '4px' }}
-                          />
-                        </label>
-                        <label>
-                          Vertikal (cm):
-                          <input
-                            type="number"
-                            step="1"
-                            min="1"
-                            value={referenceHeight}
-                            onChange={(e) => {
-                              setReferenceHeight(parseFloat(e.target.value) || 50);
-                              updateAll3DMeasurements();
-                            }}
-                            style={{ width: '100%', marginTop: '3px', padding: '4px' }}
-                          />
-                        </label>
-                        <label>
-                          Einheit:
-                          <select
-                            value={referenceUnit}
-                            onChange={(e) => {
-                              setReferenceUnit(e.target.value);
-                              updateAll3DMeasurements();
-                            }}
-                            style={{ width: '100%', marginTop: '3px', padding: '4px' }}
-                          >
-                            <option value="mm">mm</option>
-                            <option value="cm">cm</option>
-                            <option value="m">m</option>
-                          </select>
-                        </label>
-                      </div>
-                      <div className="layer-actions" style={{ marginTop: '10px' }}>
+                    <div style={{ padding: '10px', background: 'rgba(0, 255, 255, 0.1)', borderRadius: '4px' }}>
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        marginBottom: referenceCollapsed ? '0' : '10px',
+                        cursor: 'pointer'
+                      }}
+                      onClick={() => setReferenceCollapsed(!referenceCollapsed)}
+                      >
+                        <div style={{ fontWeight: 'bold', color: '#00ffff' }}>
+                          {layer.name}
+                        </div>
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            remove3DReference();
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#00ffff',
+                            cursor: 'pointer',
+                            padding: '2px'
                           }}
-                          title="3D Referenz löschen"
-                          style={{ width: '100%' }}
+                          title={referenceCollapsed ? "Ausklappen" : "Einklappen"}
                         >
-                          <Trash2 size={16} /> Löschen
+                          {referenceCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
                         </button>
                       </div>
+
+                      {!referenceCollapsed && (
+                        <>
+                          <div style={{ fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <label style={{ color: '#ccc' }}>
+                              Horizontal (cm):
+                              <input
+                                type="number"
+                                step="1"
+                                min="1"
+                                value={referenceWidth}
+                                onChange={(e) => {
+                                  setReferenceWidth(parseFloat(e.target.value) || 100);
+                                  updateAll3DMeasurements();
+                                }}
+                                style={{
+                                  width: '100%',
+                                  marginTop: '3px',
+                                  padding: '6px',
+                                  background: '#2a2a2a',
+                                  border: '1px solid #444',
+                                  borderRadius: '4px',
+                                  color: '#fff',
+                                  fontSize: '13px'
+                                }}
+                              />
+                            </label>
+                            <label style={{ color: '#ccc' }}>
+                              Vertikal (cm):
+                              <input
+                                type="number"
+                                step="1"
+                                min="1"
+                                value={referenceHeight}
+                                onChange={(e) => {
+                                  setReferenceHeight(parseFloat(e.target.value) || 50);
+                                  updateAll3DMeasurements();
+                                }}
+                                style={{
+                                  width: '100%',
+                                  marginTop: '3px',
+                                  padding: '6px',
+                                  background: '#2a2a2a',
+                                  border: '1px solid #444',
+                                  borderRadius: '4px',
+                                  color: '#fff',
+                                  fontSize: '13px'
+                                }}
+                              />
+                            </label>
+                            <label style={{ color: '#ccc' }}>
+                              Einheit:
+                              <select
+                                value={referenceUnit}
+                                onChange={(e) => {
+                                  setReferenceUnit(e.target.value);
+                                  updateAll3DMeasurements();
+                                }}
+                                style={{
+                                  width: '100%',
+                                  marginTop: '3px',
+                                  padding: '6px',
+                                  background: '#2a2a2a',
+                                  border: '1px solid #444',
+                                  borderRadius: '4px',
+                                  color: '#fff',
+                                  fontSize: '13px'
+                                }}
+                              >
+                                <option value="mm">mm</option>
+                                <option value="cm">cm</option>
+                                <option value="m">m</option>
+                              </select>
+                            </label>
+                          </div>
+                          <div className="layer-actions" style={{ marginTop: '10px' }}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                remove3DReference();
+                              }}
+                              title="3D Referenz löschen"
+                              style={{ width: '100%' }}
+                            >
+                              <Trash2 size={16} /> Löschen
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   ) : (
                     <>
