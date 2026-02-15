@@ -34,6 +34,12 @@ function ImageEditor({ image, onClose }) {
   const lastPanPosRef = useRef({ x: 0, y: 0 });
   const [activeFreehandPath, setActiveFreehandPath] = useState(null);
 
+  // Polyline mode refs
+  const polylinePointsRef = useRef([]);
+  const isPolylineModeRef = useRef(false);
+  const polylinePreviewRef = useRef(null);
+  const linesRef = useRef([]);  // Track all lines with handles
+
   // Tool colors and settings
   const [strokeColor, setStrokeColor] = useState('#ff0000');
   const [strokeWidth, setStrokeWidth] = useState(2);
@@ -1509,11 +1515,28 @@ function ImageEditor({ image, onClose }) {
       strokeWidth: strokeWidth,
       customType: 'line',
       customName: 'Linie',
+      selectable: true,
+      hasControls: false,
+      hasBorders: false,
+      lockMovementX: true,
+      lockMovementY: true,
       objectCaching: false
     });
 
-    addLineControls(line);
     canvas.add(line);
+
+    // Create line data with permanent handles
+    const lineData = {
+      line: line,
+      points: [
+        { x: start.x, y: start.y },
+        { x: end.x, y: end.y }
+      ],
+      color: strokeColor
+    };
+
+    linesRef.current.push(lineData);
+    createPermanentLineHandles(lineData);
   };
 
   const createFinalMeasurement = (start, end) => {
@@ -1717,6 +1740,90 @@ function ImageEditor({ image, onClose }) {
 
     // Store handles in measurement data
     measurementData.handles = [startHandle, endHandle, startDot, endDot];
+
+    canvas.renderAll();
+  };
+
+  // Create permanent handles for lines
+  const createPermanentLineHandles = (lineData) => {
+    const canvas = fabricCanvasRef.current;
+    if (!canvas || !lineData) return;
+
+    const { line, points, color } = lineData;
+
+    // Convert hex color to rgba for transparent fill
+    const hexToRgba = (hex, alpha) => {
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    };
+
+    const handles = [];
+
+    points.forEach((point, index) => {
+      // Create handle - outer circle
+      const handle = new fabric.Circle({
+        left: point.x,
+        top: point.y,
+        radius: 8,
+        fill: hexToRgba(color, 0.2),
+        stroke: color,
+        strokeWidth: 2,
+        originX: 'center',
+        originY: 'center',
+        selectable: true,
+        hasControls: false,
+        hasBorders: false,
+        lineHandle: true,
+        permanentLineHandle: true,
+        parentLine: line,
+        pointIndex: index
+      });
+
+      // Create handle - inner dot
+      const dot = new fabric.Circle({
+        left: point.x,
+        top: point.y,
+        radius: 2,
+        fill: color,
+        originX: 'center',
+        originY: 'center',
+        selectable: false,
+        evented: false,
+        lineHandle: true,
+        permanentLineHandle: true
+      });
+
+      // Update line on handle move
+      handle.on('moving', () => {
+        const newX = handle.left;
+        const newY = handle.top;
+
+        // Move dot with handle
+        dot.set({ left: newX, top: newY });
+
+        // Update point in lineData
+        lineData.points[index] = { x: newX, y: newY };
+
+        // Update line coordinates
+        if (index === 0) {
+          line.set({ x1: newX, y1: newY });
+        } else if (index === 1) {
+          line.set({ x2: newX, y2: newY });
+        }
+
+        line.setCoords();
+        canvas.renderAll();
+      });
+
+      canvas.add(handle);
+      canvas.add(dot);
+      handles.push(handle, dot);
+    });
+
+    // Store handles in line data
+    lineData.handles = handles;
 
     canvas.renderAll();
   };
