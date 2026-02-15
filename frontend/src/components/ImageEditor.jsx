@@ -510,13 +510,18 @@ function ImageEditor({ image, onClose }) {
     const dx = topMidX - centerX;
     const dy = topMidY - centerY;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    const scale = iconSize / (dist || 1);
+
+    // Prevent division by zero or very small distances
+    const scale = dist > 1 ? iconSize / dist : 1;
+
+    // Limit scale to prevent icon from becoming too large
+    const limitedScale = Math.min(scale, 2);
 
     topIconPoly.set({
       points: [
-        { x: centerX + dx * scale * 0.8, y: centerY + dy * scale * 0.8 },
-        { x: centerX - dy * scale * 0.4, y: centerY + dx * scale * 0.4 },
-        { x: centerX + dy * scale * 0.4, y: centerY - dx * scale * 0.4 }
+        { x: centerX + dx * limitedScale * 0.8, y: centerY + dy * limitedScale * 0.8 },
+        { x: centerX - dy * limitedScale * 0.4, y: centerY + dx * limitedScale * 0.4 },
+        { x: centerX + dy * limitedScale * 0.4, y: centerY - dx * limitedScale * 0.4 }
       ]
     });
 
@@ -1065,7 +1070,7 @@ function ImageEditor({ image, onClose }) {
           newTempObject = createTempMeasurement(dragStartRef.current, pointer);
           break;
         case '3d-measurement':
-          if (calibrationData) {
+          if (has3DReference) {
             newTempObject = createTemp3DMeasurement(dragStartRef.current, pointer);
           }
           break;
