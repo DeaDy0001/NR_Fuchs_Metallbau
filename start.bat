@@ -31,14 +31,14 @@ if not exist "backend\node_modules\better-sqlite3\build" (
         if %ERRORLEVEL% NEQ 0 (
             echo.
             echo [WARNUNG] Python wurde nicht gefunden!
-            echo           Python wird fuer native Module (better-sqlite3) benoetigt.
+            echo           Python wird fuer native Module ^(better-sqlite3^) benoetigt.
             echo.
             echo           Automatische Installation wird versucht...
-            echo           (Erfordert Administrator-Rechte)
+            echo           ^(Erfordert Administrator-Rechte^)
             echo.
 
             REM Try to install windows-build-tools via npm (includes Python)
-            echo [INFO] Installiere Windows Build Tools (Python + C++ Compiler)...
+            echo [INFO] Installiere Windows Build Tools ^(Python + C++ Compiler^)...
             echo        Dies kann einige Minuten dauern...
             echo.
             call npm install --global windows-build-tools 2>nul
