@@ -156,23 +156,30 @@ const listFilesInFolderRecursive = async (folderId, parentSubfolder = null) => {
 // Download a file from Google Drive
 const downloadFile = async (fileId, destinationPath) => {
   try {
-    const url = `https://drive.google.com/uc?export=download&id=${fileId}`;
+    const drive = await getDriveClient();
 
-    const response = await axios({
-      method: 'GET',
-      url: url,
-      responseType: 'arraybuffer',
-      maxContentLength: 100 * 1024 * 1024, // 100MB max
-      timeout: 60000 // 60 seconds
-    });
+    const response = await drive.files.get(
+      { fileId: fileId, alt: 'media' },
+      { responseType: 'stream' }
+    );
 
     await fs.ensureDir(path.dirname(destinationPath));
-    await fs.writeFile(destinationPath, response.data);
+
+    await new Promise((resolve, reject) => {
+      const dest = fs.createWriteStream(destinationPath);
+      response.data
+        .on('error', reject)
+        .pipe(dest)
+        .on('error', reject)
+        .on('finish', resolve);
+    });
+
+    const stats = await fs.stat(destinationPath);
 
     return {
       success: true,
       path: destinationPath,
-      size: response.data.length
+      size: stats.size
     };
   } catch (error) {
     console.error('Error downloading file:', error.message);
