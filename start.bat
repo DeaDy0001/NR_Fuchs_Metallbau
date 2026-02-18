@@ -18,16 +18,6 @@ echo [INFO] Node.js gefunden:
 node --version
 echo.
 
-REM Check Node.js version - warn if too new (v24+) for better-sqlite3 prebuilt binaries
-for /f "tokens=1 delims=." %%a in ('node -v') do set NODE_MAJOR=%%a
-set NODE_MAJOR=%NODE_MAJOR:v=%
-if %NODE_MAJOR% GEQ 24 (
-    echo [WARNUNG] Node.js v%NODE_MAJOR% erkannt. Empfohlen ist v22 LTS.
-    echo           Falls Fehler auftreten, bitte Node.js v22 LTS installieren:
-    echo           https://nodejs.org/
-    echo.
-)
-
 REM Check if native build tools are needed (for better-sqlite3)
 REM Only check if node_modules doesn't exist yet (first install)
 if not exist "backend\node_modules\better-sqlite3\build" (
@@ -88,9 +78,9 @@ if %ERRORLEVEL% NEQ 0 (
     echo.
     echo   Dies liegt vermutlich an fehlenden Build-Tools fuer better-sqlite3.
     echo.
-    echo   LOESUNG - Node.js v22 LTS installieren:
+    echo   LOESUNG - Node.js neu installieren mit Build-Tools:
     echo     1. Deinstalliere die aktuelle Node.js Version
-    echo     2. Lade Node.js v22 LTS herunter: https://nodejs.org/
+    echo     2. Lade Node.js LTS herunter: https://nodejs.org/
     echo     3. Bei der Installation: Setze den Haken bei
     echo        "Automatically install the necessary tools"
     echo     4. Nach der Installation: PC neu starten
