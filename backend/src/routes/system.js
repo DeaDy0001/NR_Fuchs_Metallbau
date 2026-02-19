@@ -19,4 +19,13 @@ router.post('/update-branch', systemController.triggerBranchUpdate);
 // Get git info (branch, commit, etc.)
 router.get('/git-info', systemController.getGitInfo);
 
+// Get all tags (versions)
+router.get('/tags', systemController.getTags);
+
+// Get all remote branches (developer only, requires password)
+router.get('/branches', systemController.getBranches);
+
+// Trigger update to a specific version (tag)
+router.post('/update-version', systemController.triggerVersionUpdate);
+
 module.exports = router;

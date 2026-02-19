@@ -269,9 +269,168 @@ const triggerBranchUpdate = async (req, res) => {
   }
 };
 
+/**
+ * Get all tags (versions) from remote repository
+ */
+const getTags = async (req, res) => {
+  try {
+    const projectRoot = path.join(__dirname, '../../..');
+
+    // Fetch latest tags from remote
+    try {
+      execSync('git fetch origin --tags', { cwd: projectRoot });
+    } catch (e) {
+      // Continue even if fetch fails (offline mode)
+    }
+
+    // Get all tags sorted by version (newest first)
+    const tagsOutput = execSync(
+      'git tag --sort=-version:refname',
+      { cwd: projectRoot }
+    ).toString().trim();
+
+    const tags = tagsOutput
+      ? tagsOutput.split('\n').map(tag => {
+          let date = '';
+          try {
+            date = execSync(`git log -1 --format=%cd --date=iso "${tag}"`, { cwd: projectRoot })
+              .toString().trim();
+          } catch (e) { /* ignore */ }
+
+          let message = '';
+          try {
+            message = execSync(`git tag -l -n1 "${tag}"`, { cwd: projectRoot })
+              .toString().trim().replace(tag, '').trim();
+          } catch (e) { /* ignore */ }
+
+          return { name: tag, date, message };
+        })
+      : [];
+
+    res.json({
+      tags,
+      currentVersion: getCurrentVersion()
+    });
+  } catch (error) {
+    console.error('Error fetching tags:', error);
+    res.status(500).json({ error: 'Fehler beim Laden der Versionen' });
+  }
+};
+
+/**
+ * Get all remote branches (requires dev password)
+ */
+const getBranches = async (req, res) => {
+  try {
+    const { password } = req.query;
+
+    if (!password || password !== 'netrock!') {
+      return res.status(403).json({ error: 'Falsches Entwickler-Passwort' });
+    }
+
+    const projectRoot = path.join(__dirname, '../../..');
+
+    // Fetch all branches from remote
+    try {
+      execSync('git fetch origin --prune', { cwd: projectRoot });
+    } catch (e) {
+      // Continue even if fetch fails
+    }
+
+    // Get all remote branches
+    const branchesOutput = execSync(
+      'git branch -r --format="%(refname:short)"',
+      { cwd: projectRoot }
+    ).toString().trim();
+
+    const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: projectRoot })
+      .toString().trim();
+
+    const branches = branchesOutput
+      ? branchesOutput
+          .split('\n')
+          .map(b => b.trim())
+          .filter(b => b && !b.includes('HEAD'))
+          .map(b => b.replace('origin/', ''))
+      : [];
+
+    res.json({
+      branches,
+      currentBranch
+    });
+  } catch (error) {
+    console.error('Error fetching branches:', error);
+    res.status(500).json({ error: 'Fehler beim Laden der Branches' });
+  }
+};
+
+/**
+ * Trigger update to a specific version (tag) from main branch
+ */
+const triggerVersionUpdate = async (req, res) => {
+  try {
+    const { tag } = req.body;
+
+    if (!tag) {
+      return res.status(400).json({ error: 'Version ist erforderlich' });
+    }
+
+    const projectRoot = path.join(__dirname, '../../..');
+
+    res.json({
+      success: true,
+      message: `Update auf Version "${tag}" wird durchgeführt. Server startet neu...`
+    });
+
+    setTimeout(async () => {
+      try {
+        console.log(`🔄 Starting version update to "${tag}"...`);
+
+        // 1. Stash any local changes
+        try {
+          execSync('git stash', { cwd: projectRoot });
+        } catch (e) { /* ignore */ }
+
+        // 2. Fetch latest from origin
+        execSync('git fetch origin --tags', { cwd: projectRoot });
+
+        // 3. Checkout main and pull
+        execSync('git checkout main', { cwd: projectRoot });
+        execSync('git pull origin main', { cwd: projectRoot });
+
+        // 4. Checkout the specific tag
+        console.log(`🏷️  Checking out tag "${tag}"...`);
+        execSync(`git checkout "${tag}"`, { cwd: projectRoot });
+
+        // 5. Install dependencies
+        console.log('📦 Updating backend dependencies...');
+        execSync('npm install', { cwd: path.join(projectRoot, 'backend') });
+        console.log('📦 Updating frontend dependencies...');
+        execSync('npm install', { cwd: path.join(projectRoot, 'frontend') });
+
+        // 6. Build frontend
+        console.log('🏗️  Building frontend...');
+        execSync('npm run build', { cwd: path.join(projectRoot, 'frontend') });
+
+        console.log(`✅ Version update to "${tag}" completed! Restarting server...`);
+        process.exit(100);
+      } catch (error) {
+        console.error('❌ Version update failed:', error.message);
+        process.exit(1);
+      }
+    }, 1000);
+  } catch (error) {
+    console.error('Error triggering version update:', error);
+    res.status(500).json({ error: 'Fehler beim Versions-Update' });
+  }
+};
+
 module.exports = {
   getLatestVersion,
   triggerUpdate,
   triggerBranchUpdate,
-  getGitInfo
+  triggerVersionUpdate,
+  getGitInfo,
+  getTags,
+  getBranches
 };
