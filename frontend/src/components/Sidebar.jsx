@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Image, FolderKanban, Settings, ChevronDown, ChevronRight } from 'lucide-react';
 import './Sidebar.css';
@@ -31,7 +31,14 @@ const menuItems = [
 
 function Sidebar({ collapsed }) {
   const location = useLocation();
-  const [expandedItems, setExpandedItems] = useState(['settings']);
+
+  // Check if we're on a settings page
+  const isOnSettingsPage = location.pathname.startsWith('/settings');
+
+  // Only expand settings if we're on a settings page
+  const [expandedItems, setExpandedItems] = useState(
+    isOnSettingsPage ? ['settings'] : []
+  );
 
   const toggleExpand = (itemId) => {
     setExpandedItems(prev =>
@@ -40,6 +47,15 @@ function Sidebar({ collapsed }) {
         : [...prev, itemId]
     );
   };
+
+  // Auto-expand settings when navigating to a settings page
+  useEffect(() => {
+    if (isOnSettingsPage && !expandedItems.includes('settings')) {
+      setExpandedItems(prev => [...prev, 'settings']);
+    } else if (!isOnSettingsPage && expandedItems.includes('settings')) {
+      setExpandedItems(prev => prev.filter(id => id !== 'settings'));
+    }
+  }, [isOnSettingsPage]);
 
   const isActive = (path) => {
     return location.pathname === path;

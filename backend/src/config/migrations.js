@@ -242,6 +242,38 @@ const migrations = [
 
       console.log('✓ Migration create_color_presets_table completed');
     }
+  },
+  {
+    id: 11,
+    name: 'add_images_filter_sort_preferences',
+    up: () => {
+      console.log('Running migration: add_images_filter_sort_preferences');
+
+      const tableInfo = db.pragma('table_info(settings)');
+      const existingColumns = tableInfo.map(col => col.name);
+
+      // Add filter/sort preferences for Bilder page
+      if (!existingColumns.includes('images_sort_by')) {
+        db.exec("ALTER TABLE settings ADD COLUMN images_sort_by TEXT DEFAULT 'created_at'");
+      }
+      if (!existingColumns.includes('images_sort_order')) {
+        db.exec("ALTER TABLE settings ADD COLUMN images_sort_order TEXT DEFAULT 'desc'");
+      }
+      if (!existingColumns.includes('images_view_mode')) {
+        db.exec("ALTER TABLE settings ADD COLUMN images_view_mode TEXT DEFAULT 'grid'");
+      }
+      if (!existingColumns.includes('images_show_only_unassigned')) {
+        db.exec("ALTER TABLE settings ADD COLUMN images_show_only_unassigned INTEGER DEFAULT 1");
+      }
+      if (!existingColumns.includes('images_show_all')) {
+        db.exec("ALTER TABLE settings ADD COLUMN images_show_all INTEGER DEFAULT 0");
+      }
+      if (!existingColumns.includes('images_show_only_with_projects')) {
+        db.exec("ALTER TABLE settings ADD COLUMN images_show_only_with_projects INTEGER DEFAULT 0");
+      }
+
+      console.log('✓ Migration add_images_filter_sort_preferences completed');
+    }
   }
 ];
 

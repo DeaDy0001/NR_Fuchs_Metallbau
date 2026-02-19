@@ -62,6 +62,20 @@ function DriveImages() {
   const [sortBy, setSortBy] = useState('created_at'); // Sortierfeld: name, photo_taken_at, created_at
   const [sortOrder, setSortOrder] = useState('desc'); // Sortierrichtung: asc, desc
   const prevImagesCountRef = useRef(0); // Für Auto-Refresh Benachrichtigungen
+  const [settingsLoaded, setSettingsLoaded] = useState(false); // Track if settings have been loaded from backend
+
+  // Save filter/sort preferences to backend
+  const savePreferences = useCallback(async (preferences) => {
+    try {
+      await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(preferences)
+      });
+    } catch (error) {
+      console.error('Error saving preferences:', error);
+    }
+  }, []);
 
   // Load images function (defined before useEffects to avoid TDZ error)
   const loadImages = useCallback(async (silent = false) => {
@@ -178,6 +192,39 @@ function DriveImages() {
     }
   };
 
+  // Load settings from backend on mount
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const response = await fetch('/api/settings');
+        if (response.ok) {
+          const settings = await response.json();
+
+          // Apply filter/sort settings if they exist
+          if (settings.images_sort_by) setSortBy(settings.images_sort_by);
+          if (settings.images_sort_order) setSortOrder(settings.images_sort_order);
+          if (settings.images_view_mode) setViewMode(settings.images_view_mode);
+          if (settings.images_show_only_unassigned !== undefined) {
+            setShowOnlyUnassigned(settings.images_show_only_unassigned);
+          }
+          if (settings.images_show_all !== undefined) {
+            setShowAllImages(settings.images_show_all);
+          }
+          if (settings.images_show_only_with_projects !== undefined) {
+            setShowOnlyWithProjects(settings.images_show_only_with_projects);
+          }
+
+          setSettingsLoaded(true);
+        }
+      } catch (error) {
+        console.error('Error loading settings:', error);
+        setSettingsLoaded(true); // Continue even if settings fail to load
+      }
+    };
+
+    loadSettings();
+  }, []);
+
   // Initial load (only once)
   useEffect(() => {
     loadProjects();
@@ -193,6 +240,20 @@ function DriveImages() {
       }
     }
   }, []); // Empty dependency array - only run once
+
+  // Save preferences to backend whenever they change (but only after initial load)
+  useEffect(() => {
+    if (!settingsLoaded) return; // Don't save until initial settings are loaded
+
+    savePreferences({
+      images_sort_by: sortBy,
+      images_sort_order: sortOrder,
+      images_view_mode: viewMode,
+      images_show_only_unassigned: showOnlyUnassigned,
+      images_show_all: showAllImages,
+      images_show_only_with_projects: showOnlyWithProjects
+    });
+  }, [sortBy, sortOrder, viewMode, showOnlyUnassigned, showAllImages, showOnlyWithProjects, settingsLoaded, savePreferences]);
 
   // Reload images when loadImages changes (i.e., when filters change)
   useEffect(() => {

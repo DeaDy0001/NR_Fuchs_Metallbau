@@ -22,6 +22,7 @@ app.use('/api/drive', require('./routes/drive'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/annotations', require('./routes/annotations'));
 app.use('/api/color-presets', require('./routes/colorPresets'));
+app.use('/api/system', require('./routes/system'));
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -4,6 +4,7 @@ import Layout from './components/Layout';
 import DriveImages from './pages/DriveImages';
 import ProjectsList from './pages/ProjectsList';
 import SettingsTabs from './pages/SettingsTabs';
+import UpdateNotification from './components/UpdateNotification';
 
 function App() {
   const [settings, setSettings] = useState({
@@ -90,6 +91,9 @@ function App() {
           <Route path="/projects/list" element={<Navigate to="/projects" replace />} />
           <Route path="/settings" element={<Navigate to="/settings/general" replace />} />
         </Routes>
+
+        {/* Update notification */}
+        <UpdateNotification />
       </Layout>
     </Router>
   );

@@ -19,8 +19,17 @@ const getSettings = (req, res) => {
       result = selectStmt.get();
     }
 
-    // Convert SQLite boolean (0/1) to JavaScript boolean
+    // Convert SQLite booleans (0/1) to JavaScript booleans
     result.sidebar_collapsed = !!result.sidebar_collapsed;
+    if (result.images_show_only_unassigned !== undefined) {
+      result.images_show_only_unassigned = !!result.images_show_only_unassigned;
+    }
+    if (result.images_show_all !== undefined) {
+      result.images_show_all = !!result.images_show_all;
+    }
+    if (result.images_show_only_with_projects !== undefined) {
+      result.images_show_only_with_projects = !!result.images_show_only_with_projects;
+    }
 
     res.json(result);
   } catch (error) {
@@ -32,7 +41,18 @@ const getSettings = (req, res) => {
 // Update settings
 const updateSettings = (req, res) => {
   try {
-    const { theme, sidebar_collapsed, company_name, primary_color } = req.body;
+    const {
+      theme,
+      sidebar_collapsed,
+      company_name,
+      primary_color,
+      images_sort_by,
+      images_sort_order,
+      images_view_mode,
+      images_show_only_unassigned,
+      images_show_all,
+      images_show_only_with_projects
+    } = req.body;
 
     const updates = [];
     const values = [];
@@ -57,6 +77,37 @@ const updateSettings = (req, res) => {
       values.push(primary_color);
     }
 
+    // Images filter/sort preferences
+    if (images_sort_by !== undefined) {
+      updates.push('images_sort_by = ?');
+      values.push(images_sort_by);
+    }
+
+    if (images_sort_order !== undefined) {
+      updates.push('images_sort_order = ?');
+      values.push(images_sort_order);
+    }
+
+    if (images_view_mode !== undefined) {
+      updates.push('images_view_mode = ?');
+      values.push(images_view_mode);
+    }
+
+    if (images_show_only_unassigned !== undefined) {
+      updates.push('images_show_only_unassigned = ?');
+      values.push(images_show_only_unassigned ? 1 : 0);
+    }
+
+    if (images_show_all !== undefined) {
+      updates.push('images_show_all = ?');
+      values.push(images_show_all ? 1 : 0);
+    }
+
+    if (images_show_only_with_projects !== undefined) {
+      updates.push('images_show_only_with_projects = ?');
+      values.push(images_show_only_with_projects ? 1 : 0);
+    }
+
     if (updates.length > 0) {
       updates.push("updated_at = datetime('now')");
       values.push(1); // WHERE id = 1
@@ -67,7 +118,18 @@ const updateSettings = (req, res) => {
     }
 
     const result = db.prepare('SELECT * FROM settings WHERE id = 1').get();
+
+    // Convert SQLite booleans to JavaScript booleans
     result.sidebar_collapsed = !!result.sidebar_collapsed;
+    if (result.images_show_only_unassigned !== undefined && result.images_show_only_unassigned !== null) {
+      result.images_show_only_unassigned = !!result.images_show_only_unassigned;
+    }
+    if (result.images_show_all !== undefined && result.images_show_all !== null) {
+      result.images_show_all = !!result.images_show_all;
+    }
+    if (result.images_show_only_with_projects !== undefined && result.images_show_only_with_projects !== null) {
+      result.images_show_only_with_projects = !!result.images_show_only_with_projects;
+    }
 
     res.json(result);
   } catch (error) {
@@ -98,7 +160,18 @@ const uploadLogo = async (req, res) => {
     stmt.run(logoPath);
 
     const result = db.prepare('SELECT * FROM settings WHERE id = 1').get();
+
+    // Convert SQLite booleans to JavaScript booleans
     result.sidebar_collapsed = !!result.sidebar_collapsed;
+    if (result.images_show_only_unassigned !== undefined && result.images_show_only_unassigned !== null) {
+      result.images_show_only_unassigned = !!result.images_show_only_unassigned;
+    }
+    if (result.images_show_all !== undefined && result.images_show_all !== null) {
+      result.images_show_all = !!result.images_show_all;
+    }
+    if (result.images_show_only_with_projects !== undefined && result.images_show_only_with_projects !== null) {
+      result.images_show_only_with_projects = !!result.images_show_only_with_projects;
+    }
 
     res.json(result);
   } catch (error) {
@@ -121,7 +194,18 @@ const deleteLogo = async (req, res) => {
     stmt.run();
 
     const result = db.prepare('SELECT * FROM settings WHERE id = 1').get();
+
+    // Convert SQLite booleans to JavaScript booleans
     result.sidebar_collapsed = !!result.sidebar_collapsed;
+    if (result.images_show_only_unassigned !== undefined && result.images_show_only_unassigned !== null) {
+      result.images_show_only_unassigned = !!result.images_show_only_unassigned;
+    }
+    if (result.images_show_all !== undefined && result.images_show_all !== null) {
+      result.images_show_all = !!result.images_show_all;
+    }
+    if (result.images_show_only_with_projects !== undefined && result.images_show_only_with_projects !== null) {
+      result.images_show_only_with_projects = !!result.images_show_only_with_projects;
+    }
 
     res.json(result);
   } catch (error) {
@@ -151,7 +235,18 @@ const uploadFavicon = async (req, res) => {
     stmt.run(faviconPath);
 
     const result = db.prepare('SELECT * FROM settings WHERE id = 1').get();
+
+    // Convert SQLite booleans to JavaScript booleans
     result.sidebar_collapsed = !!result.sidebar_collapsed;
+    if (result.images_show_only_unassigned !== undefined && result.images_show_only_unassigned !== null) {
+      result.images_show_only_unassigned = !!result.images_show_only_unassigned;
+    }
+    if (result.images_show_all !== undefined && result.images_show_all !== null) {
+      result.images_show_all = !!result.images_show_all;
+    }
+    if (result.images_show_only_with_projects !== undefined && result.images_show_only_with_projects !== null) {
+      result.images_show_only_with_projects = !!result.images_show_only_with_projects;
+    }
 
     res.json(result);
   } catch (error) {
@@ -174,7 +269,18 @@ const deleteFavicon = async (req, res) => {
     stmt.run();
 
     const result = db.prepare('SELECT * FROM settings WHERE id = 1').get();
+
+    // Convert SQLite booleans to JavaScript booleans
     result.sidebar_collapsed = !!result.sidebar_collapsed;
+    if (result.images_show_only_unassigned !== undefined && result.images_show_only_unassigned !== null) {
+      result.images_show_only_unassigned = !!result.images_show_only_unassigned;
+    }
+    if (result.images_show_all !== undefined && result.images_show_all !== null) {
+      result.images_show_all = !!result.images_show_all;
+    }
+    if (result.images_show_only_with_projects !== undefined && result.images_show_only_with_projects !== null) {
+      result.images_show_only_with_projects = !!result.images_show_only_with_projects;
+    }
 
     res.json(result);
   } catch (error) {
