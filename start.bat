@@ -145,6 +145,21 @@ echo ========================================
 echo.
 
 cd backend
-call npm start
 
+:server_loop
+call node src/server.js
+set EXIT_CODE=%ERRORLEVEL%
+
+if %EXIT_CODE% EQU 100 (
+    echo.
+    echo ========================================
+    echo   Server wird neu gestartet...
+    echo   ^(Credentials wurden aktualisiert^)
+    echo ========================================
+    echo.
+    timeout /t 1 /nobreak >nul
+    goto server_loop
+)
+
+cd ..
 pause

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, ExternalLink, AlertCircle, CheckCircle, Loader } from 'lucide-react';
+import { X, ExternalLink, AlertCircle, CheckCircle, Loader, RefreshCw } from 'lucide-react';
 import './CredentialsModal.css';
 
 function CredentialsModal({ isOpen, onClose, onSave }) {
@@ -8,6 +8,7 @@ function CredentialsModal({ isOpen, onClose, onSave }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [restarting, setRestarting] = useState(false);
 
   if (!isOpen) return null;
 
@@ -44,18 +45,41 @@ function CredentialsModal({ isOpen, onClose, onSave }) {
         throw new Error(data.error || 'Fehler beim Speichern');
       }
 
+      const data = await response.json();
       setSuccess(true);
 
-      // Show message about server restart
-      setTimeout(() => {
-        alert('✅ Credentials gespeichert!\n\n⚠️ WICHTIG: Falls der Login nicht funktioniert, starte den Backend-Server einmal neu:\nnpm run dev');
-      }, 500);
+      if (data.restarting) {
+        // Server is restarting - wait for it to come back
+        setRestarting(true);
 
-      // Call onSave callback after 2 seconds
-      setTimeout(() => {
-        onSave?.();
-        onClose();
-      }, 2500);
+        const waitForServer = async () => {
+          const maxAttempts = 20;
+          for (let i = 0; i < maxAttempts; i++) {
+            await new Promise(r => setTimeout(r, 1500));
+            try {
+              const health = await fetch('/api/health');
+              if (health.ok) {
+                setRestarting(false);
+                onSave?.();
+                onClose();
+                return;
+              }
+            } catch {
+              // Server still restarting
+            }
+          }
+          // Timeout - server didn't come back
+          setRestarting(false);
+          setError('Server antwortet nicht. Bitte manuell neu starten.');
+        };
+
+        waitForServer();
+      } else {
+        setTimeout(() => {
+          onSave?.();
+          onClose();
+        }, 2000);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -179,10 +203,17 @@ function CredentialsModal({ isOpen, onClose, onSave }) {
               </div>
             )}
 
-            {success && (
+            {success && !restarting && (
               <div className="credentials-success">
                 <CheckCircle size={18} />
                 Credentials erfolgreich gespeichert!
+              </div>
+            )}
+
+            {restarting && (
+              <div className="credentials-restarting">
+                <RefreshCw size={18} className="spinning" />
+                Server wird neu gestartet... Bitte warten.
               </div>
             )}
 

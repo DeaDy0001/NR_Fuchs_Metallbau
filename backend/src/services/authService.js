@@ -297,13 +297,20 @@ const saveCredentials = async (clientId, clientSecret) => {
     // Write back to .env
     await fs.writeFile(envPath, lines.join('\n'));
 
-    // Reload environment variables
-    dotenv.config({ path: envPath });
+    // Reload environment variables (override: true to update existing vars!)
+    dotenv.config({ path: envPath, override: true });
 
     // Reset OAuth client to pick up new credentials
     oauth2Client = null;
 
     console.log('✅ OAuth credentials saved successfully');
+    console.log('🔄 Server wird in 2 Sekunden neu gestartet, damit die neuen Credentials geladen werden...');
+
+    // Schedule server restart after short delay (so the HTTP response can be sent first)
+    setTimeout(() => {
+      console.log('🔄 Server wird jetzt neu gestartet...');
+      process.exit(100); // Exit code 100 = restart requested
+    }, 2000);
   } catch (error) {
     console.error('❌ Error saving credentials:', error.message);
     throw new Error('Failed to save credentials to .env file');

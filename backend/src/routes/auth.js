@@ -41,7 +41,8 @@ router.post('/credentials', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Credentials saved successfully'
+      message: 'Credentials gespeichert. Server wird neu gestartet...',
+      restarting: true
     });
   } catch (error) {
     res.status(500).json({
