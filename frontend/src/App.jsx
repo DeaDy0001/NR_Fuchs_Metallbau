@@ -85,6 +85,7 @@ function App() {
           <Route path="/settings/general" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} />} />
           <Route path="/settings/images" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} />} />
           <Route path="/settings/projects" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} />} />
+          <Route path="/settings/update" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} />} />
 
           {/* Redirect old routes */}
           <Route path="/drive/images" element={<Navigate to="/images" replace />} />

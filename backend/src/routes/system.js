@@ -13,6 +13,9 @@ router.get('/version', systemController.getLatestVersion);
 // Trigger update from GitHub
 router.post('/update', systemController.triggerUpdate);
 
+// Trigger update from specific branch (developer only)
+router.post('/update-branch', systemController.triggerBranchUpdate);
+
 // Get git info (branch, commit, etc.)
 router.get('/git-info', systemController.getGitInfo);
 

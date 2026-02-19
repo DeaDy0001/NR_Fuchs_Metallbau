@@ -2,6 +2,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import Settings from './Settings';
 import DriveSettings from './DriveSettings';
 import ProjectsSettings from './ProjectsSettings';
+import UpdateSettings from './UpdateSettings';
 import './SettingsTabs.css';
 
 function SettingsTabs({ settings, updateSettings, onSettingsChange }) {
@@ -13,6 +14,7 @@ function SettingsTabs({ settings, updateSettings, onSettingsChange }) {
     if (location.pathname.includes('/settings/general')) return 'general';
     if (location.pathname.includes('/settings/images')) return 'images';
     if (location.pathname.includes('/settings/projects')) return 'projects';
+    if (location.pathname.includes('/settings/update')) return 'update';
     return 'general';
   };
 
@@ -48,6 +50,12 @@ function SettingsTabs({ settings, updateSettings, onSettingsChange }) {
           >
             Projekte
           </button>
+          <button
+            className={`tab-btn ${activeTab === 'update' ? 'active' : ''}`}
+            onClick={() => handleTabChange('update')}
+          >
+            Update
+          </button>
         </div>
 
         <div className="tabs-content">
@@ -60,6 +68,7 @@ function SettingsTabs({ settings, updateSettings, onSettingsChange }) {
           )}
           {activeTab === 'images' && <DriveSettings />}
           {activeTab === 'projects' && <ProjectsSettings />}
+          {activeTab === 'update' && <UpdateSettings />}
         </div>
       </div>
     </div>

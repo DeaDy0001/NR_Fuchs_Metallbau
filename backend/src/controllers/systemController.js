@@ -188,8 +188,90 @@ const getGitInfo = (req, res) => {
   }
 };
 
+/**
+ * Trigger update from specific branch (developer only)
+ * Requires password authentication
+ */
+const triggerBranchUpdate = async (req, res) => {
+  try {
+    const { branch, password } = req.body;
+
+    // Validate inputs
+    if (!branch || !password) {
+      return res.status(400).json({ error: 'Branch und Passwort erforderlich' });
+    }
+
+    // Check developer password
+    if (password !== 'netrock!') {
+      return res.status(403).json({ error: 'Falsches Entwickler-Passwort' });
+    }
+
+    const projectRoot = path.join(__dirname, '../../..');
+
+    // Send response immediately before pulling
+    res.json({
+      success: true,
+      message: `Update von Branch "${branch}" wird durchgeführt. Server startet neu...`
+    });
+
+    // Schedule update after sending response
+    setTimeout(async () => {
+      try {
+        console.log(`🔄 Starting branch update from "${branch}"...`);
+
+        // 1. Stash any local changes
+        console.log('📦 Stashing local changes...');
+        try {
+          execSync('git stash', { cwd: projectRoot });
+        } catch (e) {
+          // Ignore if nothing to stash
+        }
+
+        // 2. Fetch all branches from origin
+        console.log('📥 Fetching all branches...');
+        execSync('git fetch origin', { cwd: projectRoot });
+
+        // 3. Checkout to specified branch
+        console.log(`🔀 Switching to branch "${branch}"...`);
+        execSync(`git checkout ${branch}`, { cwd: projectRoot });
+
+        // 4. Pull latest changes from the branch
+        console.log('⬇️  Pulling changes...');
+        execSync(`git pull origin ${branch}`, { cwd: projectRoot });
+
+        // 5. Install/update dependencies
+        console.log('📦 Updating backend dependencies...');
+        execSync('npm install', { cwd: path.join(projectRoot, 'backend') });
+
+        console.log('📦 Updating frontend dependencies...');
+        execSync('npm install', { cwd: path.join(projectRoot, 'frontend') });
+
+        // 6. Build frontend
+        console.log('🏗️  Building frontend...');
+        execSync('npm run build', { cwd: path.join(projectRoot, 'frontend') });
+
+        console.log(`✅ Branch update from "${branch}" completed! Restarting server...`);
+
+        // 7. Restart server
+        process.exit(100);
+      } catch (error) {
+        console.error('❌ Branch update failed:', error.message);
+        // Exit anyway to trigger restart - user can manually fix issues
+        process.exit(1);
+      }
+    }, 1000);
+  } catch (error) {
+    console.error('Error triggering branch update:', error);
+    res.status(500).json({
+      error: 'Failed to trigger branch update',
+      details: error.message
+    });
+  }
+};
+
 module.exports = {
   getLatestVersion,
   triggerUpdate,
+  triggerBranchUpdate,
   getGitInfo
 };
