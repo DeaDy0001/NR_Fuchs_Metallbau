@@ -249,16 +249,17 @@ const syncProjects = async (req, res) => {
     // Read directories (keep async for fs operations)
     const items = await fs.readdir(projectPath, { withFileTypes: true });
     const folders = items.filter(item => item.isDirectory()).map(item => item.name);
+    const folderSet = new Set(folders);
 
     // Get existing projects
-    const existingProjects = db.prepare('SELECT folder_name FROM projects').all();
+    const existingProjects = db.prepare('SELECT id, folder_name FROM projects').all();
     const existingFolderNames = new Set(existingProjects.map(p => p.folder_name));
 
     let addedCount = 0;
 
     // Add new projects
     const insertStmt = db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)');
-    
+
     for (const folderName of folders) {
       if (!existingFolderNames.has(folderName)) {
         insertStmt.run(folderName, '#3b82f6', '');
@@ -266,9 +267,22 @@ const syncProjects = async (req, res) => {
       }
     }
 
+    // Detect removed projects (exist in DB but not on filesystem)
+    const removedProjects = existingProjects.filter(p => !folderSet.has(p.folder_name));
+    const removedNames = removedProjects.map(p => p.folder_name);
+
+    // Delete removed projects (image_project_assignments cleaned up via CASCADE)
+    if (removedProjects.length > 0) {
+      const deleteStmt = db.prepare('DELETE FROM projects WHERE id = ?');
+      for (const project of removedProjects) {
+        deleteStmt.run(project.id);
+      }
+    }
+
     res.json({
       message: 'Projects synced successfully',
       added: addedCount,
+      removed: removedNames,
       total: folders.length
     });
   } catch (error) {

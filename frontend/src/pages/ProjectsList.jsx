@@ -89,6 +89,10 @@ function ProjectsList() {
       if (response.ok) {
         const data = await response.json();
         loadProjects();
+
+        if (data.removed && data.removed.length > 0) {
+          alert(`Folgende Projekte wurden entfernt (Ordner nicht mehr vorhanden):\n\n${data.removed.map(name => `• ${name}`).join('\n')}`);
+        }
       } else {
         const error = await response.json();
         alert(`Fehler: ${error.error || 'Synchronisierung fehlgeschlagen'}`);
