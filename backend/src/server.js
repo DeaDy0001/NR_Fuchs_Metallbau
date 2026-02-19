@@ -23,6 +23,7 @@ app.use('/api/projects', require('./routes/projects'));
 app.use('/api/annotations', require('./routes/annotations'));
 app.use('/api/color-presets', require('./routes/colorPresets'));
 app.use('/api/system', require('./routes/system'));
+app.use('/api/github', require('./routes/github'));
 
 // Health check
 app.get('/api/health', (req, res) => {
