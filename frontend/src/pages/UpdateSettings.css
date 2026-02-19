@@ -7,34 +7,36 @@
 .page-header h1 {
   font-size: 2rem;
   margin-bottom: 2rem;
-  color: #e5e7eb;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .settings-section {
-  background: #1f2937;
-  border-radius: 8px;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
   padding: 1.5rem;
   margin-bottom: 1.5rem;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
 .settings-section h2 {
   font-size: 1.25rem;
   margin-bottom: 1rem;
-  color: #e5e7eb;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .section-description {
-  color: #9ca3af;
+  color: var(--text-secondary);
   margin-bottom: 1rem;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
 }
 
 /* Version Info */
 .version-info {
-  background: #374151;
+  background-color: var(--bg-tertiary);
   padding: 1rem;
-  border-radius: 6px;
+  border-radius: 0.375rem;
 }
 
 .info-row {
@@ -45,11 +47,11 @@
 
 .info-label {
   font-weight: 500;
-  color: #9ca3af;
+  color: var(--text-secondary);
 }
 
 .info-value {
-  color: #e5e7eb;
+  color: var(--text-primary);
   font-family: 'Courier New', monospace;
 }
 
@@ -60,16 +62,16 @@
   background: #10b981;
   color: white;
   padding: 0.5rem 1rem;
-  border-radius: 6px;
+  border-radius: 0.375rem;
   margin-top: 1rem;
   font-weight: 500;
 }
 
 /* Git Info */
 .git-info {
-  background: #374151;
+  background-color: var(--bg-tertiary);
   padding: 1rem;
-  border-radius: 6px;
+  border-radius: 0.375rem;
 }
 
 /* Update Actions */
@@ -83,21 +85,21 @@
 .release-notes {
   margin-top: 1.5rem;
   padding: 1rem;
-  background: #374151;
-  border-radius: 6px;
-  border-left: 3px solid #3b82f6;
+  background-color: var(--bg-tertiary);
+  border-radius: 0.375rem;
+  border-left: 3px solid var(--accent-primary);
 }
 
 .release-notes h3 {
   font-size: 1rem;
   margin-bottom: 0.5rem;
-  color: #e5e7eb;
+  color: var(--text-primary);
 }
 
 .release-notes pre {
   white-space: pre-wrap;
   word-wrap: break-word;
-  color: #9ca3af;
+  color: var(--text-secondary);
   font-size: 0.9rem;
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -106,7 +108,7 @@
 /* Developer Section */
 .developer-section {
   border: 2px solid #fbbf24;
-  background: #1f2937;
+  background-color: var(--bg-secondary);
 }
 
 .section-header-with-toggle {
@@ -124,7 +126,7 @@
   background: #fbbf24;
   color: #78350f;
   border: none;
-  border-radius: 6px;
+  border-radius: 0.375rem;
   cursor: pointer;
   font-weight: 500;
   transition: all 0.2s;
@@ -149,7 +151,7 @@
 
 .form-group label {
   font-weight: 500;
-  color: #e5e7eb;
+  color: var(--text-primary);
 }
 
 .input-with-icon {
@@ -157,13 +159,18 @@
   align-items: center;
   gap: 0.5rem;
   padding: 0.75rem;
-  background: #374151;
-  border: 1px solid #4b5563;
-  border-radius: 6px;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.375rem;
+  transition: border-color 0.2s;
+}
+
+.input-with-icon:focus-within {
+  border-color: var(--accent-primary);
 }
 
 .input-with-icon svg {
-  color: #9ca3af;
+  color: var(--text-secondary);
   flex-shrink: 0;
 }
 
@@ -173,7 +180,7 @@
   flex: 1;
   font-size: 1rem;
   background: transparent;
-  color: #e5e7eb;
+  color: var(--text-primary);
 }
 
 /* Error Message */
@@ -181,18 +188,18 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  background: #7f1d1d;
+  background-color: rgba(220, 38, 38, 0.15);
   color: #fca5a5;
   padding: 1rem;
-  border-radius: 6px;
-  border-left: 3px solid #dc2626;
+  border-radius: 0.375rem;
+  border: 1px solid rgba(220, 38, 38, 0.3);
 }
 
 /* Loading State */
 .loading-state {
   text-align: center;
   padding: 2rem;
-  color: #9ca3af;
+  color: var(--text-secondary);
 }
 
 /* Restart Modal */
@@ -210,9 +217,10 @@
 }
 
 .update-restart-content {
-  background: white;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
   padding: 3rem;
-  border-radius: 12px;
+  border-radius: 0.75rem;
   text-align: center;
   max-width: 500px;
 }
@@ -220,11 +228,11 @@
 .update-restart-content h2 {
   margin-top: 1rem;
   margin-bottom: 1rem;
-  color: #333;
+  color: var(--text-primary);
 }
 
 .update-restart-content p {
-  color: #666;
+  color: var(--text-secondary);
   line-height: 1.6;
 }
 
@@ -232,8 +240,8 @@
   width: 50px;
   height: 50px;
   margin: 0 auto;
-  border: 4px solid #f3f3f3;
-  border-top: 4px solid #3b82f6;
+  border: 4px solid var(--bg-tertiary);
+  border-top: 4px solid var(--accent-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -253,10 +261,10 @@
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.75rem 1.5rem;
+  padding: 0.625rem 1.25rem;
   border: none;
-  border-radius: 6px;
-  font-size: 1rem;
+  border-radius: 0.375rem;
+  font-size: 0.9rem;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
@@ -268,19 +276,20 @@
 }
 
 .btn-primary {
-  background: #3b82f6;
+  background-color: var(--accent-primary);
   color: white;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: #2563eb;
+  background-color: var(--accent-hover);
 }
 
 .btn-secondary {
-  background: #6b7280;
-  color: white;
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #4b5563;
+  background-color: var(--bg-tertiary);
 }
