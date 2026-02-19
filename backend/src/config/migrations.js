@@ -274,6 +274,23 @@ const migrations = [
 
       console.log('✓ Migration add_images_filter_sort_preferences completed');
     }
+  },
+  {
+    id: 12,
+    name: 'add_github_token_column',
+    up: () => {
+      console.log('Running migration: add_github_token_column');
+
+      const tableInfo = db.pragma('table_info(settings)');
+      const existingColumns = tableInfo.map(col => col.name);
+
+      // Add github_token column for storing GitHub Personal Access Token
+      if (!existingColumns.includes('github_token')) {
+        db.exec('ALTER TABLE settings ADD COLUMN github_token TEXT');
+      }
+
+      console.log('✓ Migration add_github_token_column completed');
+    }
   }
 ];
 

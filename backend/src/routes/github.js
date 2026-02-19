@@ -21,19 +21,8 @@ router.post('/token', async (req, res) => {
       });
     }
 
-    // Store token in database (encrypted would be better in production)
-    const settingKey = 'github_token';
-
-    // Check if setting exists
-    const existingSetting = db.prepare('SELECT * FROM settings WHERE key = ?').get(settingKey);
-
-    if (existingSetting) {
-      // Update existing token
-      db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(token, settingKey);
-    } else {
-      // Insert new token
-      db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(settingKey, token);
-    }
+    // Update token in settings table (id = 1 is the main settings row)
+    db.prepare('UPDATE settings SET github_token = ? WHERE id = 1').run(token);
 
     // Also save to .env file for persistence
     const fs = require('fs');
@@ -73,11 +62,10 @@ router.post('/token', async (req, res) => {
  */
 router.get('/token/status', async (req, res) => {
   try {
-    const settingKey = 'github_token';
-    const setting = db.prepare('SELECT * FROM settings WHERE key = ?').get(settingKey);
+    const setting = db.prepare('SELECT github_token FROM settings WHERE id = 1').get();
 
     res.json({
-      configured: !!setting && !!setting.value
+      configured: !!setting && !!setting.github_token
     });
   } catch (error) {
     console.error('Error checking GitHub token status:', error);
@@ -91,8 +79,8 @@ router.get('/token/status', async (req, res) => {
  */
 router.delete('/token', async (req, res) => {
   try {
-    const settingKey = 'github_token';
-    db.prepare('DELETE FROM settings WHERE key = ?').run(settingKey);
+    // Remove token from settings table
+    db.prepare('UPDATE settings SET github_token = NULL WHERE id = 1').run();
 
     // Also remove from .env file
     const fs = require('fs');

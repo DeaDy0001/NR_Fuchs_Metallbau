@@ -1,6 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
-import { Upload, Trash2, Key, CheckCircle } from 'lucide-react';
-import GitHubTokenModal from '../components/GitHubTokenModal';
+import { useState, useRef } from 'react';
+import { Upload, Trash2 } from 'lucide-react';
 import './Settings.css';
 
 function Settings({ settings, updateSettings, onSettingsChange }) {
@@ -8,27 +7,8 @@ function Settings({ settings, updateSettings, onSettingsChange }) {
   const [uploadingFavicon, setUploadingFavicon] = useState(false);
   const [companyName, setCompanyName] = useState(settings.company_name || 'Fuchs Metallbau');
   const [primaryColor, setPrimaryColor] = useState(settings.primary_color || '#3b82f6');
-  const [showGitHubTokenModal, setShowGitHubTokenModal] = useState(false);
-  const [githubTokenConfigured, setGithubTokenConfigured] = useState(false);
   const fileInputRef = useRef(null);
   const faviconInputRef = useRef(null);
-
-  // Check GitHub token status on component mount
-  useEffect(() => {
-    const checkGitHubTokenStatus = async () => {
-      try {
-        const response = await fetch('/api/github/token/status');
-        if (response.ok) {
-          const data = await response.json();
-          setGithubTokenConfigured(data.configured);
-        }
-      } catch (error) {
-        console.error('Error checking GitHub token status:', error);
-      }
-    };
-
-    checkGitHubTokenStatus();
-  }, []);
 
   const handleLogoUpload = async (e) => {
     const file = e.target.files[0];
@@ -333,33 +313,6 @@ function Settings({ settings, updateSettings, onSettingsChange }) {
       </div>
 
       <div className="settings-section">
-        <h2>GitHub Token</h2>
-        <p className="section-description">
-          Konfiguriere deinen GitHub Personal Access Token für Git-Push-Operationen.
-        </p>
-        <div className="github-token-status">
-          {githubTokenConfigured ? (
-            <div className="token-configured">
-              <CheckCircle size={20} />
-              <span>Token konfiguriert</span>
-            </div>
-          ) : (
-            <div className="token-not-configured">
-              <Key size={20} />
-              <span>Kein Token konfiguriert</span>
-            </div>
-          )}
-          <button
-            className="btn btn-primary"
-            onClick={() => setShowGitHubTokenModal(true)}
-          >
-            <Key size={18} />
-            {githubTokenConfigured ? 'Token ändern' : 'Token einrichten'}
-          </button>
-        </div>
-      </div>
-
-      <div className="settings-section">
         <h2>Theme</h2>
         <p className="section-description">
           Aktuell wird nur der Dark Mode unterstützt.
@@ -370,14 +323,6 @@ function Settings({ settings, updateSettings, onSettingsChange }) {
           </div>
         </div>
       </div>
-
-      <GitHubTokenModal
-        isOpen={showGitHubTokenModal}
-        onClose={() => setShowGitHubTokenModal(false)}
-        onSave={() => {
-          setGithubTokenConfigured(true);
-        }}
-      />
     </div>
   );
 }
