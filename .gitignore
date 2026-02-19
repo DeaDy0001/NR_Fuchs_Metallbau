@@ -12,6 +12,7 @@ frontend/build/
 .env
 .env.local
 .env.*.local
+backend/.env
 
 # OAuth tokens (sensitive)
 backend/config/auth.json
