@@ -24,7 +24,8 @@ const menuItems = [
     subItems: [
       { id: 'settings-general', label: 'Allgemein', path: '/settings/general' },
       { id: 'settings-images', label: 'Bilder', path: '/settings/images' },
-      { id: 'settings-projects', label: 'Projekte', path: '/settings/projects' }
+      { id: 'settings-projects', label: 'Projekte', path: '/settings/projects' },
+      { id: 'settings-update', label: 'Update', path: '/settings/update' }
     ]
   }
 ];
