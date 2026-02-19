@@ -42,7 +42,6 @@ function ProjectsSettings() {
 
       if (response.ok) {
         loadSettings();
-        alert('Pfad erfolgreich gespeichert');
       } else {
         const error = await response.json();
         alert(`Fehler: ${error.error || 'Pfad konnte nicht gespeichert werden'}`);

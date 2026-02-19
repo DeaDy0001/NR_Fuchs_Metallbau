@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Search, Plus, Edit2, Save, X, CheckSquare, Square, ZoomIn, ZoomOut, RotateCcw, ChevronLeft, ChevronRight, Trash2, Pencil } from 'lucide-react';
+import { Search, Plus, Edit2, Save, X, CheckSquare, Square, ZoomIn, ZoomOut, RotateCcw, ChevronLeft, ChevronRight, Trash2, Pencil, RefreshCw } from 'lucide-react';
 import ImageEditor from '../components/ImageEditor';
 import './ProjectsList.css';
 
@@ -24,6 +24,7 @@ function ProjectsList() {
   const [projects, setProjects] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [editForm, setEditForm] = useState({ color: '', notes: '' });
   const [selectedProjects, setSelectedProjects] = useState([]); // Markierte Projekte
   const [showMarked, setShowMarked] = useState(true); // Filter: Markierte anzeigen
@@ -74,6 +75,29 @@ function ProjectsList() {
       console.error('Error loading projects:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSync = async () => {
+    setSyncing(true);
+
+    try {
+      const response = await fetch('/api/projects/sync', {
+        method: 'POST'
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        loadProjects();
+      } else {
+        const error = await response.json();
+        alert(`Fehler: ${error.error || 'Synchronisierung fehlgeschlagen'}`);
+      }
+    } catch (error) {
+      console.error('Error syncing projects:', error);
+      alert('Fehler bei der Synchronisierung');
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -428,6 +452,15 @@ function ProjectsList() {
           />
         </div>
         <div className="filter-buttons">
+          <button
+            className="btn btn-secondary"
+            onClick={handleSync}
+            disabled={syncing}
+            title="Projekte synchronisieren"
+          >
+            <RefreshCw size={18} className={syncing ? 'spinning' : ''} />
+            {syncing ? 'Synce...' : 'Sync'}
+          </button>
           <button
             className={`filter-btn ${showMarked ? 'active' : ''}`}
             onClick={() => setShowMarked(!showMarked)}
