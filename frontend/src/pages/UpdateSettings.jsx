@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Download, RefreshCw, AlertCircle, GitBranch, Lock, Tag, ChevronDown } from 'lucide-react';
+import { Download, RefreshCw, AlertCircle, GitBranch, Lock, Tag, ChevronDown, Key, CheckCircle } from 'lucide-react';
+import GitHubTokenModal from '../components/GitHubTokenModal';
 import './UpdateSettings.css';
 
 function UpdateSettings() {
@@ -21,10 +22,33 @@ function UpdateSettings() {
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [showBranchUpdate, setShowBranchUpdate] = useState(false);
 
+  // GitHub Token (Developer)
+  const [showGitHubTokenModal, setShowGitHubTokenModal] = useState(false);
+  const [githubTokenConfigured, setGithubTokenConfigured] = useState(false);
+
   useEffect(() => {
     loadGitInfo();
     loadTags();
   }, []);
+
+  useEffect(() => {
+    // Load GitHub token status when developer is authenticated
+    if (devAuthenticated) {
+      checkGitHubTokenStatus();
+    }
+  }, [devAuthenticated]);
+
+  const checkGitHubTokenStatus = async () => {
+    try {
+      const response = await fetch('/api/github/token/status');
+      if (response.ok) {
+        const data = await response.json();
+        setGithubTokenConfigured(data.configured);
+      }
+    } catch (error) {
+      console.error('Error checking GitHub token status:', error);
+    }
+  };
 
   const loadGitInfo = async () => {
     try {
@@ -344,6 +368,36 @@ function UpdateSettings() {
         )}
       </div>
 
+      {/* GitHub Token Configuration (Developer only) */}
+      {devAuthenticated && (
+        <div className="settings-section developer-section">
+          <h2>GitHub Token Konfiguration</h2>
+          <p className="section-description">
+            Konfiguriere deinen GitHub Personal Access Token für Git-Push-Operationen.
+          </p>
+          <div className="github-token-status">
+            {githubTokenConfigured ? (
+              <div className="token-configured">
+                <CheckCircle size={20} />
+                <span>Token konfiguriert</span>
+              </div>
+            ) : (
+              <div className="token-not-configured">
+                <Key size={20} />
+                <span>Kein Token konfiguriert</span>
+              </div>
+            )}
+            <button
+              className="btn btn-primary"
+              onClick={() => setShowGitHubTokenModal(true)}
+            >
+              <Key size={18} />
+              {githubTokenConfigured ? 'Token ändern' : 'Token einrichten'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Error Display */}
       {error && (
         <div className="error-message">
@@ -351,6 +405,14 @@ function UpdateSettings() {
           {error}
         </div>
       )}
+
+      <GitHubTokenModal
+        isOpen={showGitHubTokenModal}
+        onClose={() => setShowGitHubTokenModal(false)}
+        onSave={() => {
+          setGithubTokenConfigured(true);
+        }}
+      />
     </div>
   );
 }
