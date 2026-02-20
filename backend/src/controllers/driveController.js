@@ -238,6 +238,7 @@ const getImages = (req, res) => {
       offset = 0,
       search = '',
       projectIds = '',
+      tagIds = '',
       photoDateFrom = '',
       photoDateTo = '',
       uploadDateFrom = '',
@@ -261,6 +262,14 @@ const getImages = (req, res) => {
       query += ' JOIN image_project_assignments ipa ON di.id = ipa.image_id';
       whereClauses.push(`ipa.project_id IN (${projectIdArray.map(() => '?').join(', ')})`);
       params.push(...projectIdArray);
+    }
+
+    // Filter by tags
+    if (tagIds) {
+      const tagIdArray = tagIds.split(',').map(id => parseInt(id.trim()));
+      query += ' JOIN image_tags it ON di.id = it.image_id';
+      whereClauses.push(`it.tag_id IN (${tagIdArray.map(() => '?').join(', ')})`);
+      params.push(...tagIdArray);
     }
 
     // Filter by project assignment status (mutually exclusive)
@@ -372,6 +381,13 @@ const getImages = (req, res) => {
       countParams.push(...projectIdArray);
     }
 
+    if (tagIds) {
+      const tagIdArray = tagIds.split(',').map(id => parseInt(id.trim()));
+      countQuery += ' JOIN image_tags it ON di.id = it.image_id';
+      countWhereClauses.push(`it.tag_id IN (${tagIdArray.map(() => '?').join(', ')})`);
+      countParams.push(...tagIdArray);
+    }
+
     if (showAllImages === 'true') {
       // Show all images
     } else if (onlyWithProjects === 'true') {
@@ -412,6 +428,12 @@ const getImages = (req, res) => {
       const subfolderArray = subfolders.split(',').map(s => s.trim());
       countWhereClauses.push(`di.subfolder IN (${subfolderArray.map(() => '?').join(', ')})`);
       countParams.push(...subfolderArray);
+    }
+
+    if (drivePathIds) {
+      const drivePathIdArray = drivePathIds.split(',').map(id => parseInt(id.trim()));
+      countWhereClauses.push(`di.drive_path_id IN (${drivePathIdArray.map(() => '?').join(', ')})`);
+      countParams.push(...drivePathIdArray);
     }
 
     if (countWhereClauses.length > 0) {

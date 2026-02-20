@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Grid, List, RefreshCw, Search, Maximize2, Edit2, X, Play, Pause, Trash2, ChevronLeft, ChevronRight, Filter, Calendar, Pencil, Tag, Plus, Check, Edit3 } from 'lucide-react';
+import { Grid, List, RefreshCw, Search, Maximize2, Edit2, X, Play, Pause, Trash2, ChevronLeft, ChevronRight, Filter, Calendar, Pencil, Tag, Plus, Check, Edit3, ChevronsRight, ChevronsLeft } from 'lucide-react';
 import ImageEditor from '../components/ImageEditor';
 import './DriveImages.css';
 
@@ -72,6 +72,10 @@ function DriveImages() {
   const [tagName, setTagName] = useState(''); // Name im Popup
   const [tagColor, setTagColor] = useState('#3b82f6'); // Farbe im Popup
   const [tagNameError, setTagNameError] = useState(''); // Fehler bei doppeltem Namen
+  const [tagSidebarCollapsed, setTagSidebarCollapsed] = useState(false); // Sidebar eingeklappt
+  const [tagSearchQuery, setTagSearchQuery] = useState(''); // Tag-Suchfeld
+  const [showTagFilterModal, setShowTagFilterModal] = useState(false); // Tag-Filter Modal
+  const [selectedTagFilters, setSelectedTagFilters] = useState([]); // Ausgewählte Tags für Filter
 
   const TAG_PRESET_COLORS = [
     '#ef4444', '#f97316', '#f59e0b', '#eab308',
@@ -110,6 +114,9 @@ function DriveImages() {
       // Add filters
       if (selectedProjectsFilter.length > 0) {
         params.append('projectIds', selectedProjectsFilter.join(','));
+      }
+      if (selectedTagFilters.length > 0) {
+        params.append('tagIds', selectedTagFilters.join(','));
       }
       if (photoDateFrom) {
         params.append('photoDateFrom', photoDateFrom);
@@ -172,6 +179,7 @@ function DriveImages() {
     pagination.offset,
     searchQuery,
     selectedProjectsFilter,
+    selectedTagFilters,
     photoDateFrom,
     photoDateTo,
     uploadDateFrom,
@@ -812,6 +820,50 @@ function DriveImages() {
               </button>
             </div>
 
+            {/* Tag-Filter */}
+            <div className="filter-group">
+              <Tag size={16} />
+              <button
+                className="filter-button"
+                onClick={() => setShowTagFilterModal(true)}
+              >
+                {selectedTagFilters.length === 0
+                  ? 'Tags filtern'
+                  : `${selectedTagFilters.length} Tag(s)`}
+              </button>
+            </div>
+
+            {/* Selected Tag Filter Badges */}
+            {selectedTagFilters.length > 0 && (
+              <div className="selected-tag-filters">
+                {tags
+                  .filter(tag => selectedTagFilters.includes(tag.id))
+                  .map(tag => (
+                    <span
+                      key={tag.id}
+                      className="tag-filter-badge"
+                      style={{ backgroundColor: tag.color }}
+                    >
+                      {tag.name}
+                      <button
+                        className="tag-filter-remove"
+                        onClick={() => setSelectedTagFilters(prev => prev.filter(id => id !== tag.id))}
+                        title="Filter entfernen"
+                      >
+                        &times;
+                      </button>
+                    </span>
+                  ))}
+                <button
+                  className="clear-all-tag-filters"
+                  onClick={() => setSelectedTagFilters([])}
+                  title="Alle Tag-Filter entfernen"
+                >
+                  Alle entfernen
+                </button>
+              </div>
+            )}
+
             {/* Bild-Typ Filter */}
             <div className="filter-group">
               <label className="filter-checkbox-label">
@@ -1251,77 +1303,103 @@ function DriveImages() {
       </div>{/* End drive-images-main */}
 
       {/* Tag Sidebar (Right) */}
-      <div className="tag-sidebar">
+      <div className={`tag-sidebar ${tagSidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="tag-sidebar-header">
-          <Tag size={18} />
-          <span>Tags</span>
+          {!tagSidebarCollapsed && (
+            <>
+              <Tag size={18} />
+              <span>Tags</span>
+              <button
+                className="tag-add-btn"
+                onClick={() => openTagPopup()}
+                title="Neuen Tag erstellen"
+              >
+                <Plus size={16} />
+              </button>
+            </>
+          )}
           <button
-            className="tag-add-btn"
-            onClick={() => openTagPopup()}
-            title="Neuen Tag erstellen"
+            className="tag-collapse-btn"
+            onClick={() => setTagSidebarCollapsed(!tagSidebarCollapsed)}
+            title={tagSidebarCollapsed ? 'Sidebar ausklappen' : 'Sidebar einklappen'}
           >
-            <Plus size={16} />
+            {tagSidebarCollapsed ? <ChevronsLeft size={18} /> : <ChevronsRight size={18} />}
           </button>
         </div>
 
-        {selectedTagId && (
-          <div className="tag-quick-mode-hint">
-            Klicke auf ein Bild, um den Tag zuzuweisen
-            <button
-              className="tag-quick-mode-cancel"
-              onClick={() => setSelectedTagId(null)}
-            >
-              Abbrechen
-            </button>
-          </div>
-        )}
-
-        <div className="tag-list">
-          {tags.length === 0 ? (
-            <div className="tag-empty">Noch keine Tags erstellt</div>
-          ) : (
-            tags.map(tag => (
-              <div key={tag.id} className={`tag-list-item ${selectedTagId === tag.id ? 'tag-selected' : ''}`}>
-                <label
-                  className="tag-checkbox-label"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setSelectedTagId(prev => prev === tag.id ? null : tag.id);
-                  }}
+        {!tagSidebarCollapsed && (
+          <>
+            {/* Tag Search Field */}
+            <div className="tag-search-box">
+              <Search size={16} />
+              <input
+                type="text"
+                placeholder="Tags suchen..."
+                value={tagSearchQuery}
+                onChange={(e) => setTagSearchQuery(e.target.value)}
+                className="tag-search-input"
+              />
+              {tagSearchQuery && (
+                <button
+                  className="tag-search-clear"
+                  onClick={() => setTagSearchQuery('')}
+                  title="Suche löschen"
                 >
-                  <div className={`tag-checkbox ${selectedTagId === tag.id ? 'checked' : ''}`}>
-                    {selectedTagId === tag.id && <Check size={12} />}
-                  </div>
-                  <span className="tag-color-dot" style={{ backgroundColor: tag.color }}></span>
-                  <span className="tag-item-name">{tag.name}</span>
-                  <span className="tag-item-count">({tag.image_count || 0})</span>
-                </label>
-                <div className="tag-item-actions">
-                  <button
-                    className="tag-edit-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openTagPopup(tag);
-                    }}
-                    title="Tag bearbeiten"
-                  >
-                    <Edit3 size={14} />
-                  </button>
-                  <button
-                    className="tag-delete-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteTag(tag.id);
-                    }}
-                    title="Tag löschen"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+
+            <div className="tag-list">
+              {tags.length === 0 ? (
+                <div className="tag-empty">Noch keine Tags erstellt</div>
+              ) : (
+                tags
+                  .filter(tag => tag.name.toLowerCase().includes(tagSearchQuery.toLowerCase()))
+                  .map(tag => (
+                    <div key={tag.id} className={`tag-list-item ${selectedTagId === tag.id ? 'tag-selected' : ''}`}>
+                      <label
+                        className="tag-checkbox-label"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setSelectedTagId(prev => prev === tag.id ? null : tag.id);
+                        }}
+                      >
+                        <div className={`tag-checkbox ${selectedTagId === tag.id ? 'checked' : ''}`}>
+                          {selectedTagId === tag.id && <Check size={12} />}
+                        </div>
+                        <span className="tag-color-dot" style={{ backgroundColor: tag.color }}></span>
+                        <span className="tag-item-name">{tag.name}</span>
+                        <span className="tag-item-count">({tag.image_count || 0})</span>
+                      </label>
+                      <div className="tag-item-actions">
+                        <button
+                          className="tag-edit-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openTagPopup(tag);
+                          }}
+                          title="Tag bearbeiten"
+                        >
+                          <Edit3 size={14} />
+                        </button>
+                        <button
+                          className="tag-delete-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteTag(tag.id);
+                          }}
+                          title="Tag löschen"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+          </>
+        )}
       </div>
       </div>{/* End drive-images-layout */}
 
@@ -1783,6 +1861,70 @@ function DriveImages() {
                     setShowProjectModal(false);
                     setProjectSearchQuery('');
                   }}
+                >
+                  Fertig
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tag-Filter Modal */}
+      {showTagFilterModal && (
+        <div className="modal-overlay" onClick={() => setShowTagFilterModal(false)}>
+          <div className="project-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="project-modal-header">
+              <h3>Tags filtern</h3>
+              <button className="modal-close" onClick={() => setShowTagFilterModal(false)}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="project-modal-content">
+              <div className="project-modal-hint">
+                Wähle einen oder mehrere Tags aus
+              </div>
+
+              <div className="project-modal-list">
+                {tags.length === 0 ? (
+                  <div className="tag-empty">Keine Tags verfügbar</div>
+                ) : (
+                  tags.map(tag => (
+                    <div
+                      key={tag.id}
+                      className={`project-modal-item ${selectedTagFilters.includes(tag.id) ? 'selected' : ''}`}
+                      onClick={() => {
+                        setSelectedTagFilters(prev =>
+                          prev.includes(tag.id)
+                            ? prev.filter(id => id !== tag.id)
+                            : [...prev, tag.id]
+                        );
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span className="tag-color-dot" style={{ backgroundColor: tag.color }}></span>
+                        <span>{tag.name}</span>
+                        <span style={{ color: 'var(--text-tertiary)', fontSize: '0.875rem' }}>
+                          ({tag.image_count || 0})
+                        </span>
+                      </div>
+                      {selectedTagFilters.includes(tag.id) && (
+                        <span className="project-modal-checkmark">✓</span>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="project-modal-actions">
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setSelectedTagFilters([])}
+                >
+                  Alle abwählen
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => setShowTagFilterModal(false)}
                 >
                   Fertig
                 </button>
