@@ -704,7 +704,7 @@ function DriveImages() {
     if (e.shiftKey) {
       e.preventDefault();
 
-      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      const delta = e.deltaY > 0 ? -0.05 : 0.05; // Finer zoom steps (5% instead of 10%)
       const newZoomLevel = Math.min(Math.max(zoomLevel + delta, 0.5), 3);
 
       // Get mouse position relative to the container
