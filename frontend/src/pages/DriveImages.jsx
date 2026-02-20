@@ -305,6 +305,18 @@ function DriveImages() {
 
   const handleTagImageClick = async (imageId) => {
     if (!selectedTagId) return;
+
+    // Check if image already has this tag - if yes, remove it (toggle behavior)
+    const image = images.find(img => img.id === imageId);
+    const alreadyHasTag = image?.tags?.some(t => t.id === selectedTagId);
+
+    if (alreadyHasTag) {
+      // Remove tag
+      handleRemoveTagFromImage(imageId, selectedTagId);
+      return;
+    }
+
+    // Assign tag
     try {
       const response = await fetch('/api/tags/assign', {
         method: 'POST',
@@ -316,8 +328,7 @@ function DriveImages() {
         setImages(prev => prev.map(img => {
           if (img.id === imageId) {
             const tag = tags.find(t => t.id === selectedTagId);
-            const alreadyHas = img.tags?.some(t => t.id === selectedTagId);
-            if (tag && !alreadyHas) {
+            if (tag) {
               return { ...img, tags: [...(img.tags || []), { id: tag.id, name: tag.name, color: tag.color }] };
             }
           }
@@ -540,6 +551,36 @@ function DriveImages() {
 
   const handleQuickAssignProject = async (imageId) => {
     if (!selectedProjectId) return;
+
+    // Check if image already has this project - if yes, remove it (toggle behavior)
+    const image = images.find(img => img.id === imageId);
+    const alreadyHasProject = image?.projects?.some(p => p.id === selectedProjectId);
+
+    if (alreadyHasProject) {
+      // Remove project
+      try {
+        const response = await fetch('/api/drive/images/unassign-from-project', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageId, projectId: selectedProjectId })
+        });
+        if (response.ok) {
+          // Update local state
+          setImages(prev => prev.map(img => {
+            if (img.id === imageId) {
+              return { ...img, projects: (img.projects || []).filter(p => p.id !== selectedProjectId) };
+            }
+            return img;
+          }));
+          loadProjects(); // Refresh counts
+        }
+      } catch (error) {
+        console.error('Error unassigning project:', error);
+      }
+      return;
+    }
+
+    // Assign project
     try {
       const response = await fetch('/api/drive/images/assign-to-project', {
         method: 'POST',
@@ -551,8 +592,7 @@ function DriveImages() {
         setImages(prev => prev.map(img => {
           if (img.id === imageId) {
             const project = projects.find(p => p.id === selectedProjectId);
-            const alreadyHas = img.projects?.some(p => p.id === selectedProjectId);
-            if (project && !alreadyHas) {
+            if (project) {
               return { ...img, projects: [...(img.projects || []), { id: project.id, folder_name: project.folder_name, color: project.color }] };
             }
           }
@@ -1154,6 +1194,9 @@ function DriveImages() {
                         ))}
                       </div>
                     )}
+                    {image.tags && image.tags.length > 0 && image.projects && image.projects.length > 0 && (
+                      <div className="badges-divider"></div>
+                    )}
                     {image.projects && image.projects.length > 0 && (
                       <div className="project-badges">
                         {image.projects.map(project => (
@@ -1213,6 +1256,9 @@ function DriveImages() {
                             </span>
                           ))}
                         </div>
+                      )}
+                      {image.tags && image.tags.length > 0 && image.projects && image.projects.length > 0 && (
+                        <div className="badges-divider"></div>
                       )}
                       {image.projects && image.projects.length > 0 && (
                         <div className="project-badges" style={{ marginTop: '0.25rem' }}>
