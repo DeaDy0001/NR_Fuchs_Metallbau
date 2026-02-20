@@ -34,6 +34,8 @@ function DriveImages() {
   const [deleteFromProjects, setDeleteFromProjects] = useState(false); // Delete from all projects checkbox
   const [showEditor, setShowEditor] = useState(false); // Image editor
   const [panPosition, setPanPosition] = useState({ x: 0, y: 0 }); // Pan position for zoomed image
+  const [initialZoomLevel, setInitialZoomLevel] = useState(1); // Auto-fit zoom level (for reset)
+  const [initialPanPosition, setInitialPanPosition] = useState({ x: 0, y: 0 }); // Auto-fit pan position (for reset)
   const [isDragging, setIsDragging] = useState(false); // Is user dragging the image
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 }); // Drag start position
   const [pagination, setPagination] = useState({
@@ -668,8 +670,9 @@ function DriveImages() {
   };
 
   const handleZoomReset = () => {
-    setZoomLevel(1);
-    setPanPosition({ x: 0, y: 0 });
+    // Reset to the initial auto-fit zoom and position
+    setZoomLevel(initialZoomLevel);
+    setPanPosition(initialPanPosition);
   };
 
   // Pan/Drag handlers for zoomed image
@@ -855,8 +858,12 @@ function DriveImages() {
 
     if (!imageWidth || !imageHeight) {
       // Fallback: set to 100% if dimensions not available
-      setZoomLevel(1);
-      setPanPosition({ x: 0, y: 0 });
+      const fallbackZoom = 1;
+      const fallbackPan = { x: 0, y: 0 };
+      setZoomLevel(fallbackZoom);
+      setPanPosition(fallbackPan);
+      setInitialZoomLevel(fallbackZoom);
+      setInitialPanPosition(fallbackPan);
       return;
     }
 
@@ -874,15 +881,20 @@ function DriveImages() {
       const scaleY = containerHeight / imageHeight;
       const scale = Math.min(scaleX, scaleY, 1); // Don't zoom in beyond 100%
 
-      setZoomLevel(scale);
-
       // Center the image
       const scaledWidth = imageWidth * scale;
       const scaledHeight = imageHeight * scale;
       const centerX = (containerWidth - scaledWidth) / 2;
       const centerY = (containerHeight - scaledHeight) / 2;
 
-      setPanPosition({ x: centerX, y: centerY });
+      const fitZoom = scale;
+      const fitPan = { x: centerX, y: centerY };
+
+      setZoomLevel(fitZoom);
+      setPanPosition(fitPan);
+      // Save as initial values for reset button
+      setInitialZoomLevel(fitZoom);
+      setInitialPanPosition(fitPan);
     }, 10); // Much shorter delay
 
     return () => clearTimeout(timeout);
@@ -1814,7 +1826,7 @@ function DriveImages() {
                   <button className="zoom-btn" onClick={handleZoomIn} title="Zoom In" disabled={zoomLevel >= 3}>
                     +
                   </button>
-                  <button className="zoom-btn zoom-reset" onClick={handleZoomReset} title="Zoom auf 100% zurücksetzen">
+                  <button className="zoom-btn zoom-reset" onClick={handleZoomReset} title="Zoom zurücksetzen (Vollbild)">
                     Reset
                   </button>
 
