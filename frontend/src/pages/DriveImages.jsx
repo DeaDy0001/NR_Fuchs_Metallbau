@@ -55,6 +55,7 @@ function DriveImages() {
   const [showAllImages, setShowAllImages] = useState(false); // Alle Bilder (mit und ohne Projekte)
   const [showOnlyWithProjects, setShowOnlyWithProjects] = useState(false); // Nur Bilder mit Projekten
   const [selectedSubfolders, setSelectedSubfolders] = useState([]); // Ausgewählte Ordner-Badges
+  const [availableSubfolders, setAvailableSubfolders] = useState([]); // Alle verfügbaren Subfolders
   const [showProjectModal, setShowProjectModal] = useState(false); // Projekt-Auswahl Modal
   const [projectSearchQuery, setProjectSearchQuery] = useState(''); // Suchfeld im Projekt-Modal
   const [drivePaths, setDrivePaths] = useState([]); // Alle verfügbaren Google Drive Pfade
@@ -169,6 +170,7 @@ function DriveImages() {
         prevImagesCountRef.current = data.images.length;
         setImages(data.images);
         setPagination(prev => ({ ...prev, total: data.total }));
+        setAvailableSubfolders(data.subfolders || []); // Alle verfügbaren Subfolders setzen
       }
     } catch (error) {
       console.error('Error loading images:', error);
@@ -1050,33 +1052,26 @@ function DriveImages() {
           )}
 
           {/* Ordner-Badge Filter */}
-          {(() => {
-            // Get unique subfolders from images
-            const uniqueSubfolders = [...new Set(images.map(img => img.subfolder).filter(Boolean))];
-            if (uniqueSubfolders.length > 0) {
-              return (
-                <div className="subfolder-filter-row">
-                  <span className="filter-label">Ordner:</span>
-                  {uniqueSubfolders.map(subfolder => (
-                    <button
-                      key={subfolder}
-                      className={`subfolder-badge-filter ${selectedSubfolders.includes(subfolder) ? 'active' : ''}`}
-                      onClick={() => {
-                        setSelectedSubfolders(prev =>
-                          prev.includes(subfolder)
-                            ? prev.filter(s => s !== subfolder)
-                            : [...prev, subfolder]
-                        );
-                      }}
-                    >
-                      {subfolder}
-                    </button>
-                  ))}
-                </div>
-              );
-            }
-            return null;
-          })()}
+          {availableSubfolders.length > 0 && (
+            <div className="subfolder-filter-row">
+              <span className="filter-label">Ordner:</span>
+              {availableSubfolders.map(subfolder => (
+                <button
+                  key={subfolder}
+                  className={`subfolder-badge-filter ${selectedSubfolders.includes(subfolder) ? 'active' : ''}`}
+                  onClick={() => {
+                    setSelectedSubfolders(prev =>
+                      prev.includes(subfolder)
+                        ? prev.filter(s => s !== subfolder)
+                        : [...prev, subfolder]
+                    );
+                  }}
+                >
+                  {subfolder}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="view-toggle">
@@ -1366,17 +1361,6 @@ function DriveImages() {
                   Projekte
                 </button>
               </div>
-
-              {/* Add Button */}
-              {sidebarActiveTab === 'tags' && (
-                <button
-                  className="tag-add-btn"
-                  onClick={() => openTagPopup()}
-                  title="Neuen Tag erstellen"
-                >
-                  <Plus size={16} />
-                </button>
-              )}
             </>
           )}
           <button
@@ -1409,6 +1393,18 @@ function DriveImages() {
                   <X size={14} />
                 </button>
               )}
+            </div>
+
+            {/* Add Tag Button */}
+            <div className="tag-add-container">
+              <button
+                className="tag-add-btn-full"
+                onClick={() => openTagPopup()}
+                title="Neuen Tag erstellen"
+              >
+                <Plus size={16} />
+                Neuen Tag erstellen
+              </button>
             </div>
 
             <div className="tag-list">

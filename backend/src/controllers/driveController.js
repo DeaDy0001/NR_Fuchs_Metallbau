@@ -443,11 +443,16 @@ const getImages = (req, res) => {
     const countStmt = db.prepare(countQuery);
     const countResult = countStmt.get(...countParams);
 
+    // Get all unique subfolders (not limited by pagination)
+    const subfoldersStmt = db.prepare('SELECT DISTINCT subfolder FROM drive_images WHERE subfolder IS NOT NULL ORDER BY subfolder ASC');
+    const allSubfolders = subfoldersStmt.all().map(row => row.subfolder);
+
     res.json({
       images: formatted,
       total: countResult.count,
       limit: parseInt(limit),
-      offset: parseInt(offset)
+      offset: parseInt(offset),
+      subfolders: allSubfolders
     });
   } catch (error) {
     console.error('Error getting images:', error);
