@@ -616,11 +616,55 @@ function DriveImages() {
   };
 
   const handleZoomIn = () => {
-    setZoomLevel(prev => Math.min(prev + 0.25, 3)); // Max 300%
+    const newZoom = Math.min(zoomLevel + 0.25, 3); // Max 300%
+
+    // Zoom towards center of viewport
+    if (!modalImageRef.current?.parentElement) {
+      setZoomLevel(newZoom);
+      return;
+    }
+
+    const container = modalImageRef.current.parentElement;
+    const containerRect = container.getBoundingClientRect();
+    const centerX = containerRect.width / 2;
+    const centerY = containerRect.height / 2;
+
+    // Calculate the point in the image at the center
+    const imageX = (centerX - panPosition.x) / zoomLevel;
+    const imageY = (centerY - panPosition.y) / zoomLevel;
+
+    // Keep that point at the center
+    const newLeft = centerX - imageX * newZoom;
+    const newTop = centerY - imageY * newZoom;
+
+    setZoomLevel(newZoom);
+    setPanPosition({ x: newLeft, y: newTop });
   };
 
   const handleZoomOut = () => {
-    setZoomLevel(prev => Math.max(prev - 0.25, 0.5)); // Min 50%
+    const newZoom = Math.max(zoomLevel - 0.25, 0.5); // Min 50%
+
+    // Zoom towards center of viewport
+    if (!modalImageRef.current?.parentElement) {
+      setZoomLevel(newZoom);
+      return;
+    }
+
+    const container = modalImageRef.current.parentElement;
+    const containerRect = container.getBoundingClientRect();
+    const centerX = containerRect.width / 2;
+    const centerY = containerRect.height / 2;
+
+    // Calculate the point in the image at the center
+    const imageX = (centerX - panPosition.x) / zoomLevel;
+    const imageY = (centerY - panPosition.y) / zoomLevel;
+
+    // Keep that point at the center
+    const newLeft = centerX - imageX * newZoom;
+    const newTop = centerY - imageY * newZoom;
+
+    setZoomLevel(newZoom);
+    setPanPosition({ x: newLeft, y: newTop });
   };
 
   const handleZoomReset = () => {
@@ -660,33 +704,26 @@ function DriveImages() {
       const delta = e.deltaY > 0 ? -0.1 : 0.1;
       const newZoomLevel = Math.min(Math.max(zoomLevel + delta, 0.5), 3);
 
-      if (!modalImageRef.current) return;
-
-      // Get mouse position relative to the scroll container
+      // Get mouse position relative to the container
       const container = e.currentTarget;
       const containerRect = container.getBoundingClientRect();
       const mouseX = e.clientX - containerRect.left;
       const mouseY = e.clientY - containerRect.top;
 
-      // Get the image element's current position and size
-      const imageRect = modalImageRef.current.getBoundingClientRect();
-      const imageLeft = imageRect.left - containerRect.left;
-      const imageTop = imageRect.top - containerRect.top;
+      // Current image position (from state, not DOM)
+      const currentLeft = panPosition.x;
+      const currentTop = panPosition.y;
 
-      // Calculate the mouse position relative to the image's current position
-      const mouseXInImage = mouseX - imageLeft;
-      const mouseYInImage = mouseY - imageTop;
+      // Calculate the point in the original (unzoomed) image that's under the mouse
+      const imageX = (mouseX - currentLeft) / zoomLevel;
+      const imageY = (mouseY - currentTop) / zoomLevel;
 
-      // Calculate the point in the original (unzoomed) image
-      const imageX = mouseXInImage / zoomLevel;
-      const imageY = mouseYInImage / zoomLevel;
-
-      // Calculate new pan position to keep the same point under the mouse
-      const newImageLeft = mouseX - imageX * newZoomLevel;
-      const newImageTop = mouseY - imageY * newZoomLevel;
+      // Calculate new position to keep that point under the mouse
+      const newLeft = mouseX - imageX * newZoomLevel;
+      const newTop = mouseY - imageY * newZoomLevel;
 
       setZoomLevel(newZoomLevel);
-      setPanPosition({ x: newImageLeft, y: newImageTop });
+      setPanPosition({ x: newLeft, y: newTop });
     }
   };
 
@@ -810,49 +847,44 @@ function DriveImages() {
 
   // Auto-fit image to screen when modal opens
   useEffect(() => {
-    if (!selectedImage || !modalImageRef.current) return;
+    if (!selectedImage) return;
 
-    const fitImageToScreen = () => {
-      const img = modalImageRef.current;
-      const container = img.parentElement;
+    // Use image dimensions from backend data if available
+    const imageWidth = selectedImage.width;
+    const imageHeight = selectedImage.height;
 
+    if (!imageWidth || !imageHeight) {
+      // Fallback: set to 100% if dimensions not available
+      setZoomLevel(1);
+      setPanPosition({ x: 0, y: 0 });
+      return;
+    }
+
+    // Wait a bit for container to be ready
+    const timeout = setTimeout(() => {
+      const container = modalImageRef.current?.parentElement;
       if (!container) return;
 
-      // Wait for image to load
-      const checkImageLoaded = () => {
-        if (img.naturalWidth === 0 || img.naturalHeight === 0) {
-          setTimeout(checkImageLoaded, 50);
-          return;
-        }
+      const containerRect = container.getBoundingClientRect();
+      const containerWidth = containerRect.width;
+      const containerHeight = containerRect.height;
 
-        const containerRect = container.getBoundingClientRect();
-        const containerWidth = containerRect.width;
-        const containerHeight = containerRect.height;
+      // Calculate zoom level to fit the image in the container
+      const scaleX = containerWidth / imageWidth;
+      const scaleY = containerHeight / imageHeight;
+      const scale = Math.min(scaleX, scaleY, 1); // Don't zoom in beyond 100%
 
-        const imageWidth = img.naturalWidth;
-        const imageHeight = img.naturalHeight;
+      setZoomLevel(scale);
 
-        // Calculate zoom level to fit the image in the container
-        const scaleX = containerWidth / imageWidth;
-        const scaleY = containerHeight / imageHeight;
-        const scale = Math.min(scaleX, scaleY, 1); // Don't zoom in beyond 100%
+      // Center the image
+      const scaledWidth = imageWidth * scale;
+      const scaledHeight = imageHeight * scale;
+      const centerX = (containerWidth - scaledWidth) / 2;
+      const centerY = (containerHeight - scaledHeight) / 2;
 
-        setZoomLevel(scale);
+      setPanPosition({ x: centerX, y: centerY });
+    }, 10); // Much shorter delay
 
-        // Center the image
-        const scaledWidth = imageWidth * scale;
-        const scaledHeight = imageHeight * scale;
-        const centerX = (containerWidth - scaledWidth) / 2;
-        const centerY = (containerHeight - scaledHeight) / 2;
-
-        setPanPosition({ x: centerX, y: centerY });
-      };
-
-      checkImageLoaded();
-    };
-
-    // Small delay to ensure DOM is ready
-    const timeout = setTimeout(fitImageToScreen, 100);
     return () => clearTimeout(timeout);
   }, [selectedImage]);
 
