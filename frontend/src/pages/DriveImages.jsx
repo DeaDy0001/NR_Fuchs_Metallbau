@@ -64,6 +64,7 @@ function DriveImages() {
   const [sortOrder, setSortOrder] = useState('desc'); // Sortierrichtung: asc, desc
   const prevImagesCountRef = useRef(0); // Für Auto-Refresh Benachrichtigungen
   const [settingsLoaded, setSettingsLoaded] = useState(false); // Track if settings have been loaded from backend
+  const modalImageRef = useRef(null); // Ref für das Modal-Bild
 
   // Tag system states
   const [tags, setTags] = useState([]); // Alle Tags
@@ -455,6 +456,14 @@ function DriveImages() {
     });
   }, [sortBy, sortOrder, viewMode, showOnlyUnassigned, showAllImages, showOnlyWithProjects, pagination.limit, settingsLoaded, savePreferences]);
 
+  // Wenn Sidebar zugeklappt wird, Auswahl abbrechen
+  useEffect(() => {
+    if (tagSidebarCollapsed) {
+      setSelectedTagId(null);
+      setSelectedProjectId(null);
+    }
+  }, [tagSidebarCollapsed]);
+
   // Reload images when loadImages changes (i.e., when filters change)
   useEffect(() => {
     loadImages();
@@ -546,7 +555,8 @@ function DriveImages() {
     }
     setSelectedImage(image);
     setEditingName(image.name);
-    setZoomLevel(1); // Reset zoom when opening new image
+    setZoomLevel(1); // Will be adjusted in useEffect
+    setPanPosition({ x: 0, y: 0 });
   };
 
   const handleQuickAssignProject = async (imageId) => {
@@ -650,21 +660,33 @@ function DriveImages() {
       const delta = e.deltaY > 0 ? -0.1 : 0.1;
       const newZoomLevel = Math.min(Math.max(zoomLevel + delta, 0.5), 3);
 
-      // Get mouse position relative to the container
-      const rect = e.currentTarget.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
+      if (!modalImageRef.current) return;
 
-      // Calculate the point in the image that the mouse is over
-      const imageX = (mouseX - panPosition.x) / zoomLevel;
-      const imageY = (mouseY - panPosition.y) / zoomLevel;
+      // Get mouse position relative to the scroll container
+      const container = e.currentTarget;
+      const containerRect = container.getBoundingClientRect();
+      const mouseX = e.clientX - containerRect.left;
+      const mouseY = e.clientY - containerRect.top;
+
+      // Get the image element's current position and size
+      const imageRect = modalImageRef.current.getBoundingClientRect();
+      const imageLeft = imageRect.left - containerRect.left;
+      const imageTop = imageRect.top - containerRect.top;
+
+      // Calculate the mouse position relative to the image's current position
+      const mouseXInImage = mouseX - imageLeft;
+      const mouseYInImage = mouseY - imageTop;
+
+      // Calculate the point in the original (unzoomed) image
+      const imageX = mouseXInImage / zoomLevel;
+      const imageY = mouseYInImage / zoomLevel;
 
       // Calculate new pan position to keep the same point under the mouse
-      const newPanX = mouseX - imageX * newZoomLevel;
-      const newPanY = mouseY - imageY * newZoomLevel;
+      const newImageLeft = mouseX - imageX * newZoomLevel;
+      const newImageTop = mouseY - imageY * newZoomLevel;
 
       setZoomLevel(newZoomLevel);
-      setPanPosition({ x: newPanX, y: newPanY });
+      setPanPosition({ x: newImageLeft, y: newImageTop });
     }
   };
 
@@ -770,7 +792,7 @@ function DriveImages() {
       const prevImage = images[currentIndex - 1];
       setSelectedImage(prevImage);
       setEditingName(prevImage.name);
-      setZoomLevel(1);
+      setZoomLevel(1); // Will be adjusted in useEffect
       setPanPosition({ x: 0, y: 0 });
     }
   };
@@ -781,10 +803,58 @@ function DriveImages() {
       const nextImage = images[currentIndex + 1];
       setSelectedImage(nextImage);
       setEditingName(nextImage.name);
-      setZoomLevel(1);
+      setZoomLevel(1); // Will be adjusted in useEffect
       setPanPosition({ x: 0, y: 0 });
     }
   };
+
+  // Auto-fit image to screen when modal opens
+  useEffect(() => {
+    if (!selectedImage || !modalImageRef.current) return;
+
+    const fitImageToScreen = () => {
+      const img = modalImageRef.current;
+      const container = img.parentElement;
+
+      if (!container) return;
+
+      // Wait for image to load
+      const checkImageLoaded = () => {
+        if (img.naturalWidth === 0 || img.naturalHeight === 0) {
+          setTimeout(checkImageLoaded, 50);
+          return;
+        }
+
+        const containerRect = container.getBoundingClientRect();
+        const containerWidth = containerRect.width;
+        const containerHeight = containerRect.height;
+
+        const imageWidth = img.naturalWidth;
+        const imageHeight = img.naturalHeight;
+
+        // Calculate zoom level to fit the image in the container
+        const scaleX = containerWidth / imageWidth;
+        const scaleY = containerHeight / imageHeight;
+        const scale = Math.min(scaleX, scaleY, 1); // Don't zoom in beyond 100%
+
+        setZoomLevel(scale);
+
+        // Center the image
+        const scaledWidth = imageWidth * scale;
+        const scaledHeight = imageHeight * scale;
+        const centerX = (containerWidth - scaledWidth) / 2;
+        const centerY = (containerHeight - scaledHeight) / 2;
+
+        setPanPosition({ x: centerX, y: centerY });
+      };
+
+      checkImageLoaded();
+    };
+
+    // Small delay to ensure DOM is ready
+    const timeout = setTimeout(fitImageToScreen, 100);
+    return () => clearTimeout(timeout);
+  }, [selectedImage]);
 
   // Keyboard shortcuts for modal
   useEffect(() => {
@@ -1763,12 +1833,15 @@ function DriveImages() {
                   }}
                 >
                   <img
+                    ref={modalImageRef}
                     src={selectedImage.local_path || selectedImage.thumbnail_url}
                     alt={selectedImage.name}
                     style={{
-                      transform: `scale(${zoomLevel}) translate(${panPosition.x / zoomLevel}px, ${panPosition.y / zoomLevel}px)`,
-                      transformOrigin: 'top left',
-                      transition: isDragging ? 'none' : 'transform 0.2s ease',
+                      transform: `scale(${zoomLevel})`,
+                      position: 'absolute',
+                      left: `${panPosition.x}px`,
+                      top: `${panPosition.y}px`,
+                      transition: isDragging ? 'none' : 'transform 0.2s ease, left 0.2s ease, top 0.2s ease',
                       userSelect: 'none',
                       pointerEvents: 'none'
                     }}

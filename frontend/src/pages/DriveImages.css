@@ -682,18 +682,17 @@
 
 .modal-image-scroll {
   flex: 1;
-  overflow: auto;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 2rem;
+  overflow: hidden;
+  position: relative;
+  background-color: var(--bg-tertiary);
 }
 
 .modal-image-scroll img {
-  max-width: 100%;
+  max-width: none;
   height: auto;
   display: block;
   image-orientation: from-image;
+  transform-origin: top left;
 }
 
 /* Sidebar (Right - Fixed) */
