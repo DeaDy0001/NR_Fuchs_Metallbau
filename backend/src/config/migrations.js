@@ -332,6 +332,23 @@ const migrations = [
 
       console.log('✓ Migration create_tags_tables completed');
     }
+  },
+  {
+    id: 14,
+    name: 'add_images_pagination_limit',
+    up: () => {
+      console.log('Running migration: add_images_pagination_limit');
+
+      const tableInfo = db.pragma('table_info(settings)');
+      const existingColumns = tableInfo.map(col => col.name);
+
+      // Add pagination limit preference
+      if (!existingColumns.includes('images_pagination_limit')) {
+        db.exec("ALTER TABLE settings ADD COLUMN images_pagination_limit INTEGER DEFAULT 50");
+      }
+
+      console.log('✓ Migration add_images_pagination_limit completed');
+    }
   }
 ];
 

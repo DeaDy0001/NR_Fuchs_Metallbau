@@ -73,9 +73,12 @@ function DriveImages() {
   const [tagColor, setTagColor] = useState('#3b82f6'); // Farbe im Popup
   const [tagNameError, setTagNameError] = useState(''); // Fehler bei doppeltem Namen
   const [tagSidebarCollapsed, setTagSidebarCollapsed] = useState(false); // Sidebar eingeklappt
-  const [tagSearchQuery, setTagSearchQuery] = useState(''); // Tag-Suchfeld
+  const [tagSearchQuery, setTagSearchQuery] = useState(''); // Tag-Suchfeld in Sidebar
   const [showTagFilterModal, setShowTagFilterModal] = useState(false); // Tag-Filter Modal
   const [selectedTagFilters, setSelectedTagFilters] = useState([]); // Ausgewählte Tags für Filter
+  const [tagFilterSearchQuery, setTagFilterSearchQuery] = useState(''); // Tag-Suchfeld im Filter-Modal
+  const [sidebarActiveTab, setSidebarActiveTab] = useState('tags'); // 'tags' oder 'projects'
+  const [selectedProjectId, setSelectedProjectId] = useState(null); // Aktives Projekt für Quick-Assign
 
   const TAG_PRESET_COLORS = [
     '#ef4444', '#f97316', '#f59e0b', '#eab308',
@@ -392,6 +395,9 @@ function DriveImages() {
           if (settings.images_show_only_with_projects !== undefined) {
             setShowOnlyWithProjects(settings.images_show_only_with_projects);
           }
+          if (settings.images_pagination_limit) {
+            setPagination(prev => ({ ...prev, limit: settings.images_pagination_limit }));
+          }
 
           setSettingsLoaded(true);
         }
@@ -431,9 +437,10 @@ function DriveImages() {
       images_view_mode: viewMode,
       images_show_only_unassigned: showOnlyUnassigned,
       images_show_all: showAllImages,
-      images_show_only_with_projects: showOnlyWithProjects
+      images_show_only_with_projects: showOnlyWithProjects,
+      images_pagination_limit: pagination.limit
     });
-  }, [sortBy, sortOrder, viewMode, showOnlyUnassigned, showAllImages, showOnlyWithProjects, settingsLoaded, savePreferences]);
+  }, [sortBy, sortOrder, viewMode, showOnlyUnassigned, showAllImages, showOnlyWithProjects, pagination.limit, settingsLoaded, savePreferences]);
 
   // Reload images when loadImages changes (i.e., when filters change)
   useEffect(() => {
@@ -519,9 +526,41 @@ function DriveImages() {
       handleTagImageClick(image.id);
       return;
     }
+    // If a project is selected in quick-assign mode, assign the project
+    if (selectedProjectId) {
+      handleQuickAssignProject(image.id);
+      return;
+    }
     setSelectedImage(image);
     setEditingName(image.name);
     setZoomLevel(1); // Reset zoom when opening new image
+  };
+
+  const handleQuickAssignProject = async (imageId) => {
+    if (!selectedProjectId) return;
+    try {
+      const response = await fetch('/api/drive/images/assign-to-project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageId, projectId: selectedProjectId })
+      });
+      if (response.ok) {
+        // Update local image state immediately
+        setImages(prev => prev.map(img => {
+          if (img.id === imageId) {
+            const project = projects.find(p => p.id === selectedProjectId);
+            const alreadyHas = img.projects?.some(p => p.id === selectedProjectId);
+            if (project && !alreadyHas) {
+              return { ...img, projects: [...(img.projects || []), { id: project.id, folder_name: project.folder_name, color: project.color }] };
+            }
+          }
+          return img;
+        }));
+        loadProjects(); // Refresh to update any counts if needed
+      }
+    } catch (error) {
+      console.error('Error assigning project:', error);
+    }
   };
 
   const handleZoomIn = () => {
@@ -791,7 +830,7 @@ function DriveImages() {
 
       <div className="drive-images-layout">
       {/* Main Content (Left) */}
-      <div className={`drive-images-main ${selectedTagId ? 'quick-tag-active' : ''}`}>
+      <div className={`drive-images-main ${selectedTagId || selectedProjectId ? 'quick-tag-active' : ''}`}>
 
       <div className="toolbar">
         <div className="search-filters-container">
@@ -819,50 +858,6 @@ function DriveImages() {
                   : `${selectedProjectsFilter.length} Projekt(e)`}
               </button>
             </div>
-
-            {/* Tag-Filter */}
-            <div className="filter-group">
-              <Tag size={16} />
-              <button
-                className="filter-button"
-                onClick={() => setShowTagFilterModal(true)}
-              >
-                {selectedTagFilters.length === 0
-                  ? 'Tags filtern'
-                  : `${selectedTagFilters.length} Tag(s)`}
-              </button>
-            </div>
-
-            {/* Selected Tag Filter Badges */}
-            {selectedTagFilters.length > 0 && (
-              <div className="selected-tag-filters">
-                {tags
-                  .filter(tag => selectedTagFilters.includes(tag.id))
-                  .map(tag => (
-                    <span
-                      key={tag.id}
-                      className="tag-filter-badge"
-                      style={{ backgroundColor: tag.color }}
-                    >
-                      {tag.name}
-                      <button
-                        className="tag-filter-remove"
-                        onClick={() => setSelectedTagFilters(prev => prev.filter(id => id !== tag.id))}
-                        title="Filter entfernen"
-                      >
-                        &times;
-                      </button>
-                    </span>
-                  ))}
-                <button
-                  className="clear-all-tag-filters"
-                  onClick={() => setSelectedTagFilters([])}
-                  title="Alle Tag-Filter entfernen"
-                >
-                  Alle entfernen
-                </button>
-              </div>
-            )}
 
             {/* Bild-Typ Filter */}
             <div className="filter-group">
@@ -960,6 +955,53 @@ function DriveImages() {
                 placeholder="Bis"
               />
             </div>
+          </div>
+
+          {/* Tag-Filter Zeile */}
+          <div className="filters-row">
+            {/* Tag-Filter Button */}
+            <div className="filter-group">
+              <Tag size={16} />
+              <button
+                className="filter-button"
+                onClick={() => setShowTagFilterModal(true)}
+              >
+                {selectedTagFilters.length === 0
+                  ? 'Tags filtern'
+                  : `${selectedTagFilters.length} Tag(s)`}
+              </button>
+            </div>
+
+            {/* Selected Tag Filter Badges */}
+            {selectedTagFilters.length > 0 && (
+              <div className="selected-tag-filters">
+                {tags
+                  .filter(tag => selectedTagFilters.includes(tag.id))
+                  .map(tag => (
+                    <span
+                      key={tag.id}
+                      className="tag-filter-badge"
+                      style={{ backgroundColor: tag.color }}
+                    >
+                      {tag.name}
+                      <button
+                        className="tag-filter-remove"
+                        onClick={() => setSelectedTagFilters(prev => prev.filter(id => id !== tag.id))}
+                        title="Filter entfernen"
+                      >
+                        &times;
+                      </button>
+                    </span>
+                  ))}
+                <button
+                  className="clear-all-tag-filters"
+                  onClick={() => setSelectedTagFilters([])}
+                  title="Alle Tag-Filter entfernen"
+                >
+                  Alle entfernen
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Sortierung */}
@@ -1302,20 +1344,39 @@ function DriveImages() {
 
       </div>{/* End drive-images-main */}
 
-      {/* Tag Sidebar (Right) */}
+      {/* Sidebar (Right) - Tags & Projekte */}
       <div className={`tag-sidebar ${tagSidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="tag-sidebar-header">
           {!tagSidebarCollapsed && (
             <>
-              <Tag size={18} />
-              <span>Tags</span>
-              <button
-                className="tag-add-btn"
-                onClick={() => openTagPopup()}
-                title="Neuen Tag erstellen"
-              >
-                <Plus size={16} />
-              </button>
+              {/* Tabs */}
+              <div className="sidebar-tabs">
+                <button
+                  className={`sidebar-tab ${sidebarActiveTab === 'tags' ? 'active' : ''}`}
+                  onClick={() => setSidebarActiveTab('tags')}
+                >
+                  <Tag size={16} />
+                  Tags
+                </button>
+                <button
+                  className={`sidebar-tab ${sidebarActiveTab === 'projects' ? 'active' : ''}`}
+                  onClick={() => setSidebarActiveTab('projects')}
+                >
+                  <Filter size={16} />
+                  Projekte
+                </button>
+              </div>
+
+              {/* Add Button */}
+              {sidebarActiveTab === 'tags' && (
+                <button
+                  className="tag-add-btn"
+                  onClick={() => openTagPopup()}
+                  title="Neuen Tag erstellen"
+                >
+                  <Plus size={16} />
+                </button>
+              )}
             </>
           )}
           <button
@@ -1327,7 +1388,7 @@ function DriveImages() {
           </button>
         </div>
 
-        {!tagSidebarCollapsed && (
+        {!tagSidebarCollapsed && sidebarActiveTab === 'tags' && (
           <>
             {/* Tag Search Field */}
             <div className="tag-search-box">
@@ -1363,6 +1424,7 @@ function DriveImages() {
                         onClick={(e) => {
                           e.preventDefault();
                           setSelectedTagId(prev => prev === tag.id ? null : tag.id);
+                          setSelectedProjectId(null); // Deselect project when selecting tag
                         }}
                       >
                         <div className={`tag-checkbox ${selectedTagId === tag.id ? 'checked' : ''}`}>
@@ -1394,6 +1456,58 @@ function DriveImages() {
                           <Trash2 size={14} />
                         </button>
                       </div>
+                    </div>
+                  ))
+              )}
+            </div>
+          </>
+        )}
+
+        {!tagSidebarCollapsed && sidebarActiveTab === 'projects' && (
+          <>
+            {/* Project Search Field */}
+            <div className="tag-search-box">
+              <Search size={16} />
+              <input
+                type="text"
+                placeholder="Projekte suchen..."
+                value={tagSearchQuery}
+                onChange={(e) => setTagSearchQuery(e.target.value)}
+                className="tag-search-input"
+              />
+              {tagSearchQuery && (
+                <button
+                  className="tag-search-clear"
+                  onClick={() => setTagSearchQuery('')}
+                  title="Suche löschen"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+
+            <div className="tag-list">
+              {projects.length === 0 ? (
+                <div className="tag-empty">Keine Projekte verfügbar</div>
+              ) : (
+                projects
+                  .filter(project => project.folder_name.toLowerCase().includes(tagSearchQuery.toLowerCase()))
+                  .map(project => (
+                    <div key={project.id} className={`tag-list-item ${selectedProjectId === project.id ? 'tag-selected' : ''}`}>
+                      <label
+                        className="tag-checkbox-label"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setSelectedProjectId(prev => prev === project.id ? null : project.id);
+                          setSelectedTagId(null); // Deselect tag when selecting project
+                        }}
+                      >
+                        <div className={`tag-checkbox ${selectedProjectId === project.id ? 'checked' : ''}`}>
+                          {selectedProjectId === project.id && <Check size={12} />}
+                        </div>
+                        <span className="tag-color-dot" style={{ backgroundColor: project.color }}></span>
+                        <span className="tag-item-name">{project.folder_name}</span>
+                      </label>
                     </div>
                   ))
               )}
@@ -1872,11 +1986,11 @@ function DriveImages() {
 
       {/* Tag-Filter Modal */}
       {showTagFilterModal && (
-        <div className="modal-overlay" onClick={() => setShowTagFilterModal(false)}>
+        <div className="modal-overlay" onClick={() => { setShowTagFilterModal(false); setTagFilterSearchQuery(''); }}>
           <div className="project-modal" onClick={(e) => e.stopPropagation()}>
             <div className="project-modal-header">
               <h3>Tags filtern</h3>
-              <button className="modal-close" onClick={() => setShowTagFilterModal(false)}>
+              <button className="modal-close" onClick={() => { setShowTagFilterModal(false); setTagFilterSearchQuery(''); }}>
                 <X size={20} />
               </button>
             </div>
@@ -1885,11 +1999,33 @@ function DriveImages() {
                 Wähle einen oder mehrere Tags aus
               </div>
 
+              {/* Tag-Suchfeld */}
+              <div className="project-modal-search">
+                <Search size={18} />
+                <input
+                  type="text"
+                  placeholder="Tag suchen..."
+                  value={tagFilterSearchQuery}
+                  onChange={(e) => setTagFilterSearchQuery(e.target.value)}
+                  className="project-modal-search-input"
+                />
+                {tagFilterSearchQuery && (
+                  <button
+                    className="project-modal-search-clear"
+                    onClick={() => setTagFilterSearchQuery('')}
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+
               <div className="project-modal-list">
                 {tags.length === 0 ? (
                   <div className="tag-empty">Keine Tags verfügbar</div>
                 ) : (
-                  tags.map(tag => (
+                  tags
+                    .filter(tag => tag.name.toLowerCase().includes(tagFilterSearchQuery.toLowerCase()))
+                    .map(tag => (
                     <div
                       key={tag.id}
                       className={`project-modal-item ${selectedTagFilters.includes(tag.id) ? 'selected' : ''}`}
