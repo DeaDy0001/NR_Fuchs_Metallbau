@@ -24,6 +24,7 @@ app.use('/api/annotations', require('./routes/annotations'));
 app.use('/api/color-presets', require('./routes/colorPresets'));
 app.use('/api/system', require('./routes/system'));
 app.use('/api/github', require('./routes/github'));
+app.use('/api/tags', require('./routes/tags'));
 
 // Health check
 app.get('/api/health', (req, res) => {

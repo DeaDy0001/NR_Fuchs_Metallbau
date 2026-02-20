@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Grid, List, RefreshCw, Search, Maximize2, Edit2, X, Play, Pause, Trash2, ChevronLeft, ChevronRight, Filter, Calendar, Pencil } from 'lucide-react';
+import { Grid, List, RefreshCw, Search, Maximize2, Edit2, X, Play, Pause, Trash2, ChevronLeft, ChevronRight, Filter, Calendar, Pencil, Tag, Plus, Check, Edit3 } from 'lucide-react';
 import ImageEditor from '../components/ImageEditor';
 import './DriveImages.css';
 
@@ -63,6 +63,23 @@ function DriveImages() {
   const [sortOrder, setSortOrder] = useState('desc'); // Sortierrichtung: asc, desc
   const prevImagesCountRef = useRef(0); // Für Auto-Refresh Benachrichtigungen
   const [settingsLoaded, setSettingsLoaded] = useState(false); // Track if settings have been loaded from backend
+
+  // Tag system states
+  const [tags, setTags] = useState([]); // Alle Tags
+  const [selectedTagId, setSelectedTagId] = useState(null); // Aktiver Tag für Quick-Tag-Modus
+  const [showTagPopup, setShowTagPopup] = useState(false); // Tag erstellen/bearbeiten Popup
+  const [editingTag, setEditingTag] = useState(null); // Tag der bearbeitet wird (null = neuer Tag)
+  const [tagName, setTagName] = useState(''); // Name im Popup
+  const [tagColor, setTagColor] = useState('#3b82f6'); // Farbe im Popup
+  const [tagNameError, setTagNameError] = useState(''); // Fehler bei doppeltem Namen
+
+  const TAG_PRESET_COLORS = [
+    '#ef4444', '#f97316', '#f59e0b', '#eab308',
+    '#84cc16', '#22c55e', '#10b981', '#14b8a6',
+    '#06b6d4', '#0ea5e9', '#3b82f6', '#6366f1',
+    '#8b5cf6', '#a855f7', '#d946ef', '#ec4899',
+    '#f43f5e', '#78716c', '#64748b', '#ffffff'
+  ];
 
   // Save filter/sort preferences to backend
   const savePreferences = useCallback(async (preferences) => {
@@ -192,6 +209,160 @@ function DriveImages() {
     }
   };
 
+  // Tag functions
+  const loadTags = async () => {
+    try {
+      const response = await fetch('/api/tags');
+      if (response.ok) {
+        const data = await response.json();
+        setTags(data.tags);
+      }
+    } catch (error) {
+      console.error('Error loading tags:', error);
+    }
+  };
+
+  const handleCreateOrUpdateTag = async () => {
+    if (!tagName.trim()) {
+      setTagNameError('Name darf nicht leer sein');
+      return;
+    }
+
+    // Check for duplicate name locally
+    const duplicate = tags.find(t =>
+      t.name.toLowerCase() === tagName.trim().toLowerCase() &&
+      (!editingTag || t.id !== editingTag.id)
+    );
+    if (duplicate) {
+      setTagNameError('Ein Tag mit diesem Namen existiert bereits');
+      return;
+    }
+
+    try {
+      if (editingTag) {
+        // Update existing tag
+        const response = await fetch(`/api/tags/${editingTag.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: tagName.trim(), color: tagColor })
+        });
+        if (response.ok) {
+          loadTags();
+          loadImages(true); // Refresh images to show updated tag colors/names
+        } else {
+          const error = await response.json();
+          setTagNameError(error.error || 'Fehler beim Aktualisieren');
+          return;
+        }
+      } else {
+        // Create new tag
+        const response = await fetch('/api/tags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: tagName.trim(), color: tagColor })
+        });
+        if (response.ok) {
+          loadTags();
+        } else {
+          const error = await response.json();
+          setTagNameError(error.error || 'Fehler beim Erstellen');
+          return;
+        }
+      }
+      closeTagPopup();
+    } catch (error) {
+      console.error('Error saving tag:', error);
+      setTagNameError('Fehler beim Speichern');
+    }
+  };
+
+  const handleDeleteTag = async (tagId) => {
+    if (!confirm('Tag wirklich löschen? Dies entfernt den Tag von allen Bildern.')) return;
+    try {
+      const response = await fetch(`/api/tags/${tagId}`, { method: 'DELETE' });
+      if (response.ok) {
+        if (selectedTagId === tagId) setSelectedTagId(null);
+        loadTags();
+        loadImages(true);
+      }
+    } catch (error) {
+      console.error('Error deleting tag:', error);
+    }
+  };
+
+  const handleTagImageClick = async (imageId) => {
+    if (!selectedTagId) return;
+    try {
+      const response = await fetch('/api/tags/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageId, tagId: selectedTagId })
+      });
+      if (response.ok) {
+        // Update local image state immediately
+        setImages(prev => prev.map(img => {
+          if (img.id === imageId) {
+            const tag = tags.find(t => t.id === selectedTagId);
+            const alreadyHas = img.tags?.some(t => t.id === selectedTagId);
+            if (tag && !alreadyHas) {
+              return { ...img, tags: [...(img.tags || []), { id: tag.id, name: tag.name, color: tag.color }] };
+            }
+          }
+          return img;
+        }));
+        loadTags(); // Refresh counts
+      }
+    } catch (error) {
+      console.error('Error assigning tag:', error);
+    }
+  };
+
+  const handleRemoveTagFromImage = async (imageId, tagId, e) => {
+    if (e) e.stopPropagation();
+    try {
+      const response = await fetch('/api/tags/unassign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageId, tagId })
+      });
+      if (response.ok) {
+        // Update local state
+        setImages(prev => prev.map(img => {
+          if (img.id === imageId) {
+            return { ...img, tags: (img.tags || []).filter(t => t.id !== tagId) };
+          }
+          return img;
+        }));
+        // Also update selectedImage if open
+        if (selectedImage && selectedImage.id === imageId) {
+          setSelectedImage(prev => ({
+            ...prev,
+            tags: (prev.tags || []).filter(t => t.id !== tagId)
+          }));
+        }
+        loadTags(); // Refresh counts
+      }
+    } catch (error) {
+      console.error('Error removing tag:', error);
+    }
+  };
+
+  const openTagPopup = (tag = null) => {
+    setEditingTag(tag);
+    setTagName(tag ? tag.name : '');
+    setTagColor(tag ? tag.color : '#3b82f6');
+    setTagNameError('');
+    setShowTagPopup(true);
+  };
+
+  const closeTagPopup = () => {
+    setShowTagPopup(false);
+    setEditingTag(null);
+    setTagName('');
+    setTagColor('#3b82f6');
+    setTagNameError('');
+  };
+
   // Load settings from backend on mount
   useEffect(() => {
     const loadSettings = async () => {
@@ -229,6 +400,7 @@ function DriveImages() {
   useEffect(() => {
     loadProjects();
     loadDrivePaths();
+    loadTags();
     loadImages(); // Initial load
     // Load selected projects from localStorage
     const saved = localStorage.getItem('selectedProjects');
@@ -334,6 +506,11 @@ function DriveImages() {
   };
 
   const handleImageClick = (image) => {
+    // If a tag is selected in quick-tag mode, assign the tag instead of opening modal
+    if (selectedTagId) {
+      handleTagImageClick(image.id);
+      return;
+    }
     setSelectedImage(image);
     setEditingName(image.name);
     setZoomLevel(1); // Reset zoom when opening new image
@@ -604,6 +781,10 @@ function DriveImages() {
         </div>
       </div>
 
+      <div className="drive-images-layout">
+      {/* Main Content (Left) */}
+      <div className={`drive-images-main ${selectedTagId ? 'quick-tag-active' : ''}`}>
+
       <div className="toolbar">
         <div className="search-filters-container">
           <div className="search-box">
@@ -863,6 +1044,27 @@ function DriveImages() {
                   </div>
                   <div className="image-info">
                     <div className="image-name" title={image.name}>{image.name}</div>
+                    {image.tags && image.tags.length > 0 && (
+                      <div className="tag-badges">
+                        {image.tags.map(tag => (
+                          <span
+                            key={tag.id}
+                            className="tag-badge-small"
+                            style={{ backgroundColor: tag.color }}
+                            title={tag.name}
+                          >
+                            {tag.name}
+                            <button
+                              className="tag-badge-remove"
+                              onClick={(e) => handleRemoveTagFromImage(image.id, tag.id, e)}
+                              title="Tag entfernen"
+                            >
+                              &times;
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     {image.projects && image.projects.length > 0 && (
                       <div className="project-badges">
                         {image.projects.map(project => (
@@ -902,6 +1104,27 @@ function DriveImages() {
                     <div className="image-meta">
                       {image.file_size && `${(image.file_size / 1024 / 1024).toFixed(2)} MB`}
                       {image.width && image.height && ` • ${image.width}x${image.height}`}
+                      {image.tags && image.tags.length > 0 && (
+                        <div className="tag-badges" style={{ marginTop: '0.25rem' }}>
+                          {image.tags.map(tag => (
+                            <span
+                              key={tag.id}
+                              className="tag-badge-small"
+                              style={{ backgroundColor: tag.color }}
+                              title={tag.name}
+                            >
+                              {tag.name}
+                              <button
+                                className="tag-badge-remove"
+                                onClick={(e) => handleRemoveTagFromImage(image.id, tag.id, e)}
+                                title="Tag entfernen"
+                              >
+                                &times;
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       {image.projects && image.projects.length > 0 && (
                         <div className="project-badges" style={{ marginTop: '0.25rem' }}>
                           {image.projects.map(project => (
@@ -1021,6 +1244,157 @@ function DriveImages() {
               <option value={250}>250</option>
               <option value={300}>300</option>
             </select>
+          </div>
+        </div>
+      )}
+
+      </div>{/* End drive-images-main */}
+
+      {/* Tag Sidebar (Right) */}
+      <div className="tag-sidebar">
+        <div className="tag-sidebar-header">
+          <Tag size={18} />
+          <span>Tags</span>
+          <button
+            className="tag-add-btn"
+            onClick={() => openTagPopup()}
+            title="Neuen Tag erstellen"
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+
+        {selectedTagId && (
+          <div className="tag-quick-mode-hint">
+            Klicke auf ein Bild, um den Tag zuzuweisen
+            <button
+              className="tag-quick-mode-cancel"
+              onClick={() => setSelectedTagId(null)}
+            >
+              Abbrechen
+            </button>
+          </div>
+        )}
+
+        <div className="tag-list">
+          {tags.length === 0 ? (
+            <div className="tag-empty">Noch keine Tags erstellt</div>
+          ) : (
+            tags.map(tag => (
+              <div key={tag.id} className={`tag-list-item ${selectedTagId === tag.id ? 'tag-selected' : ''}`}>
+                <label
+                  className="tag-checkbox-label"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setSelectedTagId(prev => prev === tag.id ? null : tag.id);
+                  }}
+                >
+                  <div className={`tag-checkbox ${selectedTagId === tag.id ? 'checked' : ''}`}>
+                    {selectedTagId === tag.id && <Check size={12} />}
+                  </div>
+                  <span className="tag-color-dot" style={{ backgroundColor: tag.color }}></span>
+                  <span className="tag-item-name">{tag.name}</span>
+                  <span className="tag-item-count">({tag.image_count || 0})</span>
+                </label>
+                <div className="tag-item-actions">
+                  <button
+                    className="tag-edit-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openTagPopup(tag);
+                    }}
+                    title="Tag bearbeiten"
+                  >
+                    <Edit3 size={14} />
+                  </button>
+                  <button
+                    className="tag-delete-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteTag(tag.id);
+                    }}
+                    title="Tag löschen"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+      </div>{/* End drive-images-layout */}
+
+      {/* Tag Create/Edit Popup */}
+      {showTagPopup && (
+        <div className="modal-overlay" onClick={closeTagPopup}>
+          <div className="tag-popup" onClick={(e) => e.stopPropagation()}>
+            <div className="tag-popup-header">
+              <h3>{editingTag ? 'Tag bearbeiten' : 'Neuen Tag erstellen'}</h3>
+              <button className="modal-close-sm" onClick={closeTagPopup}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="tag-popup-content">
+              <div className="tag-popup-field">
+                <label>Name</label>
+                <input
+                  type="text"
+                  value={tagName}
+                  onChange={(e) => {
+                    setTagName(e.target.value);
+                    setTagNameError('');
+                  }}
+                  placeholder="Tag-Name eingeben..."
+                  className={`input ${tagNameError ? 'input-error' : ''}`}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleCreateOrUpdateTag();
+                  }}
+                />
+                {tagNameError && <div className="tag-error">{tagNameError}</div>}
+              </div>
+
+              <div className="tag-popup-field">
+                <label>Farbe</label>
+                <div className="tag-color-presets">
+                  {TAG_PRESET_COLORS.map(color => (
+                    <button
+                      key={color}
+                      className={`tag-color-preset ${tagColor === color ? 'active' : ''}`}
+                      style={{ backgroundColor: color }}
+                      onClick={() => setTagColor(color)}
+                      title={color}
+                    />
+                  ))}
+                </div>
+                <div className="tag-custom-color">
+                  <label>Eigene Farbe:</label>
+                  <input
+                    type="color"
+                    value={tagColor}
+                    onChange={(e) => setTagColor(e.target.value)}
+                    className="tag-color-input"
+                  />
+                  <span className="tag-color-hex">{tagColor}</span>
+                </div>
+              </div>
+
+              <div className="tag-popup-preview">
+                <label>Vorschau:</label>
+                <div className="tag-preview-badge" style={{ backgroundColor: tagColor }}>
+                  {tagName || 'Tag Name'}
+                </div>
+              </div>
+            </div>
+            <div className="tag-popup-actions">
+              <button className="btn btn-secondary" onClick={closeTagPopup}>
+                Abbrechen
+              </button>
+              <button className="btn btn-primary" onClick={handleCreateOrUpdateTag}>
+                {editingTag ? 'Speichern' : 'Erstellen'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1202,9 +1576,33 @@ function DriveImages() {
                   </div>
                 )}
 
+                {selectedImage.tags && selectedImage.tags.length > 0 && (
+                  <div className="modal-section">
+                    <label>Tags</label>
+                    <div className="tag-badges-modal">
+                      {selectedImage.tags.map(tag => (
+                        <span
+                          key={tag.id}
+                          className="tag-badge-modal"
+                          style={{ backgroundColor: tag.color }}
+                        >
+                          {tag.name}
+                          <button
+                            className="tag-badge-remove-modal"
+                            onClick={() => handleRemoveTagFromImage(selectedImage.id, tag.id)}
+                            title="Tag entfernen"
+                          >
+                            &times;
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {selectedImage.projects && selectedImage.projects.length > 0 && (
                   <div className="modal-section">
-                    <label>🏷️ Zugeordnete Projekte</label>
+                    <label>Zugeordnete Projekte</label>
                     <div className="project-badges-modal">
                       {selectedImage.projects.map(project => (
                         <div

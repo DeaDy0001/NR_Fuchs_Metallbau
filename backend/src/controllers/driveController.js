@@ -343,11 +343,20 @@ const getImages = (req, res) => {
       WHERE ipa.image_id = ?
     `);
 
-    // Convert booleans and add projects
+    // Get assigned tags for each image
+    const tagsStmt = db.prepare(`
+      SELECT t.id, t.name, t.color
+      FROM image_tags it
+      JOIN tags t ON it.tag_id = t.id
+      WHERE it.image_id = ?
+    `);
+
+    // Convert booleans and add projects + tags
     const formatted = images.map(img => ({
       ...img,
       is_compressed: !!img.is_compressed,
-      projects: projectsStmt.all(img.id)
+      projects: projectsStmt.all(img.id),
+      tags: tagsStmt.all(img.id)
     }));
 
     // Get total count
