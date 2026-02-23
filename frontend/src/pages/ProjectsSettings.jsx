@@ -3,8 +3,14 @@ import { FolderOpen, Save, RefreshCw } from 'lucide-react';
 import './ProjectsSettings.css';
 
 function ProjectsSettings() {
-  const [settings, setSettings] = useState({ project_path: '' });
+  const [settings, setSettings] = useState({
+    project_path: '',
+    sync_interval: 30,
+    auto_sync_enabled: 1
+  });
   const [newPath, setNewPath] = useState('');
+  const [syncInterval, setSyncInterval] = useState(30);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
@@ -19,6 +25,8 @@ function ProjectsSettings() {
         const data = await response.json();
         setSettings(data);
         setNewPath(data.project_path || '');
+        setSyncInterval(data.sync_interval || 30);
+        setAutoSyncEnabled(data.auto_sync_enabled === 1);
       }
     } catch (error) {
       console.error('Error loading settings:', error);
@@ -37,11 +45,16 @@ function ProjectsSettings() {
       const response = await fetch('/api/projects/settings/path', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: newPath })
+        body: JSON.stringify({
+          path: newPath,
+          sync_interval: syncInterval,
+          auto_sync_enabled: autoSyncEnabled
+        })
       });
 
       if (response.ok) {
         loadSettings();
+        alert('Einstellungen erfolgreich gespeichert');
       } else {
         const error = await response.json();
         alert(`Fehler: ${error.error || 'Pfad konnte nicht gespeichert werden'}`);
@@ -69,7 +82,23 @@ function ProjectsSettings() {
 
       if (response.ok) {
         const data = await response.json();
-        alert(`Synchronisierung erfolgreich!\n${data.added} neue Projekte hinzugefügt\n${data.total} Ordner insgesamt`);
+        let message = `Synchronisierung erfolgreich!\n\n${data.added} neue Projekte hinzugefügt\n${data.total} Ordner insgesamt`;
+
+        // Show removed projects if any
+        if (data.removed && data.removed.length > 0) {
+          message += `\n\nEntfernte Projekte (${data.removed.length}):\n${data.removed.join('\n')}`;
+        }
+
+        // Show image counts if available
+        if (data.imageCounts && data.imageCounts.length > 0) {
+          const top5 = data.imageCounts.slice(0, 5);
+          message += `\n\nBilder pro Projekt (Top 5):\n${top5.map(p => `${p.folder}: ${p.count} Bilder`).join('\n')}`;
+          if (data.imageCounts.length > 5) {
+            message += `\n... und ${data.imageCounts.length - 5} weitere`;
+          }
+        }
+
+        alert(message);
       } else {
         const error = await response.json();
         alert(`Fehler: ${error.error || 'Synchronisierung fehlgeschlagen'}`);
@@ -127,8 +156,39 @@ function ProjectsSettings() {
         <h2>Synchronisierung</h2>
         <p className="section-description">
           Synchronisieren Sie die Projekte aus dem konfigurierten Ordner mit der Datenbank.
-          Neue Ordner werden automatisch als Projekte hinzugefügt.
+          Neue Ordner werden automatisch als Projekte hinzugefügt und alphabetisch sortiert.
         </p>
+
+        <div className="sync-settings">
+          <div className="form-group">
+            <label>
+              <input
+                type="checkbox"
+                checked={autoSyncEnabled}
+                onChange={(e) => setAutoSyncEnabled(e.target.checked)}
+              />
+              Automatische Synchronisierung aktivieren
+            </label>
+          </div>
+
+          {autoSyncEnabled && (
+            <div className="form-group">
+              <label htmlFor="sync-interval">Sync-Intervall (Minuten)</label>
+              <input
+                id="sync-interval"
+                type="number"
+                min="1"
+                max="1440"
+                value={syncInterval}
+                onChange={(e) => setSyncInterval(parseInt(e.target.value) || 30)}
+                className="input-number"
+              />
+              <small className="help-text">
+                Projekte werden automatisch alle {syncInterval} Minuten synchronisiert
+              </small>
+            </div>
+          )}
+        </div>
 
         <button
           className="btn btn-secondary"
@@ -136,8 +196,14 @@ function ProjectsSettings() {
           disabled={syncing || !settings.project_path}
         >
           <RefreshCw size={18} className={syncing ? 'spinning' : ''} />
-          {syncing ? 'Synchronisiere...' : 'Projekte synchronisieren'}
+          {syncing ? 'Synchronisiere...' : 'Jetzt synchronisieren'}
         </button>
+
+        {settings.last_sync && (
+          <div className="last-sync-info">
+            Letzte Synchronisierung: {new Date(settings.last_sync + 'Z').toLocaleString('de-DE')}
+          </div>
+        )}
       </div>
 
       <div className="settings-section">

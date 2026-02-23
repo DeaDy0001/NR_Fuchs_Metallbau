@@ -22,10 +22,10 @@ const getProjectSettings = (req, res) => {
   }
 };
 
-// Set project path
+// Set project path and sync settings
 const setProjectPath = async (req, res) => {
   try {
-    const { path: projectPath } = req.body;
+    const { path: projectPath, sync_interval, auto_sync_enabled } = req.body;
 
     if (!projectPath) {
       return res.status(400).json({ error: 'Path is required' });
@@ -37,13 +37,36 @@ const setProjectPath = async (req, res) => {
       return res.status(400).json({ error: 'Path does not exist' });
     }
 
-    const updateStmt = db.prepare("UPDATE project_settings SET project_path = ?, updated_at = datetime('now') WHERE id = 1");
-    const updateResult = updateStmt.run(projectPath);
+    // Build update query dynamically
+    const updates = ["project_path = ?", "updated_at = datetime('now')"];
+    const params = [projectPath];
+
+    if (sync_interval !== undefined) {
+      updates.push('sync_interval = ?');
+      params.push(parseInt(sync_interval));
+    }
+
+    if (auto_sync_enabled !== undefined) {
+      updates.push('auto_sync_enabled = ?');
+      params.push(auto_sync_enabled ? 1 : 0);
+    }
+
+    params.push(1); // WHERE id = 1
+
+    const updateStmt = db.prepare(`UPDATE project_settings SET ${updates.join(', ')} WHERE id = ?`);
+    const updateResult = updateStmt.run(...params);
 
     if (updateResult.changes === 0) {
       // Insert if doesn't exist
-      const insertStmt = db.prepare('INSERT INTO project_settings (project_path) VALUES (?)');
-      const insertResult = insertStmt.run(projectPath);
+      const insertStmt = db.prepare(`
+        INSERT INTO project_settings (project_path, sync_interval, auto_sync_enabled)
+        VALUES (?, ?, ?)
+      `);
+      const insertResult = insertStmt.run(
+        projectPath,
+        sync_interval !== undefined ? parseInt(sync_interval) : 30,
+        auto_sync_enabled !== undefined ? (auto_sync_enabled ? 1 : 0) : 1
+      );
       const newSettings = db.prepare('SELECT * FROM project_settings WHERE id = ?').get(insertResult.lastInsertRowid);
       return res.json(newSettings);
     }
@@ -70,7 +93,8 @@ const getProjects = async (req, res) => {
       params.push(searchParam, searchParam);
     }
 
-    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    // Sort alphabetically by folder name
+    query += ' ORDER BY folder_name COLLATE NOCASE ASC LIMIT ? OFFSET ?';
     params.push(parseInt(limit), parseInt(offset));
 
     const projects = db.prepare(query).all(...params);
@@ -257,13 +281,30 @@ const syncProjects = async (req, res) => {
 
     let addedCount = 0;
 
-    // Add new projects
+    // Add new projects and count images
     const insertStmt = db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)');
+    const projectImageCounts = [];
 
     for (const folderName of folders) {
       if (!existingFolderNames.has(folderName)) {
         insertStmt.run(folderName, '#3b82f6', '');
         addedCount++;
+      }
+
+      // Count images in Bilder subfolder for reporting
+      const imagesFolderPath = path.join(projectPath, folderName, 'Bilder');
+      let imageCount = 0;
+      try {
+        if (await fs.pathExists(imagesFolderPath)) {
+          const imageFiles = await fs.readdir(imagesFolderPath);
+          imageCount = imageFiles.filter(file => /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(file)).length;
+        }
+      } catch (err) {
+        // Ignore errors (e.g., no read permission)
+      }
+
+      if (imageCount > 0) {
+        projectImageCounts.push({ folder: folderName, count: imageCount });
       }
     }
 
@@ -279,11 +320,15 @@ const syncProjects = async (req, res) => {
       }
     }
 
+    // Update last_sync timestamp
+    db.prepare("UPDATE project_settings SET last_sync = datetime('now') WHERE id = 1").run();
+
     res.json({
       message: 'Projects synced successfully',
       added: addedCount,
       removed: removedNames,
-      total: folders.length
+      total: folders.length,
+      imageCounts: projectImageCounts
     });
   } catch (error) {
     console.error('Error syncing projects:', error);

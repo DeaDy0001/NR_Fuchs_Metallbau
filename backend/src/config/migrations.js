@@ -349,6 +349,29 @@ const migrations = [
 
       console.log('✓ Migration add_images_pagination_limit completed');
     }
+  },
+  {
+    id: 15,
+    name: 'add_project_sync_settings',
+    up: () => {
+      console.log('Running migration: add_project_sync_settings');
+
+      const tableInfo = db.pragma('table_info(project_settings)');
+      const existingColumns = tableInfo.map(col => col.name);
+
+      // Add auto sync settings for projects
+      if (!existingColumns.includes('auto_sync_enabled')) {
+        db.exec('ALTER TABLE project_settings ADD COLUMN auto_sync_enabled INTEGER DEFAULT 1');
+      }
+      if (!existingColumns.includes('sync_interval')) {
+        db.exec('ALTER TABLE project_settings ADD COLUMN sync_interval INTEGER DEFAULT 30');
+      }
+      if (!existingColumns.includes('last_sync')) {
+        db.exec('ALTER TABLE project_settings ADD COLUMN last_sync TEXT');
+      }
+
+      console.log('✓ Migration add_project_sync_settings completed');
+    }
   }
 ];
 
