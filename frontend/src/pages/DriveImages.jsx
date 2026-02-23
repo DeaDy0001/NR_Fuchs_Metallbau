@@ -645,7 +645,8 @@ function DriveImages() {
   };
 
   const handleZoomOut = () => {
-    const newZoom = Math.max(zoomLevel - 0.25, 0.5); // Min 50%
+    // Don't zoom out below the initial fit-to-container zoom level
+    const newZoom = Math.max(zoomLevel - 0.25, initialZoomLevel);
 
     // Zoom towards center of viewport
     if (!modalImageRef.current?.parentElement) {
@@ -868,14 +869,24 @@ function DriveImages() {
       return;
     }
 
-    // Wait a bit for container to be ready
-    const timeout = setTimeout(() => {
+    // Use requestAnimationFrame to wait for container to be ready
+    const calculateZoom = () => {
       const container = modalImageRef.current?.parentElement;
-      if (!container) return;
+      if (!container) {
+        // Retry on next frame if container not ready
+        requestAnimationFrame(calculateZoom);
+        return;
+      }
 
       const containerRect = container.getBoundingClientRect();
       const containerWidth = containerRect.width;
       const containerHeight = containerRect.height;
+
+      // Safeguard: ensure container has valid dimensions
+      if (containerWidth === 0 || containerHeight === 0) {
+        requestAnimationFrame(calculateZoom);
+        return;
+      }
 
       // Calculate zoom level to fit the image in the container
       const scaleX = containerWidth / imageWidth;
@@ -896,9 +907,12 @@ function DriveImages() {
       // Save as initial values for reset button
       setInitialZoomLevel(fitZoom);
       setInitialPanPosition(fitPan);
-    }, 10); // Much shorter delay
+    };
 
-    return () => clearTimeout(timeout);
+    // Start calculation on next frame
+    const rafId = requestAnimationFrame(calculateZoom);
+
+    return () => cancelAnimationFrame(rafId);
   }, [selectedImage]);
 
   // Keyboard shortcuts for modal
@@ -1842,7 +1856,7 @@ function DriveImages() {
               {/* Scrollable Image Container (Left) */}
               <div className="modal-image-container">
                 <div className="zoom-controls">
-                  <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= 0.5}>
+                  <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= initialZoomLevel}>
                     -
                   </button>
                   <span className="zoom-level">{Math.round(zoomLevel * 100)}%</span>
