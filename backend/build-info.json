@@ -1,13 +1,13 @@
 {
   "version": "1.0.2",
-  "buildDate": "2026-02-23T17:06:42.458Z",
-  "buildTimestamp": 1771866402459,
+  "buildDate": "2026-02-23T20:30:39.986Z",
+  "buildTimestamp": 1771878639987,
   "git": {
     "branch": "claude/local-network-web-app-A0KKq",
-    "commit": "2929903",
-    "commitLong": "2929903fe6f18f5005f5666c69d807fc74c0ee19",
-    "commitMessage": "feat: Switcher für Alle/Markierte Projekte in rechter Sidebar\n\n- Neuer Switcher unter der Suchleiste im Projekte-Tab\n- Toggle zwischen \"Alle Projekte\" und \"Markierte\"\n- Filtert Projekt-Liste basierend auf Auswahl\n- Modernes Segmented-Control Design\n- Smooth Transitions und Hover-States\n\nhttps://claude.ai/code/session_01GA3uGKNUqcpopiTUdJQZtg",
-    "commitDate": "2026-02-23 13:45:54 +0000",
+    "commit": "59a2ef9",
+    "commitLong": "59a2ef97035bf40e7ca60158cc16bca0d9446797",
+    "commitMessage": "feat: Build-Info System für Release-ZIP ohne Git\n\nProblem:\n- UpdateSettings zeigte falsche Versionsinformationen (1.0.0 statt 1.0.2)\n- Branch zeigte \"HEAD\" statt \"main\" bei Release-ZIPs\n- Git-Befehle schlugen fehl wenn kein .git Ordner vorhanden (Release-ZIPs)\n\nLösung:\n- Neues Build-Info Generator Script (scripts/generate-build-info.js)\n- Generiert build-info.json mit Version, Build-Datum und Git-Info\n- Funktioniert mit und ohne Git (für Release-Builds)\n- Auto-Generierung beim Frontend Build (prebuild Script)\n- systemController.js liest build-info.json als Fallback\n- Verbesserte UI in UpdateSettings (Version highlight, Release-Badge)\n\nÄnderungen:\n- scripts/generate-build-info.js (NEU) - Generiert build-info.json\n- backend/build-info.json (NEU) - Build-Informationen\n- backend/package.json - Version 1.0.2, build-info Script\n- frontend/package.json - Version 1.0.2, prebuild Script\n- backend/src/controllers/systemController.js - build-info.json Support\n- frontend/src/pages/UpdateSettings.jsx - Verbesserte Anzeige\n- frontend/src/pages/UpdateSettings.css - Neue Styles\n\nJetzt zeigt UpdateSettings korrekt:\n✅ Version: 1.0.2 (aus package.json)\n✅ Build-Datum: Aktuelles Build-Datum\n✅ Branch: \"release\" bei ZIP-Installationen (statt \"HEAD\")\n✅ Release-Badge bei Release-Builds\n\nhttps://claude.ai/code/session_01GA3uGKNUqcpopiTUdJQZtg",
+    "commitDate": "2026-02-23 17:07:38 +0000",
     "commitAuthor": "Claude",
     "isDirty": true
   }

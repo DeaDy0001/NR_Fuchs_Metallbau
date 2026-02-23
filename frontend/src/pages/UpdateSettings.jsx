@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Download, RefreshCw, AlertCircle, GitBranch, Lock, Tag, ChevronDown, Key, CheckCircle } from 'lucide-react';
 import GitHubTokenModal from '../components/GitHubTokenModal';
 import './UpdateSettings.css';
 
 function UpdateSettings() {
+  const [searchParams] = useSearchParams();
   const [gitInfo, setGitInfo] = useState(null);
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState('');
@@ -70,6 +72,15 @@ function UpdateSettings() {
         const data = await response.json();
         setTags(data.tags);
         setCurrentVersion(data.currentVersion);
+
+        // Auto-select version from URL parameter (e.g. ?version=v1.0.3)
+        const versionParam = searchParams.get('version');
+        if (versionParam) {
+          const matchingTag = data.tags.find(t => t.name === versionParam);
+          if (matchingTag) {
+            setSelectedTag(matchingTag.name);
+          }
+        }
       }
     } catch (err) {
       console.error('Error loading tags:', err);

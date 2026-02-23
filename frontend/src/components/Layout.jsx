@@ -3,7 +3,7 @@ import Header from './Header';
 import Sidebar from './Sidebar';
 import './Layout.css';
 
-function Layout({ children, settings, updateSettings }) {
+function Layout({ children, settings, updateSettings, updateInfo }) {
   const toggleSidebar = async () => {
     const newCollapsed = !settings.sidebar_collapsed;
 
@@ -28,6 +28,7 @@ function Layout({ children, settings, updateSettings }) {
         logoPath={settings.logo_path}
         sidebarCollapsed={settings.sidebar_collapsed}
         onToggleSidebar={toggleSidebar}
+        updateInfo={updateInfo}
       />
       <div className="layout-body">
         <Sidebar collapsed={settings.sidebar_collapsed} />
