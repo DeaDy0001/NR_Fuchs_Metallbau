@@ -111,27 +111,52 @@ function ProjectsList() {
     }
   };
 
-  const handleSaveProject = async () => {
+  const handleSaveProject = async (updates) => {
     if (!viewingProject) return;
 
     try {
       const response = await fetch(`/api/projects/${viewingProject.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editForm)
+        body: JSON.stringify(updates)
       });
 
       if (response.ok) {
+        const updatedProject = await response.json();
         loadProjects();
         // Update viewingProject with new values
-        setViewingProject({ ...viewingProject, ...editForm });
+        setViewingProject(updatedProject);
+        setEditForm({
+          color: updatedProject.color,
+          notes: updatedProject.notes,
+          tags: updatedProject.tags
+        });
       } else {
-        alert('Fehler beim Speichern');
+        console.error('Fehler beim Speichern');
       }
     } catch (error) {
       console.error('Error saving project:', error);
-      alert('Fehler beim Speichern');
     }
+  };
+
+  const handleAddTag = async (tag) => {
+    if (!tag.trim() || !viewingProject) return;
+
+    const trimmedTag = tag.trim();
+    if (editForm.tags.includes(trimmedTag)) return;
+
+    const newTags = [...editForm.tags, trimmedTag];
+    setEditForm({ ...editForm, tags: newTags });
+    await handleSaveProject({ ...editForm, tags: newTags });
+    setTagInput('');
+  };
+
+  const handleRemoveTag = async (index) => {
+    if (!viewingProject) return;
+
+    const newTags = editForm.tags.filter((_, i) => i !== index);
+    setEditForm({ ...editForm, tags: newTags });
+    await handleSaveProject({ ...editForm, tags: newTags });
   };
 
   const toggleProjectSelection = (projectId) => {
@@ -648,6 +673,20 @@ function ProjectsList() {
                     <div>Erstellt: {new Date(project.folder_created_at || project.created_at).toLocaleDateString('de-DE')}</div>
                     <div>Bilder: {project.image_count || 0}</div>
                   </div>
+
+                  {project.tags && project.tags.length > 0 && (
+                    <div className="project-tags">
+                      {project.tags.map((tag, index) => (
+                        <span
+                          key={index}
+                          className="project-tag-badge"
+                          style={{ backgroundColor: project.color }}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -667,79 +706,85 @@ function ProjectsList() {
 
             {/* Edit-Felder */}
             <div className="project-edit-section">
-              <div className="form-group">
-                <label>Farbe</label>
-                <div className="color-picker">
-                  {colorPresets.map(color => (
-                    <button
-                      key={color}
-                      className={`color-option ${editForm.color === color ? 'active' : ''}`}
-                      style={{ backgroundColor: color }}
-                      onClick={() => setEditForm({ ...editForm, color })}
-                      title={color}
-                    />
-                  ))}
-                </div>
-                <input
-                  type="color"
-                  value={editForm.color}
-                  onChange={(e) => setEditForm({ ...editForm, color: e.target.value })}
-                  className="color-input"
-                />
-              </div>
-
-              <div className="form-group">
-                <label>Notizen</label>
-                <textarea
-                  value={editForm.notes}
-                  onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
-                  className="textarea"
-                  rows="3"
-                  placeholder="Fügen Sie Notizen zum Projekt hinzu..."
-                />
-              </div>
-
-              <div className="form-group">
-                <label>Tags</label>
-                <div className="tags-container">
-                  <div className="tags-list">
-                    {editForm.tags.map((tag, index) => (
-                      <span key={index} className="tag-badge">
-                        {tag}
-                        <X
-                          size={14}
-                          className="tag-remove"
+              <div className="project-form-grid">
+                {/* Left column: Color and Notes */}
+                <div className="form-column">
+                  <div className="form-group">
+                    <label>Farbe</label>
+                    <div className="color-picker">
+                      {colorPresets.map(color => (
+                        <button
+                          key={color}
+                          className={`color-option ${editForm.color === color ? 'active' : ''}`}
+                          style={{ backgroundColor: color }}
                           onClick={() => {
-                            const newTags = editForm.tags.filter((_, i) => i !== index);
-                            setEditForm({ ...editForm, tags: newTags });
+                            setEditForm({ ...editForm, color });
+                            handleSaveProject({ ...editForm, color });
                           }}
+                          title={color}
                         />
-                      </span>
-                    ))}
+                      ))}
+                    </div>
+                    <input
+                      type="color"
+                      value={editForm.color}
+                      onChange={(e) => setEditForm({ ...editForm, color: e.target.value })}
+                      onBlur={(e) => handleSaveProject({ ...editForm, color: e.target.value })}
+                      className="color-input"
+                    />
                   </div>
-                  <input
-                    type="text"
-                    value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && tagInput.trim()) {
-                        e.preventDefault();
-                        if (!editForm.tags.includes(tagInput.trim())) {
-                          setEditForm({ ...editForm, tags: [...editForm.tags, tagInput.trim()] });
-                        }
-                        setTagInput('');
-                      }
-                    }}
-                    className="input tag-input"
-                    placeholder="Tag eingeben und Enter drücken..."
-                  />
+
+                  <div className="form-group">
+                    <label>Notizen</label>
+                    <textarea
+                      value={editForm.notes}
+                      onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+                      onBlur={(e) => handleSaveProject({ ...editForm, notes: e.target.value })}
+                      className="textarea"
+                      rows="5"
+                      placeholder="Fügen Sie Notizen zum Projekt hinzu..."
+                    />
+                  </div>
+                </div>
+
+                {/* Right column: Tags */}
+                <div className="form-column">
+                  <div className="form-group">
+                    <label>Tags</label>
+                    <div className="tags-container">
+                      <div className="tags-list">
+                        {editForm.tags.map((tag, index) => (
+                          <span
+                            key={index}
+                            className="tag-badge"
+                            style={{ backgroundColor: editForm.color }}
+                          >
+                            {tag}
+                            <X
+                              size={14}
+                              className="tag-remove"
+                              onClick={() => handleRemoveTag(index)}
+                            />
+                          </span>
+                        ))}
+                      </div>
+                      <input
+                        type="text"
+                        value={tagInput}
+                        onChange={(e) => setTagInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddTag(tagInput);
+                          }
+                        }}
+                        className="input tag-input"
+                        placeholder="Tag eingeben und Enter drücken..."
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
-
-              <button className="btn btn-primary btn-save" onClick={handleSaveProject}>
-                <Save size={18} />
-                Speichern
-              </button>
             </div>
 
             <div className="modal-tabs">
