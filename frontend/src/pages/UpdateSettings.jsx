@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Download, RefreshCw, AlertCircle, GitBranch, Lock, Tag, ChevronDown, Key, CheckCircle } from 'lucide-react';
+import { Download, RefreshCw, AlertCircle, GitBranch, Lock, Tag, ChevronDown, Key, CheckCircle, FileText, Calendar, ExternalLink } from 'lucide-react';
 import GitHubTokenModal from '../components/GitHubTokenModal';
 import './UpdateSettings.css';
 
@@ -24,6 +24,9 @@ function UpdateSettings() {
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [showBranchUpdate, setShowBranchUpdate] = useState(false);
 
+  // Release notes
+  const [releases, setReleases] = useState([]);
+
   // GitHub Token (Developer)
   const [showGitHubTokenModal, setShowGitHubTokenModal] = useState(false);
   const [githubTokenConfigured, setGithubTokenConfigured] = useState(false);
@@ -31,6 +34,7 @@ function UpdateSettings() {
   useEffect(() => {
     loadGitInfo();
     loadTags();
+    loadReleases();
   }, []);
 
   useEffect(() => {
@@ -87,6 +91,62 @@ function UpdateSettings() {
     } finally {
       setLoadingTags(false);
     }
+  };
+
+  const loadReleases = async () => {
+    try {
+      const response = await fetch('/api/system/releases');
+      if (response.ok) {
+        const data = await response.json();
+        setReleases(data.releases || []);
+      }
+    } catch (err) {
+      console.error('Error loading releases:', err);
+    }
+  };
+
+  // Get the release matching the selected tag
+  const getSelectedRelease = () => {
+    if (!selectedTag) return null;
+    return releases.find(r => r.tagName === selectedTag);
+  };
+
+  // Simple markdown-like rendering for release notes
+  const renderReleaseBody = (body) => {
+    if (!body) return null;
+
+    return body.split('\n').map((line, i) => {
+      // Headers
+      if (line.startsWith('### ')) {
+        return <h4 key={i} className="release-body-h3">{line.replace('### ', '')}</h4>;
+      }
+      if (line.startsWith('## ')) {
+        return <h3 key={i} className="release-body-h2">{line.replace('## ', '')}</h3>;
+      }
+      // List items
+      if (line.startsWith('- ') || line.startsWith('* ')) {
+        return <li key={i} className="release-body-li">{line.replace(/^[-*] /, '')}</li>;
+      }
+      // Bold text handling
+      if (line.includes('**')) {
+        const parts = line.split(/(\*\*[^*]+\*\*)/g);
+        return (
+          <p key={i} className="release-body-p">
+            {parts.map((part, j) =>
+              part.startsWith('**') && part.endsWith('**')
+                ? <strong key={j}>{part.slice(2, -2)}</strong>
+                : part
+            )}
+          </p>
+        );
+      }
+      // Empty lines
+      if (line.trim() === '') {
+        return <div key={i} className="release-body-spacer" />;
+      }
+      // Normal text
+      return <p key={i} className="release-body-p">{line}</p>;
+    });
   };
 
   const handleDevLogin = async () => {
@@ -305,6 +365,48 @@ function UpdateSettings() {
               {updating ? 'Wird aktualisiert...' : 'Version installieren'}
             </button>
           </div>
+
+          {/* Release Notes for selected version */}
+          {getSelectedRelease() && (
+            <div className="release-notes-card">
+              <div className="release-notes-header">
+                <div className="release-notes-title">
+                  <FileText size={18} />
+                  <h3>{getSelectedRelease().name}</h3>
+                </div>
+                <div className="release-notes-meta">
+                  {getSelectedRelease().publishedAt && (
+                    <span className="release-date">
+                      <Calendar size={14} />
+                      {new Date(getSelectedRelease().publishedAt).toLocaleDateString('de-DE', {
+                        day: '2-digit',
+                        month: 'long',
+                        year: 'numeric'
+                      })}
+                    </span>
+                  )}
+                  {getSelectedRelease().htmlUrl && (
+                    <a
+                      href={getSelectedRelease().htmlUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="release-github-link"
+                    >
+                      <ExternalLink size={14} />
+                      GitHub
+                    </a>
+                  )}
+                </div>
+              </div>
+              {getSelectedRelease().body ? (
+                <div className="release-notes-body">
+                  {renderReleaseBody(getSelectedRelease().body)}
+                </div>
+              ) : (
+                <p className="release-notes-empty">Keine Release-Notes vorhanden.</p>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

@@ -28,4 +28,7 @@ router.get('/branches', systemController.getBranches);
 // Trigger update to a specific version (tag)
 router.post('/update-version', systemController.triggerVersionUpdate);
 
+// Get all GitHub releases with release notes
+router.get('/releases', systemController.getReleases);
+
 module.exports = router;

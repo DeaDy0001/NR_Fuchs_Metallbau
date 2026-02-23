@@ -470,6 +470,42 @@ const triggerVersionUpdate = async (req, res) => {
   }
 };
 
+/**
+ * Get all GitHub releases with release notes
+ */
+const getReleases = async (req, res) => {
+  try {
+    const response = await axios.get(
+      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases`,
+      {
+        headers: {
+          'Accept': 'application/vnd.github.v3+json',
+          'User-Agent': 'Fuchs-Metallbau-App'
+        },
+        params: {
+          per_page: 20
+        }
+      }
+    );
+
+    const releases = response.data.map(release => ({
+      tagName: release.tag_name,
+      name: release.name || release.tag_name,
+      body: release.body || '',
+      publishedAt: release.published_at,
+      htmlUrl: release.html_url
+    }));
+
+    res.json({ releases });
+  } catch (error) {
+    if (error.response && error.response.status === 404) {
+      return res.json({ releases: [] });
+    }
+    console.error('Error fetching releases:', error.message);
+    res.status(500).json({ error: 'Fehler beim Laden der Release-Informationen' });
+  }
+};
+
 module.exports = {
   getLatestVersion,
   triggerUpdate,
@@ -477,5 +513,6 @@ module.exports = {
   triggerVersionUpdate,
   getGitInfo,
   getTags,
-  getBranches
+  getBranches,
+  getReleases
 };
