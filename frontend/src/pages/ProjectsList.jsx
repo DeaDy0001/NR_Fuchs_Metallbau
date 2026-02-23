@@ -23,9 +23,11 @@ const formatSQLiteDate = (dateString) => {
 function ProjectsList() {
   const [projects, setProjects] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [tagSearchQuery, setTagSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [editForm, setEditForm] = useState({ color: '', notes: '' });
+  const [editForm, setEditForm] = useState({ color: '', notes: '', tags: [] });
+  const [tagInput, setTagInput] = useState('');
   const [selectedProjects, setSelectedProjects] = useState([]); // Markierte Projekte
   const [showMarked, setShowMarked] = useState(true); // Filter: Markierte anzeigen
   const [showUnmarked, setShowUnmarked] = useState(true); // Filter: Nicht markierte anzeigen
@@ -57,7 +59,7 @@ function ProjectsList() {
         console.error('Error loading selected projects:', e);
       }
     }
-  }, [searchQuery]);
+  }, [searchQuery, tagSearchQuery]);
 
   const loadProjects = async () => {
     setLoading(true);
@@ -66,7 +68,8 @@ function ProjectsList() {
       const params = new URLSearchParams({
         limit: 100,
         offset: 0,
-        search: searchQuery
+        search: searchQuery,
+        tags: tagSearchQuery
       });
 
       const response = await fetch(`/api/projects?${params}`);
@@ -151,8 +154,10 @@ function ProjectsList() {
     // Initialize edit form with current project values
     setEditForm({
       color: project.color || '#3b82f6',
-      notes: project.notes || ''
+      notes: project.notes || '',
+      tags: project.tags || []
     });
+    setTagInput('');
 
     try {
       const response = await fetch(`/api/projects/${project.id}/files`);
@@ -546,6 +551,16 @@ function ProjectsList() {
             className="search-input"
           />
         </div>
+        <div className="search-box">
+          <Search size={18} />
+          <input
+            type="text"
+            placeholder="Tags durchsuchen..."
+            value={tagSearchQuery}
+            onChange={(e) => setTagSearchQuery(e.target.value)}
+            className="search-input"
+          />
+        </div>
         <div className="filter-buttons">
           <button
             className="btn btn-secondary"
@@ -682,6 +697,43 @@ function ProjectsList() {
                   rows="3"
                   placeholder="Fügen Sie Notizen zum Projekt hinzu..."
                 />
+              </div>
+
+              <div className="form-group">
+                <label>Tags</label>
+                <div className="tags-container">
+                  <div className="tags-list">
+                    {editForm.tags.map((tag, index) => (
+                      <span key={index} className="tag-badge">
+                        {tag}
+                        <X
+                          size={14}
+                          className="tag-remove"
+                          onClick={() => {
+                            const newTags = editForm.tags.filter((_, i) => i !== index);
+                            setEditForm({ ...editForm, tags: newTags });
+                          }}
+                        />
+                      </span>
+                    ))}
+                  </div>
+                  <input
+                    type="text"
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && tagInput.trim()) {
+                        e.preventDefault();
+                        if (!editForm.tags.includes(tagInput.trim())) {
+                          setEditForm({ ...editForm, tags: [...editForm.tags, tagInput.trim()] });
+                        }
+                        setTagInput('');
+                      }
+                    }}
+                    className="input tag-input"
+                    placeholder="Tag eingeben und Enter drücken..."
+                  />
+                </div>
               </div>
 
               <button className="btn btn-primary btn-save" onClick={handleSaveProject}>

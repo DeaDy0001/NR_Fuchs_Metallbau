@@ -82,7 +82,7 @@ const setProjectPath = async (req, res) => {
 // Get all projects
 const getProjects = async (req, res) => {
   try {
-    const { limit = 100, offset = 0, search = '' } = req.query;
+    const { limit = 100, offset = 0, search = '', tags = '' } = req.query;
 
     let query = 'SELECT * FROM projects WHERE 1=1';
     const params = [];
@@ -91,6 +91,13 @@ const getProjects = async (req, res) => {
       query += ' AND (folder_name LIKE ? OR notes LIKE ?)';
       const searchParam = `%${search}%`;
       params.push(searchParam, searchParam);
+    }
+
+    // Filter by tags (if provided)
+    if (tags) {
+      query += ' AND tags LIKE ?';
+      const tagParam = `%${tags}%`;
+      params.push(tagParam);
     }
 
     // Sort alphabetically by folder name
@@ -125,19 +132,26 @@ const getProjects = async (req, res) => {
 
       return {
         ...project,
+        tags: project.tags ? JSON.parse(project.tags) : [],
         image_count: imageCount.count,
         folder_created_at: folderCreatedAt
       };
     }));
 
     // Get total count
-    let countQuery = 'SELECT COUNT(*) as count FROM projects';
+    let countQuery = 'SELECT COUNT(*) as count FROM projects WHERE 1=1';
     const countParams = [];
 
     if (search) {
-      countQuery += ' WHERE folder_name LIKE ? OR notes LIKE ?';
+      countQuery += ' AND (folder_name LIKE ? OR notes LIKE ?)';
       const searchParam = `%${search}%`;
       countParams.push(searchParam, searchParam);
+    }
+
+    if (tags) {
+      countQuery += ' AND tags LIKE ?';
+      const tagParam = `%${tags}%`;
+      countParams.push(tagParam);
     }
 
     const countResult = db.prepare(countQuery).get(...countParams);
@@ -165,7 +179,13 @@ const getProjectById = (req, res) => {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    res.json(result);
+    // Parse tags JSON
+    const project = {
+      ...result,
+      tags: result.tags ? JSON.parse(result.tags) : []
+    };
+
+    res.json(project);
   } catch (error) {
     console.error('Error getting project:', error);
     res.status(500).json({ error: 'Failed to get project' });
@@ -196,7 +216,7 @@ const createProject = (req, res) => {
 const updateProject = (req, res) => {
   try {
     const { id } = req.params;
-    const { color, notes } = req.body;
+    const { color, notes, tags } = req.body;
 
     // Build dynamic update query based on provided fields
     const updates = [];
@@ -210,6 +230,11 @@ const updateProject = (req, res) => {
     if (notes !== undefined) {
       updates.push('notes = ?');
       params.push(notes);
+    }
+
+    if (tags !== undefined) {
+      updates.push('tags = ?');
+      params.push(JSON.stringify(tags));
     }
 
     if (updates.length === 0) {
@@ -227,7 +252,14 @@ const updateProject = (req, res) => {
     }
 
     const updatedProject = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
-    res.json(updatedProject);
+
+    // Parse tags JSON
+    const project = {
+      ...updatedProject,
+      tags: updatedProject.tags ? JSON.parse(updatedProject.tags) : []
+    };
+
+    res.json(project);
   } catch (error) {
     console.error('Error updating project:', error);
     res.status(500).json({ error: 'Failed to update project' });

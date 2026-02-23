@@ -372,6 +372,23 @@ const migrations = [
 
       console.log('✓ Migration add_project_sync_settings completed');
     }
+  },
+  {
+    id: 16,
+    name: 'add_project_tags_column',
+    up: () => {
+      console.log('Running migration: add_project_tags_column');
+
+      const tableInfo = db.pragma('table_info(projects)');
+      const existingColumns = tableInfo.map(col => col.name);
+
+      // Add tags column to store JSON array of project tags
+      if (!existingColumns.includes('tags')) {
+        db.exec('ALTER TABLE projects ADD COLUMN tags TEXT DEFAULT \'[]\'');
+      }
+
+      console.log('✓ Migration add_project_tags_column completed');
+    }
   }
 ];
 
