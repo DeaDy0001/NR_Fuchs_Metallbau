@@ -204,20 +204,43 @@ function UpdateSettings() {
           <div className="git-info">
             <div className="info-row">
               <span className="info-label">Version:</span>
-              <span className="info-value">{gitInfo.version}</span>
+              <span className="info-value version-highlight">{gitInfo.version}</span>
             </div>
-            <div className="info-row">
-              <span className="info-label">Branch:</span>
-              <span className="info-value">{gitInfo.branch}</span>
-            </div>
-            <div className="info-row">
-              <span className="info-label">Commit:</span>
-              <span className="info-value">{gitInfo.commit}</span>
-            </div>
-            <div className="info-row">
-              <span className="info-label">Letztes Update:</span>
-              <span className="info-value">{new Date(gitInfo.commitDate).toLocaleString('de-DE')}</span>
-            </div>
+            {gitInfo.buildDate && (
+              <div className="info-row">
+                <span className="info-label">Build-Datum:</span>
+                <span className="info-value">{new Date(gitInfo.buildDate).toLocaleString('de-DE')}</span>
+              </div>
+            )}
+            {gitInfo.branch !== 'unknown' && gitInfo.branch !== 'release' && (
+              <div className="info-row">
+                <span className="info-label">Branch:</span>
+                <span className="info-value">{gitInfo.branch}</span>
+              </div>
+            )}
+            {gitInfo.commit && gitInfo.commit !== 'N/A' && (
+              <div className="info-row">
+                <span className="info-label">Commit:</span>
+                <span className="info-value">{gitInfo.commit}</span>
+              </div>
+            )}
+            {gitInfo.commitMessage && gitInfo.commitMessage !== 'Keine Git-Informationen verfügbar' && (
+              <div className="info-row">
+                <span className="info-label">Letzte Änderung:</span>
+                <span className="info-value commit-message">{gitInfo.commitMessage.split('\n')[0]}</span>
+              </div>
+            )}
+            {gitInfo.commitDate && (
+              <div className="info-row">
+                <span className="info-label">Letztes Update:</span>
+                <span className="info-value">{new Date(gitInfo.commitDate).toLocaleString('de-DE')}</span>
+              </div>
+            )}
+            {gitInfo.source === 'build-info-release' && (
+              <div className="info-row release-badge">
+                <span className="release-indicator">📦 Release Build</span>
+              </div>
+            )}
           </div>
         </div>
       )}

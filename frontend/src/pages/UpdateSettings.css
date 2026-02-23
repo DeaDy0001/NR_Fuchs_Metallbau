@@ -74,6 +74,36 @@
   border-radius: 0.375rem;
 }
 
+.version-highlight {
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: var(--accent-primary) !important;
+}
+
+.commit-message {
+  font-size: 0.85rem;
+  font-style: italic;
+  color: var(--text-secondary) !important;
+  font-family: inherit !important;
+}
+
+.release-badge {
+  margin-top: 0.5rem;
+  justify-content: center;
+}
+
+.release-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
 /* Update Actions */
 .update-actions {
   display: flex;

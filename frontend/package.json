@@ -1,9 +1,10 @@
 {
   "name": "fuchs-metallbau-frontend",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node ../scripts/generate-build-info.js",
     "build": "vite build",
     "preview": "vite preview"
   },

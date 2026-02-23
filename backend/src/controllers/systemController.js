@@ -151,11 +151,49 @@ const triggerUpdate = async (req, res) => {
 
 /**
  * Get current Git commit info
+ * Tries to read from build-info.json first (for releases without .git folder)
+ * Falls back to git commands if build-info.json is not available
  */
 const getGitInfo = (req, res) => {
   try {
+    const version = getCurrentVersion();
     const projectRoot = path.join(__dirname, '../../..');
+    const buildInfoPath = path.join(__dirname, '../build-info.json');
 
+    // Try to read from build-info.json first
+    if (fs.existsSync(buildInfoPath)) {
+      try {
+        const buildInfo = JSON.parse(fs.readFileSync(buildInfoPath, 'utf8'));
+
+        // If build-info.json exists and has git info, use it
+        if (buildInfo.git) {
+          return res.json({
+            branch: buildInfo.git.branch,
+            commit: buildInfo.git.commit,
+            commitMessage: buildInfo.git.commitMessage,
+            commitDate: buildInfo.git.commitDate,
+            version: version,
+            buildDate: buildInfo.buildDate,
+            source: 'build-info'
+          });
+        } else {
+          // build-info.json exists but no git info (release build)
+          return res.json({
+            branch: 'release',
+            commit: 'N/A',
+            commitMessage: `Release v${version}`,
+            commitDate: buildInfo.buildDate,
+            version: version,
+            buildDate: buildInfo.buildDate,
+            source: 'build-info-release'
+          });
+        }
+      } catch (parseError) {
+        console.warn('Failed to parse build-info.json, falling back to git:', parseError.message);
+      }
+    }
+
+    // Fallback: Try to get info from git commands (for development)
     const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: projectRoot })
       .toString()
       .trim();
@@ -177,13 +215,20 @@ const getGitInfo = (req, res) => {
       commit,
       commitMessage,
       commitDate,
-      version: getCurrentVersion()
+      version,
+      source: 'git'
     });
   } catch (error) {
     console.error('Error getting git info:', error);
-    res.status(500).json({
-      error: 'Failed to get git info',
-      version: getCurrentVersion()
+
+    // Final fallback: Just return version
+    res.json({
+      branch: 'unknown',
+      commit: 'N/A',
+      commitMessage: 'Keine Git-Informationen verfügbar',
+      commitDate: new Date().toISOString(),
+      version: getCurrentVersion(),
+      source: 'fallback'
     });
   }
 };

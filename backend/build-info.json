@@ -1,0 +1,14 @@
+{
+  "version": "1.0.2",
+  "buildDate": "2026-02-23T17:06:42.458Z",
+  "buildTimestamp": 1771866402459,
+  "git": {
+    "branch": "claude/local-network-web-app-A0KKq",
+    "commit": "2929903",
+    "commitLong": "2929903fe6f18f5005f5666c69d807fc74c0ee19",
+    "commitMessage": "feat: Switcher für Alle/Markierte Projekte in rechter Sidebar\n\n- Neuer Switcher unter der Suchleiste im Projekte-Tab\n- Toggle zwischen \"Alle Projekte\" und \"Markierte\"\n- Filtert Projekt-Liste basierend auf Auswahl\n- Modernes Segmented-Control Design\n- Smooth Transitions und Hover-States\n\nhttps://claude.ai/code/session_01GA3uGKNUqcpopiTUdJQZtg",
+    "commitDate": "2026-02-23 13:45:54 +0000",
+    "commitAuthor": "Claude",
+    "isDirty": true
+  }
+}
