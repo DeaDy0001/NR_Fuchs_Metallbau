@@ -291,6 +291,64 @@ const migrations = [
 
       console.log('✓ Migration add_github_token_column completed');
     }
+  },
+  {
+    id: 13,
+    name: 'create_tags_tables',
+    up: () => {
+      console.log('Running migration: create_tags_tables');
+
+      // Create tags table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS tags (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE,
+          color TEXT NOT NULL DEFAULT '#3b82f6',
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+
+      // Create image_tags junction table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS image_tags (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          image_id INTEGER NOT NULL,
+          tag_id INTEGER NOT NULL,
+          created_at TEXT DEFAULT (datetime('now')),
+          FOREIGN KEY (image_id) REFERENCES drive_images (id) ON DELETE CASCADE,
+          FOREIGN KEY (tag_id) REFERENCES tags (id) ON DELETE CASCADE,
+          UNIQUE (image_id, tag_id)
+        )
+      `);
+
+      // Create indexes for faster lookups
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_image_tags_image_id ON image_tags(image_id)
+      `);
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_image_tags_tag_id ON image_tags(tag_id)
+      `);
+
+      console.log('✓ Migration create_tags_tables completed');
+    }
+  },
+  {
+    id: 14,
+    name: 'add_images_pagination_limit',
+    up: () => {
+      console.log('Running migration: add_images_pagination_limit');
+
+      const tableInfo = db.pragma('table_info(settings)');
+      const existingColumns = tableInfo.map(col => col.name);
+
+      // Add pagination limit preference
+      if (!existingColumns.includes('images_pagination_limit')) {
+        db.exec("ALTER TABLE settings ADD COLUMN images_pagination_limit INTEGER DEFAULT 50");
+      }
+
+      console.log('✓ Migration add_images_pagination_limit completed');
+    }
   }
 ];
 

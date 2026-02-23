@@ -238,6 +238,7 @@ const getImages = (req, res) => {
       offset = 0,
       search = '',
       projectIds = '',
+      tagIds = '',
       photoDateFrom = '',
       photoDateTo = '',
       uploadDateFrom = '',
@@ -261,6 +262,14 @@ const getImages = (req, res) => {
       query += ' JOIN image_project_assignments ipa ON di.id = ipa.image_id';
       whereClauses.push(`ipa.project_id IN (${projectIdArray.map(() => '?').join(', ')})`);
       params.push(...projectIdArray);
+    }
+
+    // Filter by tags
+    if (tagIds) {
+      const tagIdArray = tagIds.split(',').map(id => parseInt(id.trim()));
+      query += ' JOIN image_tags it ON di.id = it.image_id';
+      whereClauses.push(`it.tag_id IN (${tagIdArray.map(() => '?').join(', ')})`);
+      params.push(...tagIdArray);
     }
 
     // Filter by project assignment status (mutually exclusive)
@@ -343,11 +352,20 @@ const getImages = (req, res) => {
       WHERE ipa.image_id = ?
     `);
 
-    // Convert booleans and add projects
+    // Get assigned tags for each image
+    const tagsStmt = db.prepare(`
+      SELECT t.id, t.name, t.color
+      FROM image_tags it
+      JOIN tags t ON it.tag_id = t.id
+      WHERE it.image_id = ?
+    `);
+
+    // Convert booleans and add projects + tags
     const formatted = images.map(img => ({
       ...img,
       is_compressed: !!img.is_compressed,
-      projects: projectsStmt.all(img.id)
+      projects: projectsStmt.all(img.id),
+      tags: tagsStmt.all(img.id)
     }));
 
     // Get total count
@@ -361,6 +379,13 @@ const getImages = (req, res) => {
       countQuery += ' JOIN image_project_assignments ipa ON di.id = ipa.image_id';
       countWhereClauses.push(`ipa.project_id IN (${projectIdArray.map(() => '?').join(', ')})`);
       countParams.push(...projectIdArray);
+    }
+
+    if (tagIds) {
+      const tagIdArray = tagIds.split(',').map(id => parseInt(id.trim()));
+      countQuery += ' JOIN image_tags it ON di.id = it.image_id';
+      countWhereClauses.push(`it.tag_id IN (${tagIdArray.map(() => '?').join(', ')})`);
+      countParams.push(...tagIdArray);
     }
 
     if (showAllImages === 'true') {
@@ -405,6 +430,12 @@ const getImages = (req, res) => {
       countParams.push(...subfolderArray);
     }
 
+    if (drivePathIds) {
+      const drivePathIdArray = drivePathIds.split(',').map(id => parseInt(id.trim()));
+      countWhereClauses.push(`di.drive_path_id IN (${drivePathIdArray.map(() => '?').join(', ')})`);
+      countParams.push(...drivePathIdArray);
+    }
+
     if (countWhereClauses.length > 0) {
       countQuery += ' WHERE ' + countWhereClauses.join(' AND ');
     }
@@ -412,11 +443,16 @@ const getImages = (req, res) => {
     const countStmt = db.prepare(countQuery);
     const countResult = countStmt.get(...countParams);
 
+    // Get all unique subfolders (not limited by pagination)
+    const subfoldersStmt = db.prepare('SELECT DISTINCT subfolder FROM drive_images WHERE subfolder IS NOT NULL ORDER BY subfolder ASC');
+    const allSubfolders = subfoldersStmt.all().map(row => row.subfolder);
+
     res.json({
       images: formatted,
       total: countResult.count,
       limit: parseInt(limit),
-      offset: parseInt(offset)
+      offset: parseInt(offset),
+      subfolders: allSubfolders
     });
   } catch (error) {
     console.error('Error getting images:', error);
