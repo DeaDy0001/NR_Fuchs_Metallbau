@@ -40,31 +40,67 @@
   color: white;
 }
 
-/* Form Styles */
-.path-form {
-  background-color: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  border-radius: 0.5rem;
-  padding: 1.25rem;
-  margin-bottom: 1.5rem;
-}
-
-.form-row {
+/* Section Header Row */
+.section-header-row {
   display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
   gap: 1rem;
   margin-bottom: 1rem;
 }
 
-.form-row-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1rem;
+.section-header-row .section-description {
+  margin-bottom: 0;
 }
 
+/* ==========================================
+   PATH FORM - Redesigned with clear sections
+   ========================================== */
+.path-form {
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  padding: 0;
+  margin-bottom: 1.5rem;
+  overflow: hidden;
+}
+
+/* Form Sections */
+.form-section {
+  padding: 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.form-section:last-of-type {
+  border-bottom: none;
+}
+
+.form-section-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+  margin-bottom: 0.75rem;
+}
+
+.form-section-desc {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: 1rem;
+  margin-top: -0.25rem;
+}
+
+/* Form Groups */
 .form-group {
   display: flex;
   flex-direction: column;
   gap: 0.375rem;
+  margin-bottom: 0.75rem;
+}
+
+.form-group:last-child {
+  margin-bottom: 0;
 }
 
 .form-label {
@@ -92,45 +128,104 @@
   color: var(--text-tertiary);
 }
 
-.select {
-  cursor: pointer;
+.form-row-inline {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
 }
 
-/* Checkbox */
-.checkbox-group {
+/* ==========================================
+   FORMAT SELECTOR - Card-style buttons
+   ========================================== */
+.format-selector {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+}
+
+.format-option {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.75rem 0.5rem;
+  background: var(--bg-primary);
+  border: 2px solid var(--border-color);
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
 }
 
-.checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
+.format-option:hover {
+  border-color: var(--accent-primary);
+  background: var(--bg-hover);
+}
+
+.format-option.active {
+  border-color: var(--accent-primary);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.format-option-label {
   font-size: 0.9rem;
+  font-weight: 600;
   color: var(--text-primary);
 }
 
-.checkbox {
-  width: 1.125rem;
-  height: 1.125rem;
-  cursor: pointer;
-  accent-color: var(--accent-primary);
+.format-option-desc {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
 }
 
-/* Slider */
+.format-option.active .format-option-label {
+  color: var(--accent-primary);
+}
+
+.format-option.active .format-option-desc {
+  color: var(--accent-primary);
+  opacity: 0.8;
+}
+
+/* Compression Settings (below format selector) */
+.compression-settings {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color);
+}
+
+/* ==========================================
+   SLIDER
+   ========================================== */
+.slider-container {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.slider-label {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  min-width: 40px;
+}
+
+.slider-label:last-child {
+  text-align: right;
+}
+
 .slider {
-  width: 100%;
+  flex: 1;
   height: 6px;
   border-radius: 3px;
   background: var(--bg-primary);
   outline: none;
   cursor: pointer;
+  -webkit-appearance: none;
 }
 
 .slider::-webkit-slider-thumb {
-  appearance: none;
+  -webkit-appearance: none;
   width: 18px;
   height: 18px;
   border-radius: 50%;
@@ -147,37 +242,87 @@
   border: none;
 }
 
-/* Advanced Toggle */
-.advanced-toggle {
+/* ==========================================
+   TOGGLE SWITCH (replaces checkboxes)
+   ========================================== */
+.toggle-row {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.625rem 0;
-  color: var(--accent-primary);
+  gap: 1rem;
+}
+
+.toggle-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.toggle-label {
   font-size: 0.9rem;
   font-weight: 500;
-  background: none;
-  border: none;
+  color: var(--text-primary);
+}
+
+.toggle-desc {
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
   cursor: pointer;
-  transition: color 0.2s;
 }
 
-.advanced-toggle:hover {
-  color: var(--accent-light);
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
 }
 
-.advanced-settings {
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--border-color);
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background-color: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  border-radius: 24px;
+  transition: all 0.3s;
 }
 
-/* Warning Text */
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  left: 2px;
+  bottom: 2px;
+  background-color: var(--text-tertiary);
+  border-radius: 50%;
+  transition: all 0.3s;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background-color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(20px);
+  background-color: white;
+}
+
+/* ==========================================
+   WARNING
+   ========================================== */
 .warning-text {
   display: flex;
   align-items: center;
   gap: 0.375rem;
-  margin-top: 0.25rem;
+  margin-top: 0.5rem;
   padding: 0.5rem 0.75rem;
   background-color: rgba(245, 158, 11, 0.1);
   border: 1px solid rgba(245, 158, 11, 0.3);
@@ -186,21 +331,25 @@
   font-size: 0.8rem;
 }
 
-/* Form Actions */
+/* ==========================================
+   FORM ACTIONS
+   ========================================== */
 .form-actions {
   display: flex;
   gap: 0.75rem;
-  margin-top: 1.25rem;
-  padding-top: 1.25rem;
+  padding: 1.25rem;
+  background: var(--bg-secondary);
   border-top: 1px solid var(--border-color);
 }
 
-/* Paths List */
+/* ==========================================
+   PATHS LIST
+   ========================================== */
 .paths-list {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  margin-top: 1.5rem;
+  margin-top: 1rem;
 }
 
 .path-item {
@@ -303,7 +452,9 @@
   flex-shrink: 0;
 }
 
-/* Buttons */
+/* ==========================================
+   BUTTONS
+   ========================================== */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -364,43 +515,43 @@
   border-color: #dc2626;
 }
 
-.btn-danger-outline {
-  background-color: transparent;
-  color: #dc2626;
-  border: 1px solid #dc2626;
-}
-
-.btn-danger-outline:hover:not(:disabled) {
-  background-color: #dc2626;
-  color: white;
-}
-
 /* Spinning Animation */
 @keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .spinning {
   animation: spin 1s linear infinite;
 }
 
-/* Empty State */
+/* ==========================================
+   EMPTY STATE
+   ========================================== */
 .empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
   padding: 3rem 1rem;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
+  gap: 0.5rem;
 }
 
 .empty-state p {
   font-size: 1rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin: 0;
 }
 
-/* Settings Section Override */
+.empty-state span {
+  font-size: 0.85rem;
+}
+
+/* ==========================================
+   SETTINGS SECTION (shared)
+   ========================================== */
 .settings-section {
   background-color: var(--bg-secondary);
   border: 1px solid var(--border-color);
@@ -432,9 +583,19 @@
   color: var(--text-primary);
 }
 
-/* Responsive */
+/* ==========================================
+   RESPONSIVE
+   ========================================== */
 @media (max-width: 768px) {
-  .form-row {
+  .format-selector {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .form-row-inline {
+    grid-template-columns: 1fr;
+  }
+
+  .section-header-row {
     flex-direction: column;
   }
 
@@ -450,5 +611,17 @@
   .path-actions {
     width: 100%;
     justify-content: flex-end;
+  }
+}
+
+@media (max-width: 480px) {
+  .format-selector {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .toggle-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
   }
 }
