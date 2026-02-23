@@ -679,13 +679,15 @@ function DriveImages() {
 
   // Pan/Drag handlers for zoomed image
   const handleMouseDown = (e) => {
-    // Allow panning at any zoom level
-    setIsDragging(true);
-    setDragStart({
-      x: e.clientX - panPosition.x,
-      y: e.clientY - panPosition.y
-    });
-    e.preventDefault();
+    // Allow panning with left or middle mouse button at any zoom level
+    if (e.button === 0 || e.button === 1) {
+      setIsDragging(true);
+      setDragStart({
+        x: e.clientX - panPosition.x,
+        y: e.clientY - panPosition.y
+      });
+      e.preventDefault();
+    }
   };
 
   const handleMouseMove = (e) => {

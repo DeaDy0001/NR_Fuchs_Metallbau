@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Search, Plus, Edit2, Save, X, CheckSquare, Square, ZoomIn, ZoomOut, RotateCcw, ChevronLeft, ChevronRight, Trash2, Pencil, RefreshCw } from 'lucide-react';
 import ImageEditor from '../components/ImageEditor';
 import './ProjectsList.css';
@@ -42,6 +42,9 @@ function ProjectsList() {
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [showEditor, setShowEditor] = useState(false);
+  const [initialZoomLevel, setInitialZoomLevel] = useState(1);
+  const [initialPanPosition, setInitialPanPosition] = useState({ x: 0, y: 0 });
+  const modalImageRef = useRef(null);
 
   useEffect(() => {
     loadProjects();
@@ -193,7 +196,7 @@ function ProjectsList() {
   const handleImageClick = useCallback((image) => {
     setSelectedImage(image);
     setEditingName(image.name);
-    setZoomLevel(1);
+    setZoomLevel(1); // Will be adjusted in useEffect
     setPanPosition({ x: 0, y: 0 });
   }, []);
 
@@ -204,27 +207,112 @@ function ProjectsList() {
     setShowEditor(false);
   }, []);
 
-  const handleZoomIn = () => setZoomLevel(prev => Math.min(prev + 0.25, 3));
-  const handleZoomOut = () => setZoomLevel(prev => Math.max(prev - 0.25, 0.5));
+  const handleZoomIn = () => {
+    const newZoom = Math.min(zoomLevel + 0.25, 3); // Max 300%
+
+    // Zoom towards center of viewport
+    if (!modalImageRef.current?.parentElement) {
+      setZoomLevel(newZoom);
+      return;
+    }
+
+    const container = modalImageRef.current.parentElement;
+    const containerRect = container.getBoundingClientRect();
+    const centerX = containerRect.width / 2;
+    const centerY = containerRect.height / 2;
+
+    // Calculate the point in the image at the center
+    const imageX = (centerX - panPosition.x) / zoomLevel;
+    const imageY = (centerY - panPosition.y) / zoomLevel;
+
+    // Keep that point at the center
+    const newLeft = centerX - imageX * newZoom;
+    const newTop = centerY - imageY * newZoom;
+
+    setZoomLevel(newZoom);
+    setPanPosition({ x: newLeft, y: newTop });
+  };
+
+  const handleZoomOut = () => {
+    // Don't zoom out below the initial fit-to-container zoom level
+    const newZoom = Math.max(zoomLevel - 0.25, initialZoomLevel);
+
+    // Zoom towards center of viewport
+    if (!modalImageRef.current?.parentElement) {
+      setZoomLevel(newZoom);
+      return;
+    }
+
+    const container = modalImageRef.current.parentElement;
+    const containerRect = container.getBoundingClientRect();
+    const centerX = containerRect.width / 2;
+    const centerY = containerRect.height / 2;
+
+    // Calculate the point in the image at the center
+    const imageX = (centerX - panPosition.x) / zoomLevel;
+    const imageY = (centerY - panPosition.y) / zoomLevel;
+
+    // Keep that point at the center
+    const newLeft = centerX - imageX * newZoom;
+    const newTop = centerY - imageY * newZoom;
+
+    setZoomLevel(newZoom);
+    setPanPosition({ x: newLeft, y: newTop });
+  };
+
   const handleZoomReset = () => {
-    setZoomLevel(1);
-    setPanPosition({ x: 0, y: 0 });
+    // Reset to the initial auto-fit zoom and position
+    setZoomLevel(initialZoomLevel);
+    setPanPosition(initialPanPosition);
   };
 
   const handleMouseDown = (e) => {
-    if (zoomLevel > 1) {
+    // Allow panning with left or middle mouse button at any zoom level
+    if (e.button === 0 || e.button === 1) {
       setIsPanning(true);
       setPanStart({ x: e.clientX - panPosition.x, y: e.clientY - panPosition.y });
+      e.preventDefault();
     }
   };
 
   const handleMouseMove = (e) => {
-    if (isPanning && zoomLevel > 1) {
+    if (isPanning) {
       setPanPosition({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
     }
   };
 
   const handleMouseUp = () => setIsPanning(false);
+
+  // Shift + Wheel zoom (zoom from mouse position)
+  const handleWheel = (e) => {
+    if (e.shiftKey) {
+      e.preventDefault();
+
+      const delta = e.deltaY > 0 ? -0.05 : 0.05; // Finer zoom steps (5% instead of 10%)
+      const newZoomLevel = Math.min(Math.max(zoomLevel + delta, initialZoomLevel), 3);
+
+      // Get mouse position relative to the container
+      const container = e.currentTarget;
+      const containerRect = container.getBoundingClientRect();
+      const mouseX = e.clientX - containerRect.left;
+      const mouseY = e.clientY - containerRect.top;
+
+      // Current image position (from state, not DOM)
+      const currentLeft = panPosition.x;
+      const currentTop = panPosition.y;
+
+      // Calculate the point in the original (unzoomed) image that's under the mouse
+      const imageX = (mouseX - currentLeft) / zoomLevel;
+      const imageY = (mouseY - currentTop) / zoomLevel;
+
+      // Calculate new position to keep that point under the mouse
+      const newLeft = mouseX - imageX * newZoomLevel;
+      const newTop = mouseY - imageY * newZoomLevel;
+
+      setZoomLevel(newZoomLevel);
+      setPanPosition({ x: newLeft, y: newTop });
+    }
+  };
 
   const navigateImage = useCallback((direction) => {
     if (!selectedImage || !projectFiles.images.length) return;
@@ -418,6 +506,71 @@ function ProjectsList() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedImage, showEditor, navigateImage, closeImageViewer]);
+
+  // Auto-fit image to screen when modal opens
+  useEffect(() => {
+    if (!selectedImage) return;
+
+    // Use image dimensions from backend data if available
+    const imageWidth = selectedImage.width;
+    const imageHeight = selectedImage.height;
+
+    if (!imageWidth || !imageHeight) {
+      // Fallback: set to 100% if dimensions not available
+      const fallbackZoom = 1;
+      const fallbackPan = { x: 0, y: 0 };
+      setZoomLevel(fallbackZoom);
+      setPanPosition(fallbackPan);
+      setInitialZoomLevel(fallbackZoom);
+      setInitialPanPosition(fallbackPan);
+      return;
+    }
+
+    // Use requestAnimationFrame to wait for container to be ready
+    const calculateZoom = () => {
+      const container = modalImageRef.current?.parentElement;
+      if (!container) {
+        // Retry on next frame if container not ready
+        requestAnimationFrame(calculateZoom);
+        return;
+      }
+
+      const containerRect = container.getBoundingClientRect();
+      const containerWidth = containerRect.width;
+      const containerHeight = containerRect.height;
+
+      // Safeguard: ensure container has valid dimensions
+      if (containerWidth === 0 || containerHeight === 0) {
+        requestAnimationFrame(calculateZoom);
+        return;
+      }
+
+      // Calculate zoom level to fit the image in the container
+      const scaleX = containerWidth / imageWidth;
+      const scaleY = containerHeight / imageHeight;
+      const scale = Math.min(scaleX, scaleY, 1); // Don't zoom in beyond 100%
+
+      // Center the image
+      const scaledWidth = imageWidth * scale;
+      const scaledHeight = imageHeight * scale;
+      const centerX = (containerWidth - scaledWidth) / 2;
+      const centerY = (containerHeight - scaledHeight) / 2;
+
+      const fitZoom = scale;
+      const fitPan = { x: centerX, y: centerY };
+
+      setZoomLevel(fitZoom);
+      setPanPosition(fitPan);
+      // Save as initial values for reset button
+      setInitialZoomLevel(fitZoom);
+      setInitialPanPosition(fitPan);
+    };
+
+    // Start calculation on next frame
+    const rafId = requestAnimationFrame(calculateZoom);
+
+    return () => cancelAnimationFrame(rafId);
+  }, [selectedImage]);
 
   // Gefilterte Projekte basierend auf Markierung
   const filteredProjects = projects.filter(project => {
@@ -673,14 +826,14 @@ function ProjectsList() {
               {/* Scrollable Image Container (Left) */}
               <div className="modal-image-container">
                 <div className="zoom-controls">
-                  <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= 0.5}>
+                  <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= initialZoomLevel}>
                     -
                   </button>
                   <span className="zoom-level">{Math.round(zoomLevel * 100)}%</span>
                   <button className="zoom-btn" onClick={handleZoomIn} title="Zoom In" disabled={zoomLevel >= 3}>
                     +
                   </button>
-                  <button className="zoom-btn zoom-reset" onClick={handleZoomReset} title="Zoom auf 100% zurücksetzen">
+                  <button className="zoom-btn zoom-reset" onClick={handleZoomReset} title="Zoom zurücksetzen">
                     Reset
                   </button>
 
@@ -727,11 +880,13 @@ function ProjectsList() {
                   onMouseMove={handleMouseMove}
                   onMouseUp={handleMouseUp}
                   onMouseLeave={handleMouseUp}
+                  onWheel={handleWheel}
                   style={{
                     cursor: isPanning ? 'grabbing' : 'grab'
                   }}
                 >
                   <img
+                    ref={modalImageRef}
                     src={selectedImage.local_path || selectedImage.url}
                     alt={selectedImage.name}
                     style={{
