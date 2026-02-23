@@ -43,6 +43,7 @@ function ProjectsList() {
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [showEditor, setShowEditor] = useState(false);
   const [initialZoomLevel, setInitialZoomLevel] = useState(1);
+  const [initialPanPosition, setInitialPanPosition] = useState({ x: 0, y: 0 });
   const modalImageRef = useRef(null);
 
   useEffect(() => {
@@ -212,7 +213,7 @@ function ProjectsList() {
 
   const handleZoomReset = () => {
     setZoomLevel(initialZoomLevel);
-    setPanPosition({ x: 0, y: 0 });
+    setPanPosition(initialPanPosition);
   };
 
   const handleMouseDown = (e) => {
@@ -240,14 +241,16 @@ function ProjectsList() {
       const delta = e.deltaY > 0 ? -0.1 : 0.1;
       const newZoomLevel = Math.min(Math.max(zoomLevel + delta, initialZoomLevel), 3);
 
-      // Get mouse position relative to the container center
+      // Get mouse position relative to the container
       const container = e.currentTarget;
       const rect = container.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left - rect.width / 2;
-      const mouseY = e.clientY - rect.top - rect.height / 2;
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
 
-      // Adjust pan to zoom towards mouse position
+      // Calculate zoom ratio
       const zoomRatio = newZoomLevel / zoomLevel;
+
+      // Adjust pan to keep the point under the mouse fixed
       const newPanX = mouseX - (mouseX - panPosition.x) * zoomRatio;
       const newPanY = mouseY - (mouseY - panPosition.y) * zoomRatio;
 
@@ -489,9 +492,16 @@ function ProjectsList() {
       const scaleY = (containerHeight - padding * 2) / imageHeight;
       const scale = Math.min(scaleX, scaleY, 1); // Don't zoom in beyond 100%
 
+      // Center the scaled image in the container
+      const scaledWidth = imageWidth * scale;
+      const scaledHeight = imageHeight * scale;
+      const centerX = (containerWidth - scaledWidth) / 2;
+      const centerY = (containerHeight - scaledHeight) / 2;
+
       setZoomLevel(scale);
-      setPanPosition({ x: 0, y: 0 });
+      setPanPosition({ x: centerX, y: centerY });
       setInitialZoomLevel(scale);
+      setInitialPanPosition({ x: centerX, y: centerY });
     };
 
     // Start calculation on next frame
@@ -819,7 +829,7 @@ function ProjectsList() {
                     alt={selectedImage.name}
                     style={{
                       transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomLevel})`,
-                      transformOrigin: 'center center',
+                      transformOrigin: 'top left',
                       transition: isPanning ? 'none' : 'transform 0.1s ease-out',
                       userSelect: 'none',
                       pointerEvents: 'none',
