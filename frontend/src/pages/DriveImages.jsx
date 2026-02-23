@@ -82,6 +82,7 @@ function DriveImages() {
   const [selectedTagFilters, setSelectedTagFilters] = useState([]); // Ausgewählte Tags für Filter
   const [tagFilterSearchQuery, setTagFilterSearchQuery] = useState(''); // Tag-Suchfeld im Filter-Modal
   const [sidebarActiveTab, setSidebarActiveTab] = useState('tags'); // 'tags' oder 'projects'
+  const [showOnlyStarredProjects, setShowOnlyStarredProjects] = useState(false); // Nur markierte Projekte im Sidebar anzeigen
   const [selectedProjectId, setSelectedProjectId] = useState(null); // Aktives Projekt für Quick-Assign
 
   const TAG_PRESET_COLORS = [
@@ -1642,12 +1643,34 @@ function DriveImages() {
               )}
             </div>
 
+            {/* Project View Switcher */}
+            <div className="project-view-switcher">
+              <button
+                className={`switcher-btn ${!showOnlyStarredProjects ? 'active' : ''}`}
+                onClick={() => setShowOnlyStarredProjects(false)}
+              >
+                Alle Projekte
+              </button>
+              <button
+                className={`switcher-btn ${showOnlyStarredProjects ? 'active' : ''}`}
+                onClick={() => setShowOnlyStarredProjects(true)}
+              >
+                Markierte
+              </button>
+            </div>
+
             <div className="tag-list">
               {projects.length === 0 ? (
                 <div className="tag-empty">Keine Projekte verfügbar</div>
               ) : (
                 projects
-                  .filter(project => project.folder_name.toLowerCase().includes(tagSearchQuery.toLowerCase()))
+                  .filter(project => {
+                    // Filter by search query
+                    const matchesSearch = project.folder_name.toLowerCase().includes(tagSearchQuery.toLowerCase());
+                    // Filter by starred status if needed
+                    const matchesStarred = !showOnlyStarredProjects || selectedProjects.includes(project.id);
+                    return matchesSearch && matchesStarred;
+                  })
                   .map(project => (
                     <div key={project.id} className={`tag-list-item ${selectedProjectId === project.id ? 'tag-selected' : ''}`}>
                       <label
