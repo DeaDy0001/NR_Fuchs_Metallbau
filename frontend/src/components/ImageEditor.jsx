@@ -3211,7 +3211,16 @@ function ImageEditor({ image, onClose }) {
           </div>
 
           {/* Canvas */}
-          <div className="editor-canvas-container" ref={containerRef}>
+          <div
+            className="editor-canvas-container"
+            ref={containerRef}
+            onMouseDown={(e) => {
+              // Prevent default middle-click behavior (auto-scroll)
+              if (e.button === 1) {
+                e.preventDefault();
+              }
+            }}
+          >
             <canvas ref={canvasRef} />
           </div>
 
