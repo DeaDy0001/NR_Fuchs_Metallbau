@@ -558,8 +558,6 @@ function DriveImages() {
     }
     setSelectedImage(image);
     setEditingName(image.name);
-    setZoomLevel(1); // Will be adjusted in useEffect
-    setPanPosition({ x: 0, y: 0 });
   };
 
   const handleQuickAssignProject = async (imageId) => {
@@ -619,62 +617,16 @@ function DriveImages() {
   };
 
   const handleZoomIn = () => {
-    const newZoom = Math.min(zoomLevel + 0.25, 3); // Max 300%
-
-    // Zoom towards center of viewport
-    if (!modalImageRef.current?.parentElement) {
-      setZoomLevel(newZoom);
-      return;
-    }
-
-    const container = modalImageRef.current.parentElement;
-    const containerRect = container.getBoundingClientRect();
-    const centerX = containerRect.width / 2;
-    const centerY = containerRect.height / 2;
-
-    // Calculate the point in the image at the center
-    const imageX = (centerX - panPosition.x) / zoomLevel;
-    const imageY = (centerY - panPosition.y) / zoomLevel;
-
-    // Keep that point at the center
-    const newLeft = centerX - imageX * newZoom;
-    const newTop = centerY - imageY * newZoom;
-
-    setZoomLevel(newZoom);
-    setPanPosition({ x: newLeft, y: newTop });
+    setZoomLevel(prev => Math.min(prev + 0.25, 3)); // Max 300%
   };
 
   const handleZoomOut = () => {
-    // Don't zoom out below the initial fit-to-container zoom level
-    const newZoom = Math.max(zoomLevel - 0.25, initialZoomLevel);
-
-    // Zoom towards center of viewport
-    if (!modalImageRef.current?.parentElement) {
-      setZoomLevel(newZoom);
-      return;
-    }
-
-    const container = modalImageRef.current.parentElement;
-    const containerRect = container.getBoundingClientRect();
-    const centerX = containerRect.width / 2;
-    const centerY = containerRect.height / 2;
-
-    // Calculate the point in the image at the center
-    const imageX = (centerX - panPosition.x) / zoomLevel;
-    const imageY = (centerY - panPosition.y) / zoomLevel;
-
-    // Keep that point at the center
-    const newLeft = centerX - imageX * newZoom;
-    const newTop = centerY - imageY * newZoom;
-
-    setZoomLevel(newZoom);
-    setPanPosition({ x: newLeft, y: newTop });
+    setZoomLevel(prev => Math.max(prev - 0.25, initialZoomLevel));
   };
 
   const handleZoomReset = () => {
-    // Reset to the initial auto-fit zoom and position
     setZoomLevel(initialZoomLevel);
-    setPanPosition(initialPanPosition);
+    setPanPosition({ x: 0, y: 0 });
   };
 
   // Pan/Drag handlers for zoomed image
@@ -708,29 +660,22 @@ function DriveImages() {
     if (e.shiftKey) {
       e.preventDefault();
 
-      const delta = e.deltaY > 0 ? -0.05 : 0.05; // Finer zoom steps (5% instead of 10%)
-      const newZoomLevel = Math.min(Math.max(zoomLevel + delta, 0.5), 3);
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      const newZoomLevel = Math.min(Math.max(zoomLevel + delta, initialZoomLevel), 3);
 
-      // Get mouse position relative to the container
+      // Get mouse position relative to the container center
       const container = e.currentTarget;
-      const containerRect = container.getBoundingClientRect();
-      const mouseX = e.clientX - containerRect.left;
-      const mouseY = e.clientY - containerRect.top;
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left - rect.width / 2;
+      const mouseY = e.clientY - rect.top - rect.height / 2;
 
-      // Current image position (from state, not DOM)
-      const currentLeft = panPosition.x;
-      const currentTop = panPosition.y;
-
-      // Calculate the point in the original (unzoomed) image that's under the mouse
-      const imageX = (mouseX - currentLeft) / zoomLevel;
-      const imageY = (mouseY - currentTop) / zoomLevel;
-
-      // Calculate new position to keep that point under the mouse
-      const newLeft = mouseX - imageX * newZoomLevel;
-      const newTop = mouseY - imageY * newZoomLevel;
+      // Adjust pan to zoom towards mouse position
+      const zoomRatio = newZoomLevel / zoomLevel;
+      const newPanX = mouseX - (mouseX - panPosition.x) * zoomRatio;
+      const newPanY = mouseY - (mouseY - panPosition.y) * zoomRatio;
 
       setZoomLevel(newZoomLevel);
-      setPanPosition({ x: newLeft, y: newTop });
+      setPanPosition({ x: newPanX, y: newPanY });
     }
   };
 
@@ -836,8 +781,6 @@ function DriveImages() {
       const prevImage = images[currentIndex - 1];
       setSelectedImage(prevImage);
       setEditingName(prevImage.name);
-      setZoomLevel(1); // Will be adjusted in useEffect
-      setPanPosition({ x: 0, y: 0 });
     }
   };
 
@@ -847,8 +790,6 @@ function DriveImages() {
       const nextImage = images[currentIndex + 1];
       setSelectedImage(nextImage);
       setEditingName(nextImage.name);
-      setZoomLevel(1); // Will be adjusted in useEffect
-      setPanPosition({ x: 0, y: 0 });
     }
   };
 
@@ -862,12 +803,9 @@ function DriveImages() {
 
     if (!imageWidth || !imageHeight) {
       // Fallback: set to 100% if dimensions not available
-      const fallbackZoom = 1;
-      const fallbackPan = { x: 0, y: 0 };
-      setZoomLevel(fallbackZoom);
-      setPanPosition(fallbackPan);
-      setInitialZoomLevel(fallbackZoom);
-      setInitialPanPosition(fallbackPan);
+      setZoomLevel(1);
+      setPanPosition({ x: 0, y: 0 });
+      setInitialZoomLevel(1);
       return;
     }
 
@@ -875,7 +813,6 @@ function DriveImages() {
     const calculateZoom = () => {
       const container = modalImageRef.current?.parentElement;
       if (!container) {
-        // Retry on next frame if container not ready
         requestAnimationFrame(calculateZoom);
         return;
       }
@@ -890,25 +827,15 @@ function DriveImages() {
         return;
       }
 
-      // Calculate zoom level to fit the image in the container
-      const scaleX = containerWidth / imageWidth;
-      const scaleY = containerHeight / imageHeight;
+      // Calculate zoom level to fit the image in the container with padding
+      const padding = 20; // Padding in pixels
+      const scaleX = (containerWidth - padding * 2) / imageWidth;
+      const scaleY = (containerHeight - padding * 2) / imageHeight;
       const scale = Math.min(scaleX, scaleY, 1); // Don't zoom in beyond 100%
 
-      // Center the image
-      const scaledWidth = imageWidth * scale;
-      const scaledHeight = imageHeight * scale;
-      const centerX = (containerWidth - scaledWidth) / 2;
-      const centerY = (containerHeight - scaledHeight) / 2;
-
-      const fitZoom = scale;
-      const fitPan = { x: centerX, y: centerY };
-
-      setZoomLevel(fitZoom);
-      setPanPosition(fitPan);
-      // Save as initial values for reset button
-      setInitialZoomLevel(fitZoom);
-      setInitialPanPosition(fitPan);
+      setZoomLevel(scale);
+      setPanPosition({ x: 0, y: 0 });
+      setInitialZoomLevel(scale);
     };
 
     // Start calculation on next frame
@@ -1920,13 +1847,13 @@ function DriveImages() {
                     src={selectedImage.local_path || selectedImage.thumbnail_url}
                     alt={selectedImage.name}
                     style={{
-                      transform: `scale(${zoomLevel})`,
-                      position: 'absolute',
-                      left: `${panPosition.x}px`,
-                      top: `${panPosition.y}px`,
-                      transition: isDragging ? 'none' : 'transform 0.2s ease, left 0.2s ease, top 0.2s ease',
+                      transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomLevel})`,
+                      transformOrigin: 'center center',
+                      transition: isDragging ? 'none' : 'transform 0.1s ease-out',
                       userSelect: 'none',
-                      pointerEvents: 'none'
+                      pointerEvents: 'none',
+                      maxWidth: 'none',
+                      maxHeight: 'none'
                     }}
                     draggable={false}
                   />
