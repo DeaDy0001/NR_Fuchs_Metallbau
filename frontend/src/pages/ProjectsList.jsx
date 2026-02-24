@@ -742,20 +742,28 @@ function ProjectsList() {
                 <div className="form-column">
                   <div className="form-group">
                     <label>Projektname</label>
-                    <input
-                      type="text"
-                      value={editForm.name}
-                      onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                      onBlur={handleRenameProject}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleRenameProject();
-                        }
-                      }}
-                      className="input"
-                      placeholder="Projektname..."
-                    />
+                    <div className="rename-input-group">
+                      <input
+                        type="text"
+                        value={editForm.name}
+                        onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleRenameProject();
+                          }
+                        }}
+                        className="input"
+                        placeholder="Projektname..."
+                      />
+                      <button
+                        className="btn btn-primary btn-sm btn-icon"
+                        onClick={handleRenameProject}
+                        title="Umbenennen (benennt auch den Ordner um!)"
+                      >
+                        <Edit2 size={16} />
+                      </button>
+                    </div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
                       ⚠️ Hiermit wird auch der Ordner umbenannt
                     </div>

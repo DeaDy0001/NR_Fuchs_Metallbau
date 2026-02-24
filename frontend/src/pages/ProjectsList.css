@@ -585,6 +585,16 @@
   line-height: 1.5;
 }
 
+/* Rename input group with button */
+.rename-input-group {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.rename-input-group .input {
+  flex: 1;
+}
+
 @media (max-width: 768px) {
   .projects-grid {
     grid-template-columns: 1fr;
