@@ -4,7 +4,7 @@ import { Download, RefreshCw, AlertCircle, GitBranch, Lock, Tag, ChevronDown, Ke
 import GitHubTokenModal from '../components/GitHubTokenModal';
 import './UpdateSettings.css';
 
-function UpdateSettings() {
+function UpdateSettings({ onCheckForUpdates }) {
   const [searchParams] = useSearchParams();
   const [gitInfo, setGitInfo] = useState(null);
   const [updating, setUpdating] = useState(false);
@@ -90,6 +90,11 @@ function UpdateSettings() {
       console.error('Error loading tags:', err);
     } finally {
       setLoadingTags(false);
+    }
+
+    // Trigger update check to refresh badge in header
+    if (onCheckForUpdates) {
+      onCheckForUpdates();
     }
   };
 
