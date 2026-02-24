@@ -8,12 +8,31 @@ const GITHUB_OWNER = 'DeaDy0001';
 const GITHUB_REPO = 'NR_Fuchs_Metallbau';
 
 /**
- * Get current version from package.json
+ * Get current version
+ * Tries to get version from Git tag first (if on a tag)
+ * Falls back to package.json if not on a tag
  */
 const getCurrentVersion = () => {
-  const packagePath = path.join(__dirname, '../../package.json');
-  const packageJson = require(packagePath);
-  return packageJson.version;
+  const projectRoot = path.join(__dirname, '../../..');
+
+  try {
+    // Try to get exact tag if we're on one
+    const currentTag = execSync('git describe --tags --exact-match', {
+      cwd: projectRoot,
+      stdio: ['pipe', 'pipe', 'pipe'] // Suppress stderr
+    }).toString().trim();
+
+    // Extract version from tag (remove 'v' prefix if exists)
+    const versionFromTag = currentTag.replace(/^v/, '');
+    console.log(`📌 On tag: ${currentTag} → Version: ${versionFromTag}`);
+    return versionFromTag;
+  } catch (e) {
+    // Not on a tag, fall back to package.json
+    const packagePath = path.join(__dirname, '../../package.json');
+    const packageJson = require(packagePath);
+    console.log(`📦 Not on tag, using package.json version: ${packageJson.version}`);
+    return packageJson.version;
+  }
 };
 
 /**
