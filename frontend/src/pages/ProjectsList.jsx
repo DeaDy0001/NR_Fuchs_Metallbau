@@ -25,7 +25,7 @@ function ProjectsList() {
   const [searchQuery, setSearchQuery] = useState(''); // Kombiniertes Suchfeld für Projekte + Tags
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [editForm, setEditForm] = useState({ color: '', notes: '', tags: [] });
+  const [editForm, setEditForm] = useState({ name: '', color: '', notes: '', tags: [] });
   const [tagInput, setTagInput] = useState('');
   const [selectedProjects, setSelectedProjects] = useState([]); // Markierte Projekte
   const [showMarked, setShowMarked] = useState(true); // Filter: Markierte anzeigen
@@ -125,6 +125,7 @@ function ProjectsList() {
         // Update viewingProject with new values
         setViewingProject(updatedProject);
         setEditForm({
+          name: updatedProject.folder_name,
           color: updatedProject.color,
           notes: updatedProject.notes,
           tags: updatedProject.tags
@@ -157,6 +158,47 @@ function ProjectsList() {
     await handleSaveProject({ ...editForm, tags: newTags });
   };
 
+  const handleRenameProject = async () => {
+    if (!viewingProject || !editForm.name.trim()) return;
+
+    const newName = editForm.name.trim();
+    if (newName === viewingProject.folder_name) return; // Kein Unterschied
+
+    if (!confirm(`Projekt "${viewingProject.folder_name}" zu "${newName}" umbenennen?\n\nDies benennt auch den Ordner um!`)) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/projects/${viewingProject.id}/rename`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_name: newName })
+      });
+
+      if (response.ok) {
+        const updatedProject = await response.json();
+        loadProjects();
+        setViewingProject(updatedProject);
+        setEditForm({
+          name: updatedProject.folder_name,
+          color: updatedProject.color,
+          notes: updatedProject.notes,
+          tags: updatedProject.tags
+        });
+        alert('✅ Projekt erfolgreich umbenannt!');
+      } else {
+        const error = await response.json();
+        alert(`Fehler beim Umbenennen: ${error.error || 'Unbekannter Fehler'}`);
+        // Reset to original name on error
+        setEditForm({ ...editForm, name: viewingProject.folder_name });
+      }
+    } catch (error) {
+      console.error('Error renaming project:', error);
+      alert(`Fehler beim Umbenennen: ${error.message}`);
+      setEditForm({ ...editForm, name: viewingProject.folder_name });
+    }
+  };
+
   const toggleProjectSelection = (projectId) => {
     setSelectedProjects(prev => {
       const updated = prev.includes(projectId)
@@ -176,6 +218,7 @@ function ProjectsList() {
 
     // Initialize edit form with current project values
     setEditForm({
+      name: project.folder_name || '',
       color: project.color || '#3b82f6',
       notes: project.notes || '',
       tags: project.tags || []
@@ -199,7 +242,7 @@ function ProjectsList() {
     setViewingProject(null);
     setProjectFiles({ images: [], pdfs: [], hasImages: false, hasPdfs: false });
     setActiveTab('images');
-    setEditForm({ color: '', notes: '' });
+    setEditForm({ name: '', color: '', notes: '', tags: [] });
   };
 
   // Helper function to reload project files (used after image updates)
@@ -695,8 +738,29 @@ function ProjectsList() {
             {/* Edit-Felder */}
             <div className="project-edit-section">
               <div className="project-form-grid">
-                {/* Left column: Color and Notes */}
+                {/* Left column: Project Name and Color */}
                 <div className="form-column">
+                  <div className="form-group">
+                    <label>Projektname</label>
+                    <input
+                      type="text"
+                      value={editForm.name}
+                      onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                      onBlur={handleRenameProject}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleRenameProject();
+                        }
+                      }}
+                      className="input"
+                      placeholder="Projektname..."
+                    />
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
+                      ⚠️ Hiermit wird auch der Ordner umbenannt
+                    </div>
+                  </div>
+
                   <div className="form-group">
                     <label>Farbe</label>
                     <div className="color-picker">
@@ -721,7 +785,10 @@ function ProjectsList() {
                       className="color-input"
                     />
                   </div>
+                </div>
 
+                {/* Right column: Notes and Tags */}
+                <div className="form-column">
                   <div className="form-group">
                     <label>Notizen</label>
                     <textarea
@@ -733,10 +800,6 @@ function ProjectsList() {
                       placeholder="Fügen Sie Notizen zum Projekt hinzu..."
                     />
                   </div>
-                </div>
-
-                {/* Right column: Tags */}
-                <div className="form-column">
                   <div className="form-group">
                     <label>Tags</label>
                     <div className="tags-container">

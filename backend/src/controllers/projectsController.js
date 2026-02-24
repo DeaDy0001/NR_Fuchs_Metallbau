@@ -215,7 +215,7 @@ const createProject = (req, res) => {
 };
 
 // Update a project
-const updateProject = (req, res) => {
+const updateProject = async (req, res) => {
   try {
     const { id } = req.params;
     const { color, notes, tags } = req.body;
@@ -260,6 +260,13 @@ const updateProject = (req, res) => {
       ...updatedProject,
       tags: updatedProject.tags ? JSON.parse(updatedProject.tags) : []
     };
+
+    // Write JSON metadata to project folder
+    const setting = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    if (setting?.project_path) {
+      const projectFolderPath = path.join(setting.project_path, updatedProject.folder_name);
+      await writeProjectMetadata(updatedProject, projectFolderPath);
+    }
 
     res.json(project);
   } catch (error) {
@@ -314,15 +321,47 @@ const syncProjects = async (req, res) => {
     const existingFolderNames = new Set(existingProjects.map(p => p.folder_name));
 
     let addedCount = 0;
+    let renamedCount = 0;
 
     // Add new projects and count images
     const insertStmt = db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)');
+    const updateFolderNameStmt = db.prepare('UPDATE projects SET folder_name = ?, updated_at = datetime(\'now\') WHERE id = ?');
     const projectImageCounts = [];
+    const renamedProjects = [];
 
     for (const folderName of folders) {
+      // Check if .project.json exists in Bilder/ subfolder
+      const metadataPath = path.join(projectPath, folderName, 'Bilder', '.project.json');
+      let metadata = null;
+      try {
+        if (await fs.pathExists(metadataPath)) {
+          metadata = await fs.readJson(metadataPath);
+          console.log(`📖 Found metadata for "${folderName}":`, metadata);
+
+          // Check if project with this ID exists in DB
+          const existingProject = db.prepare('SELECT id, folder_name FROM projects WHERE id = ?').get(metadata.id);
+
+          if (existingProject && existingProject.folder_name !== folderName) {
+            // Folder was renamed → update DB
+            console.log(`🔄 Detected rename: "${existingProject.folder_name}" → "${folderName}" (ID: ${metadata.id})`);
+            updateFolderNameStmt.run(folderName, metadata.id);
+            renamedProjects.push({ old: existingProject.folder_name, new: folderName });
+            renamedCount++;
+
+            // Update existingFolderNames to reflect the rename
+            existingFolderNames.delete(existingProject.folder_name);
+            existingFolderNames.add(folderName);
+          }
+        }
+      } catch (err) {
+        console.error(`Error reading metadata for ${folderName}:`, err);
+      }
+
+      // Add project if it doesn't exist (either no metadata or not in DB)
       if (!existingFolderNames.has(folderName)) {
         insertStmt.run(folderName, '#3b82f6', '');
         addedCount++;
+        existingFolderNames.add(folderName);
       }
 
       // Count images in Bilder subfolder for reporting
@@ -361,6 +400,7 @@ const syncProjects = async (req, res) => {
       message: 'Projects synced successfully',
       added: addedCount,
       removed: removedNames,
+      renamed: renamedProjects,
       total: folders.length,
       imageCounts: projectImageCounts
     });
@@ -665,6 +705,99 @@ const serveProjectFile = async (req, res) => {
   }
 };
 
+// Rename a project (folder and database)
+const renameProject = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { new_name } = req.body;
+
+    if (!new_name || !new_name.trim()) {
+      return res.status(400).json({ error: 'New name is required' });
+    }
+
+    const trimmedName = new_name.trim();
+
+    // Get project details
+    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Check if name already exists
+    const existing = db.prepare('SELECT id FROM projects WHERE folder_name = ? AND id != ?').get(trimmedName, id);
+    if (existing) {
+      return res.status(400).json({ error: 'Ein Projekt mit diesem Namen existiert bereits' });
+    }
+
+    // Get project base path from settings
+    const setting = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    if (!setting || !setting.project_path) {
+      return res.status(400).json({ error: 'Project base path not configured' });
+    }
+
+    const projectBasePath = setting.project_path;
+    const oldFolderPath = path.join(projectBasePath, project.folder_name);
+    const newFolderPath = path.join(projectBasePath, trimmedName);
+
+    // Check if old folder exists
+    if (!(await fs.pathExists(oldFolderPath))) {
+      return res.status(404).json({ error: 'Project folder not found' });
+    }
+
+    // Check if new folder already exists
+    if (await fs.pathExists(newFolderPath)) {
+      return res.status(400).json({ error: 'Ein Ordner mit diesem Namen existiert bereits' });
+    }
+
+    // Rename folder
+    await fs.rename(oldFolderPath, newFolderPath);
+    console.log(`✅ Renamed folder: ${project.folder_name} → ${trimmedName}`);
+
+    // Update database
+    db.prepare('UPDATE projects SET folder_name = ?, updated_at = datetime(\'now\') WHERE id = ?').run(trimmedName, id);
+
+    // Get updated project
+    const updatedProject = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+
+    // Write JSON metadata to project folder
+    await writeProjectMetadata(updatedProject, newFolderPath);
+
+    res.json({
+      ...updatedProject,
+      tags: updatedProject.tags ? JSON.parse(updatedProject.tags) : []
+    });
+  } catch (error) {
+    console.error('Error renaming project:', error);
+    res.status(500).json({ error: 'Failed to rename project' });
+  }
+};
+
+// Helper: Write project metadata to .project.json in Bilder folder
+const writeProjectMetadata = async (project, projectFolderPath) => {
+  try {
+    const bilderPath = path.join(projectFolderPath, 'Bilder');
+
+    // Create Bilder folder if it doesn't exist
+    await fs.ensureDir(bilderPath);
+
+    const metadataPath = path.join(bilderPath, '.project.json');
+    const metadata = {
+      id: project.id,
+      folder_name: project.folder_name,
+      color: project.color,
+      notes: project.notes,
+      tags: project.tags ? JSON.parse(project.tags) : [],
+      updated_at: project.updated_at
+    };
+
+    await fs.writeJson(metadataPath, metadata, { spaces: 2 });
+    console.log(`📝 Wrote metadata: ${metadataPath}`);
+  } catch (error) {
+    console.error('Error writing project metadata:', error);
+    // Don't throw - this is optional
+  }
+};
+
 module.exports = {
   getProjectSettings,
   setProjectPath,
@@ -675,5 +808,6 @@ module.exports = {
   deleteProject,
   syncProjects,
   getProjectFiles,
-  serveProjectFile
+  serveProjectFile,
+  renameProject
 };

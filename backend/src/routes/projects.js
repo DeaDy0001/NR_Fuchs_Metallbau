@@ -13,6 +13,7 @@ router.get('/:id/files', projectsController.getProjectFiles);
 router.get('/:id/file/:type/:filename', projectsController.serveProjectFile);
 router.post('/', projectsController.createProject);
 router.put('/:id', projectsController.updateProject);
+router.put('/:id/rename', projectsController.renameProject);
 router.delete('/:id', projectsController.deleteProject);
 router.post('/sync', projectsController.syncProjects);
 
