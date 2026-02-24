@@ -4,7 +4,7 @@ import { Download, RefreshCw, AlertCircle, GitBranch, Lock, Tag, ChevronDown, Ke
 import GitHubTokenModal from '../components/GitHubTokenModal';
 import './UpdateSettings.css';
 
-function UpdateSettings() {
+function UpdateSettings({ onCheckForUpdates }) {
   const [searchParams] = useSearchParams();
   const [gitInfo, setGitInfo] = useState(null);
   const [updating, setUpdating] = useState(false);
@@ -90,6 +90,11 @@ function UpdateSettings() {
       console.error('Error loading tags:', err);
     } finally {
       setLoadingTags(false);
+    }
+
+    // Trigger update check to refresh badge in header
+    if (onCheckForUpdates) {
+      onCheckForUpdates();
     }
   };
 
@@ -297,8 +302,16 @@ function UpdateSettings() {
             )}
             {gitInfo.commitMessage && gitInfo.commitMessage !== 'Keine Git-Informationen verfügbar' && (
               <div className="info-row">
-                <span className="info-label">Letzte Änderung:</span>
-                <span className="info-value commit-message">{gitInfo.commitMessage.split('\n')[0]}</span>
+                <span className="info-label">{gitInfo.isRelease ? 'Release-Informationen:' : 'Letzte Änderung:'}</span>
+                <span className="info-value commit-message">
+                  {gitInfo.isRelease ? (
+                    <div className="release-notes-preview">
+                      {renderReleaseBody(gitInfo.releaseNotes)}
+                    </div>
+                  ) : (
+                    gitInfo.commitMessage.split('\n')[0]
+                  )}
+                </span>
               </div>
             )}
             {gitInfo.commitDate && (

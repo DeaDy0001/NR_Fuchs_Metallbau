@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Layout from './components/Layout';
 import DriveImages from './pages/DriveImages';
 import ProjectsList from './pages/ProjectsList';
@@ -14,19 +14,8 @@ function App() {
 
   const [updateInfo, setUpdateInfo] = useState(null);
 
-  // Load settings on mount
-  useEffect(() => {
-    loadSettings();
-  }, []);
-
-  // Check for updates on mount and every hour
-  useEffect(() => {
-    checkForUpdates();
-    const interval = setInterval(checkForUpdates, 60 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const checkForUpdates = async () => {
+  // Memoized update check function to prevent multiple calls
+  const checkForUpdates = useCallback(async () => {
     try {
       const response = await fetch('/api/system/version');
       if (response.ok) {
@@ -40,7 +29,19 @@ function App() {
     } catch (error) {
       console.error('Error checking for updates:', error);
     }
-  };
+  }, []);
+
+  // Load settings on mount
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  // Check for updates on mount and every hour
+  useEffect(() => {
+    checkForUpdates();
+    const interval = setInterval(checkForUpdates, 60 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [checkForUpdates]);
 
   // Update favicon and title when settings change
   useEffect(() => {
@@ -106,10 +107,10 @@ function App() {
           <Route path="/projects" element={<ProjectsList />} />
 
           {/* Einstellungen mit Tabs */}
-          <Route path="/settings/general" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} />} />
-          <Route path="/settings/images" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} />} />
-          <Route path="/settings/projects" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} />} />
-          <Route path="/settings/update" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} />} />
+          <Route path="/settings/general" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} onCheckForUpdates={checkForUpdates} />} />
+          <Route path="/settings/images" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} onCheckForUpdates={checkForUpdates} />} />
+          <Route path="/settings/projects" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} onCheckForUpdates={checkForUpdates} />} />
+          <Route path="/settings/update" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} onCheckForUpdates={checkForUpdates} />} />
 
           {/* Redirect old routes */}
           <Route path="/drive/images" element={<Navigate to="/images" replace />} />

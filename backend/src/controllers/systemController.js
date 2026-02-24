@@ -172,27 +172,60 @@ const triggerUpdate = async (req, res) => {
  * Get current Git commit info
  * Tries to read from build-info.json first (for releases without .git folder)
  * Falls back to git commands if build-info.json is not available
+ * If on a tag, fetches release notes from GitHub API
  */
-const getGitInfo = (req, res) => {
+const getGitInfo = async (req, res) => {
   try {
     const version = getCurrentVersion();
     const projectRoot = path.join(__dirname, '../../..');
     const buildInfoPath = path.join(__dirname, '../build-info.json');
+
+    // Check if we're on a tag
+    let currentTag = null;
+    try {
+      currentTag = execSync('git describe --tags --exact-match', {
+        cwd: projectRoot,
+        stdio: ['pipe', 'pipe', 'pipe']
+      }).toString().trim();
+    } catch (e) {
+      // Not on a tag
+    }
 
     // Try to read from build-info.json first
     if (fs.existsSync(buildInfoPath)) {
       try {
         const buildInfo = JSON.parse(fs.readFileSync(buildInfoPath, 'utf8'));
 
+        // If on a tag, try to fetch release notes from GitHub
+        let releaseNotes = null;
+        if (currentTag) {
+          try {
+            const releaseResponse = await axios.get(
+              `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/${currentTag}`,
+              {
+                headers: {
+                  'Accept': 'application/vnd.github.v3+json',
+                  'User-Agent': 'Fuchs-Metallbau-App'
+                }
+              }
+            );
+            releaseNotes = releaseResponse.data.body;
+          } catch (e) {
+            // Release not found or API error, continue without release notes
+          }
+        }
+
         // If build-info.json exists and has git info, use it
         if (buildInfo.git) {
           return res.json({
             branch: buildInfo.git.branch,
             commit: buildInfo.git.commit,
-            commitMessage: buildInfo.git.commitMessage,
+            commitMessage: releaseNotes || buildInfo.git.commitMessage,
             commitDate: buildInfo.git.commitDate,
             version: version,
             buildDate: buildInfo.buildDate,
+            releaseNotes: releaseNotes,
+            isRelease: !!releaseNotes,
             source: 'build-info'
           });
         } else {
@@ -200,10 +233,12 @@ const getGitInfo = (req, res) => {
           return res.json({
             branch: 'release',
             commit: 'N/A',
-            commitMessage: `Release v${version}`,
+            commitMessage: releaseNotes || `Release v${version}`,
             commitDate: buildInfo.buildDate,
             version: version,
             buildDate: buildInfo.buildDate,
+            releaseNotes: releaseNotes,
+            isRelease: !!releaseNotes,
             source: 'build-info-release'
           });
         }
@@ -229,12 +264,33 @@ const getGitInfo = (req, res) => {
       .toString()
       .trim();
 
+    // If on a tag, try to fetch release notes from GitHub
+    let releaseNotes = null;
+    if (currentTag) {
+      try {
+        const releaseResponse = await axios.get(
+          `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/${currentTag}`,
+          {
+            headers: {
+              'Accept': 'application/vnd.github.v3+json',
+              'User-Agent': 'Fuchs-Metallbau-App'
+            }
+          }
+        );
+        releaseNotes = releaseResponse.data.body;
+      } catch (e) {
+        // Release not found or API error, continue without release notes
+      }
+    }
+
     res.json({
       branch,
       commit,
-      commitMessage,
+      commitMessage: releaseNotes || commitMessage,
       commitDate,
       version,
+      releaseNotes: releaseNotes,
+      isRelease: !!releaseNotes,
       source: 'git'
     });
   } catch (error) {
@@ -247,6 +303,8 @@ const getGitInfo = (req, res) => {
       commitMessage: 'Keine Git-Informationen verfügbar',
       commitDate: new Date().toISOString(),
       version: getCurrentVersion(),
+      releaseNotes: null,
+      isRelease: false,
       source: 'fallback'
     });
   }

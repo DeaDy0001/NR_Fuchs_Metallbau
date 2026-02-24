@@ -5,7 +5,7 @@ import ProjectsSettings from './ProjectsSettings';
 import UpdateSettings from './UpdateSettings';
 import './SettingsTabs.css';
 
-function SettingsTabs({ settings, updateSettings, onSettingsChange }) {
+function SettingsTabs({ settings, updateSettings, onSettingsChange, onCheckForUpdates }) {
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -68,7 +68,7 @@ function SettingsTabs({ settings, updateSettings, onSettingsChange }) {
           )}
           {activeTab === 'images' && <DriveSettings />}
           {activeTab === 'projects' && <ProjectsSettings />}
-          {activeTab === 'update' && <UpdateSettings />}
+          {activeTab === 'update' && <UpdateSettings onCheckForUpdates={onCheckForUpdates} />}
         </div>
       </div>
     </div>
