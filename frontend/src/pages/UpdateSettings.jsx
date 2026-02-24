@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Download, RefreshCw, AlertCircle, GitBranch, Lock, Tag, ChevronDown, Key, CheckCircle } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Download, RefreshCw, AlertCircle, GitBranch, Lock, Tag, ChevronDown, Key, CheckCircle, FileText, Calendar, ExternalLink } from 'lucide-react';
 import GitHubTokenModal from '../components/GitHubTokenModal';
 import './UpdateSettings.css';
 
 function UpdateSettings() {
+  const [searchParams] = useSearchParams();
   const [gitInfo, setGitInfo] = useState(null);
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState('');
@@ -22,6 +24,9 @@ function UpdateSettings() {
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [showBranchUpdate, setShowBranchUpdate] = useState(false);
 
+  // Release notes
+  const [releases, setReleases] = useState([]);
+
   // GitHub Token (Developer)
   const [showGitHubTokenModal, setShowGitHubTokenModal] = useState(false);
   const [githubTokenConfigured, setGithubTokenConfigured] = useState(false);
@@ -29,6 +34,7 @@ function UpdateSettings() {
   useEffect(() => {
     loadGitInfo();
     loadTags();
+    loadReleases();
   }, []);
 
   useEffect(() => {
@@ -70,12 +76,77 @@ function UpdateSettings() {
         const data = await response.json();
         setTags(data.tags);
         setCurrentVersion(data.currentVersion);
+
+        // Auto-select version from URL parameter (e.g. ?version=v1.0.3)
+        const versionParam = searchParams.get('version');
+        if (versionParam) {
+          const matchingTag = data.tags.find(t => t.name === versionParam);
+          if (matchingTag) {
+            setSelectedTag(matchingTag.name);
+          }
+        }
       }
     } catch (err) {
       console.error('Error loading tags:', err);
     } finally {
       setLoadingTags(false);
     }
+  };
+
+  const loadReleases = async () => {
+    try {
+      const response = await fetch('/api/system/releases');
+      if (response.ok) {
+        const data = await response.json();
+        setReleases(data.releases || []);
+      }
+    } catch (err) {
+      console.error('Error loading releases:', err);
+    }
+  };
+
+  // Get the release matching the selected tag
+  const getSelectedRelease = () => {
+    if (!selectedTag) return null;
+    return releases.find(r => r.tagName === selectedTag);
+  };
+
+  // Simple markdown-like rendering for release notes
+  const renderReleaseBody = (body) => {
+    if (!body) return null;
+
+    return body.split('\n').map((line, i) => {
+      // Headers
+      if (line.startsWith('### ')) {
+        return <h4 key={i} className="release-body-h3">{line.replace('### ', '')}</h4>;
+      }
+      if (line.startsWith('## ')) {
+        return <h3 key={i} className="release-body-h2">{line.replace('## ', '')}</h3>;
+      }
+      // List items
+      if (line.startsWith('- ') || line.startsWith('* ')) {
+        return <li key={i} className="release-body-li">{line.replace(/^[-*] /, '')}</li>;
+      }
+      // Bold text handling
+      if (line.includes('**')) {
+        const parts = line.split(/(\*\*[^*]+\*\*)/g);
+        return (
+          <p key={i} className="release-body-p">
+            {parts.map((part, j) =>
+              part.startsWith('**') && part.endsWith('**')
+                ? <strong key={j}>{part.slice(2, -2)}</strong>
+                : part
+            )}
+          </p>
+        );
+      }
+      // Empty lines
+      if (line.trim() === '') {
+        return <div key={i} className="release-body-spacer" />;
+      }
+      // Normal text
+      return <p key={i} className="release-body-p">{line}</p>;
+    });
   };
 
   const handleDevLogin = async () => {
@@ -204,20 +275,43 @@ function UpdateSettings() {
           <div className="git-info">
             <div className="info-row">
               <span className="info-label">Version:</span>
-              <span className="info-value">{gitInfo.version}</span>
+              <span className="info-value version-highlight">{gitInfo.version}</span>
             </div>
-            <div className="info-row">
-              <span className="info-label">Branch:</span>
-              <span className="info-value">{gitInfo.branch}</span>
-            </div>
-            <div className="info-row">
-              <span className="info-label">Commit:</span>
-              <span className="info-value">{gitInfo.commit}</span>
-            </div>
-            <div className="info-row">
-              <span className="info-label">Letztes Update:</span>
-              <span className="info-value">{new Date(gitInfo.commitDate).toLocaleString('de-DE')}</span>
-            </div>
+            {gitInfo.buildDate && (
+              <div className="info-row">
+                <span className="info-label">Build-Datum:</span>
+                <span className="info-value">{new Date(gitInfo.buildDate).toLocaleString('de-DE')}</span>
+              </div>
+            )}
+            {gitInfo.branch !== 'unknown' && gitInfo.branch !== 'release' && (
+              <div className="info-row">
+                <span className="info-label">Branch:</span>
+                <span className="info-value">{gitInfo.branch}</span>
+              </div>
+            )}
+            {gitInfo.commit && gitInfo.commit !== 'N/A' && (
+              <div className="info-row">
+                <span className="info-label">Commit:</span>
+                <span className="info-value">{gitInfo.commit}</span>
+              </div>
+            )}
+            {gitInfo.commitMessage && gitInfo.commitMessage !== 'Keine Git-Informationen verfügbar' && (
+              <div className="info-row">
+                <span className="info-label">Letzte Änderung:</span>
+                <span className="info-value commit-message">{gitInfo.commitMessage.split('\n')[0]}</span>
+              </div>
+            )}
+            {gitInfo.commitDate && (
+              <div className="info-row">
+                <span className="info-label">Letztes Update:</span>
+                <span className="info-value">{new Date(gitInfo.commitDate).toLocaleString('de-DE')}</span>
+              </div>
+            )}
+            {gitInfo.source === 'build-info-release' && (
+              <div className="info-row release-badge">
+                <span className="release-indicator">📦 Release Build</span>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -271,6 +365,48 @@ function UpdateSettings() {
               {updating ? 'Wird aktualisiert...' : 'Version installieren'}
             </button>
           </div>
+
+          {/* Release Notes for selected version */}
+          {getSelectedRelease() && (
+            <div className="release-notes-card">
+              <div className="release-notes-header">
+                <div className="release-notes-title">
+                  <FileText size={18} />
+                  <h3>{getSelectedRelease().name}</h3>
+                </div>
+                <div className="release-notes-meta">
+                  {getSelectedRelease().publishedAt && (
+                    <span className="release-date">
+                      <Calendar size={14} />
+                      {new Date(getSelectedRelease().publishedAt).toLocaleDateString('de-DE', {
+                        day: '2-digit',
+                        month: 'long',
+                        year: 'numeric'
+                      })}
+                    </span>
+                  )}
+                  {getSelectedRelease().htmlUrl && (
+                    <a
+                      href={getSelectedRelease().htmlUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="release-github-link"
+                    >
+                      <ExternalLink size={14} />
+                      GitHub
+                    </a>
+                  )}
+                </div>
+              </div>
+              {getSelectedRelease().body ? (
+                <div className="release-notes-body">
+                  {renderReleaseBody(getSelectedRelease().body)}
+                </div>
+              ) : (
+                <p className="release-notes-empty">Keine Release-Notes vorhanden.</p>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

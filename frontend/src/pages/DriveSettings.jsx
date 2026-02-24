@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Trash2, Save, Edit2, RefreshCw, ChevronDown, ChevronUp, Image, AlertCircle, Clock, CheckCircle, XCircle } from 'lucide-react';
+import { Plus, Trash2, Save, Edit2, RefreshCw, Image, AlertCircle, Clock, CheckCircle, XCircle } from 'lucide-react';
 import AuthStatus from '../components/AuthStatus';
 import './DriveSettings.css';
 
@@ -19,10 +19,8 @@ function DriveSettings() {
   });
   const [loading, setLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [editingPath, setEditingPath] = useState(null);
   const [editForm, setEditForm] = useState(null);
-  const [editShowAdvanced, setEditShowAdvanced] = useState(false);
   const [syncingPaths, setSyncingPaths] = useState({});
   const [notification, setNotification] = useState(null);
 
@@ -82,7 +80,6 @@ function DriveSettings() {
           sync_interval: 60
         });
         setShowAddForm(false);
-        setShowAdvanced(false);
         loadPaths();
         showNotification('Pfad erfolgreich hinzugefügt');
       } else {
@@ -120,7 +117,6 @@ function DriveSettings() {
       if (response.ok) {
         setEditingPath(null);
         setEditForm(null);
-        setEditShowAdvanced(false);
         loadPaths();
         showNotification('Pfad erfolgreich aktualisiert');
       } else {
@@ -190,13 +186,11 @@ function DriveSettings() {
       auto_sync_enabled: path.auto_sync_enabled !== undefined ? path.auto_sync_enabled : true,
       sync_interval: path.sync_interval || 60
     });
-    setEditShowAdvanced(false);
   };
 
   const cancelEdit = () => {
     setEditingPath(null);
     setEditForm(null);
-    setEditShowAdvanced(false);
   };
 
   const formatLastSync = (lastSync) => {
@@ -215,9 +209,37 @@ function DriveSettings() {
     return `Vor ${diffDays} Tag${diffDays !== 1 ? 'en' : ''}`;
   };
 
-  const PathForm = ({ formData, setFormData, showAdv, setShowAdv, onSubmit, onCancel, isEdit = false }) => (
+  // Helper: Get the combined format value for the format selector
+  const getFormatValue = (formData) => {
+    if (!formData.compression_enabled) return 'original';
+    return formData.compression_format || 'webp';
+  };
+
+  // Helper: Handle format change from the unified selector
+  const handleFormatChange = (formData, setFormData, value) => {
+    if (value === 'original') {
+      setFormData({ ...formData, compression_enabled: false });
+    } else {
+      setFormData({
+        ...formData,
+        compression_enabled: true,
+        compression_format: value
+      });
+    }
+  };
+
+  const formatOptions = [
+    { value: 'original', label: 'Original', desc: 'Keine Umwandlung' },
+    { value: 'webp', label: 'WebP', desc: 'Beste Komprimierung' },
+    { value: 'jpeg', label: 'JPEG', desc: 'Universell kompatibel' },
+    { value: 'png', label: 'PNG', desc: 'Verlustfrei' }
+  ];
+
+  const PathForm = ({ formData, setFormData, onSubmit, onCancel, isEdit = false }) => (
     <div className="path-form">
-      <div className="form-row">
+      {/* Section 1: Grundeinstellungen */}
+      <div className="form-section">
+        <div className="form-section-title">Grundeinstellungen</div>
         <div className="form-group">
           <label className="form-label">Name</label>
           <input
@@ -240,129 +262,128 @@ function DriveSettings() {
         </div>
       </div>
 
-      <div className="form-row form-row-grid">
-        <div className="form-group checkbox-group">
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={formData.compression_enabled}
-              onChange={(e) => setFormData({ ...formData, compression_enabled: e.target.checked })}
-              className="checkbox"
-            />
-            <span>Komprimierung aktivieren</span>
-          </label>
+      {/* Section 2: Bildformat */}
+      <div className="form-section">
+        <div className="form-section-title">Bildformat</div>
+        <p className="form-section-desc">Neue Bilder werden beim Sync in dieses Format umgewandelt. Bestehende Bilder bleiben unverändert.</p>
+
+        <div className="format-selector">
+          {formatOptions.map(opt => (
+            <button
+              key={opt.value}
+              type="button"
+              className={`format-option ${getFormatValue(formData) === opt.value ? 'active' : ''}`}
+              onClick={() => handleFormatChange(formData, setFormData, opt.value)}
+            >
+              <span className="format-option-label">{opt.label}</span>
+              <span className="format-option-desc">{opt.desc}</span>
+            </button>
+          ))}
         </div>
 
         {formData.compression_enabled && (
-          <>
+          <div className="compression-settings">
             <div className="form-group">
-              <label className="form-label">Format</label>
-              <select
-                value={formData.compression_format}
-                onChange={(e) => setFormData({ ...formData, compression_format: e.target.value })}
-                className="input select"
-              >
-                <option value="webp">WebP</option>
-                <option value="jpeg">JPEG</option>
-                <option value="png">PNG</option>
-              </select>
+              <label className="form-label">
+                Qualität: <strong>{formData.compression_quality}%</strong>
+              </label>
+              <div className="slider-container">
+                <span className="slider-label">Klein</span>
+                <input
+                  type="range"
+                  min="10"
+                  max="100"
+                  value={formData.compression_quality}
+                  onChange={(e) => setFormData({ ...formData, compression_quality: parseInt(e.target.value) })}
+                  className="slider"
+                />
+                <span className="slider-label">Original</span>
+              </div>
             </div>
 
-            <div className="form-group">
-              <label className="form-label">Qualität: {formData.compression_quality}%</label>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={formData.compression_quality}
-                onChange={(e) => setFormData({ ...formData, compression_quality: parseInt(e.target.value) })}
-                className="slider"
-              />
+            <div className="form-row-inline">
+              <div className="form-group">
+                <label className="form-label">Max. Breite (px)</label>
+                <input
+                  type="number"
+                  placeholder="z.B. 1920"
+                  value={formData.max_width}
+                  onChange={(e) => setFormData({ ...formData, max_width: e.target.value })}
+                  className="input"
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Max. Höhe (px)</label>
+                <input
+                  type="number"
+                  placeholder="z.B. 1080"
+                  value={formData.max_height}
+                  onChange={(e) => setFormData({ ...formData, max_height: e.target.value })}
+                  className="input"
+                />
+              </div>
             </div>
-          </>
+          </div>
         )}
+      </div>
 
-        <div className="form-group checkbox-group">
-          <label className="checkbox-label">
+      {/* Section 3: Synchronisation */}
+      <div className="form-section">
+        <div className="form-section-title">Synchronisation</div>
+
+        <div className="toggle-row">
+          <div className="toggle-info">
+            <span className="toggle-label">Automatische Synchronisation</span>
+            <span className="toggle-desc">Bilder werden regelmäßig automatisch heruntergeladen</span>
+          </div>
+          <label className="toggle-switch">
             <input
               type="checkbox"
               checked={formData.auto_sync_enabled}
               onChange={(e) => setFormData({ ...formData, auto_sync_enabled: e.target.checked })}
-              className="checkbox"
             />
-            <span>Automatische Synchronisation</span>
+            <span className="toggle-slider"></span>
           </label>
         </div>
 
         {formData.auto_sync_enabled && (
-          <div className="form-group">
-            <label className="form-label">Synchronisationsintervall (Minuten)</label>
+          <div className="form-group" style={{ marginTop: '0.75rem' }}>
+            <label className="form-label">Intervall (Minuten)</label>
             <input
               type="number"
               min="1"
               value={formData.sync_interval}
               onChange={(e) => setFormData({ ...formData, sync_interval: parseInt(e.target.value) || 60 })}
               className="input"
+              style={{ maxWidth: '200px' }}
             />
+          </div>
+        )}
+
+        <div className="toggle-row" style={{ marginTop: '0.75rem' }}>
+          <div className="toggle-info">
+            <span className="toggle-label">Nach Sync von Drive löschen</span>
+            <span className="toggle-desc">Bilder werden nach dem Download von Google Drive entfernt</span>
+          </div>
+          <label className="toggle-switch">
+            <input
+              type="checkbox"
+              checked={formData.delete_after_sync}
+              onChange={(e) => setFormData({ ...formData, delete_after_sync: e.target.checked })}
+            />
+            <span className="toggle-slider"></span>
+          </label>
+        </div>
+
+        {formData.delete_after_sync && (
+          <div className="warning-text">
+            <AlertCircle size={14} />
+            Drive-Ordner muss zum Bearbeiten freigegeben sein
           </div>
         )}
       </div>
 
-      <button
-        className="advanced-toggle"
-        onClick={() => setShowAdv(!showAdv)}
-        type="button"
-      >
-        {showAdv ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-        Erweiterte Einstellungen
-      </button>
-
-      {showAdv && (
-        <div className="advanced-settings">
-          <div className="form-row form-row-grid">
-            <div className="form-group">
-              <label className="form-label">Max. Breite (optional)</label>
-              <input
-                type="number"
-                placeholder="z.B. 1920"
-                value={formData.max_width}
-                onChange={(e) => setFormData({ ...formData, max_width: e.target.value })}
-                className="input"
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Max. Höhe (optional)</label>
-              <input
-                type="number"
-                placeholder="z.B. 1080"
-                value={formData.max_height}
-                onChange={(e) => setFormData({ ...formData, max_height: e.target.value })}
-                className="input"
-              />
-            </div>
-          </div>
-
-          <div className="form-group checkbox-group">
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={formData.delete_after_sync}
-                onChange={(e) => setFormData({ ...formData, delete_after_sync: e.target.checked })}
-                className="checkbox"
-              />
-              <span>Nach Sync löschen</span>
-            </label>
-            {formData.delete_after_sync && (
-              <div className="warning-text">
-                <AlertCircle size={14} />
-                Drive-Ordner muss zum Bearbeiten freigegeben sein
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
+      {/* Actions */}
       <div className="form-actions">
         <button
           className="btn btn-primary"
@@ -392,56 +413,52 @@ function DriveSettings() {
         </div>
       )}
 
-      <div className="page-header">
-        <h1>Drive Einstellungen</h1>
-      </div>
-
       <AuthStatus />
 
       <div className="settings-section">
-        <h2>Google Drive Pfade</h2>
-        <p className="section-description">
-          Fügen Sie Google Drive Ordner-Links hinzu und konfigurieren Sie Synchronisations- und Komprimierungseinstellungen.
-        </p>
+        <div className="section-header-row">
+          <div>
+            <h2>Google Drive Pfade</h2>
+            <p className="section-description">
+              Verwalte Google Drive Ordner und konfiguriere Synchronisations- und Bildverarbeitungseinstellungen.
+            </p>
+          </div>
+          {!showAddForm && (
+            <button
+              className="btn btn-primary"
+              onClick={() => setShowAddForm(true)}
+            >
+              <Plus size={18} />
+              Neuer Pfad
+            </button>
+          )}
+        </div>
 
-        {!showAddForm ? (
-          <button
-            className="btn btn-primary"
-            onClick={() => setShowAddForm(true)}
-          >
-            <Plus size={18} />
-            Neuen Pfad hinzufügen
-          </button>
-        ) : (
+        {showAddForm && (
           <PathForm
             key="add-form"
             formData={newPath}
             setFormData={setNewPath}
-            showAdv={showAdvanced}
-            setShowAdv={setShowAdvanced}
             onSubmit={handleAddPath}
-            onCancel={() => {
-              setShowAddForm(false);
-              setShowAdvanced(false);
-            }}
+            onCancel={() => setShowAddForm(false)}
           />
         )}
 
         <div className="paths-list">
-          {paths.length === 0 ? (
+          {paths.length === 0 && !showAddForm ? (
             <div className="empty-state">
+              <Image size={48} strokeWidth={1} />
               <p>Keine Pfade konfiguriert</p>
+              <span>Füge einen Google Drive Ordner hinzu, um Bilder zu synchronisieren.</span>
             </div>
           ) : (
-            paths.map(path => (
-              <div key={path.id} className="path-item">
-                {editingPath === path.id ? (
+            paths.map(p => (
+              <div key={p.id} className="path-item">
+                {editingPath === p.id ? (
                   <PathForm
                     key={`edit-${editingPath}`}
                     formData={editForm}
                     setFormData={setEditForm}
-                    showAdv={editShowAdvanced}
-                    setShowAdv={setEditShowAdvanced}
                     onSubmit={handleEditPath}
                     onCancel={cancelEdit}
                     isEdit={true}
@@ -450,54 +467,48 @@ function DriveSettings() {
                   <>
                     <div className="path-info">
                       <div className="path-header">
-                        <div className="path-name">{path.name}</div>
+                        <div className="path-name">{p.name}</div>
                         <div className="path-badges">
-                          {path.compression_enabled && (
-                            <span className="badge badge-info" title="Komprimierung aktiviert">
-                              <Image size={14} />
-                              {path.compression_format?.toUpperCase()} {path.compression_quality}%
-                            </span>
-                          )}
-                          {path.auto_sync_enabled ? (
-                            <span className="badge badge-success" title="Auto-Sync aktiviert">
-                              <Clock size={14} />
-                              Auto-Sync: {path.sync_interval}min
-                            </span>
-                          ) : (
-                            <span className="badge badge-inactive" title="Auto-Sync deaktiviert">
-                              Auto-Sync: Aus
-                            </span>
-                          )}
+                          <span className={`badge ${p.compression_enabled ? 'badge-info' : 'badge-inactive'}`}>
+                            <Image size={12} />
+                            {p.compression_enabled
+                              ? `${p.compression_format?.toUpperCase()} ${p.compression_quality}%`
+                              : 'Original'
+                            }
+                          </span>
+                          <span className={`badge ${p.auto_sync_enabled ? 'badge-success' : 'badge-inactive'}`}>
+                            <Clock size={12} />
+                            {p.auto_sync_enabled ? `${p.sync_interval} min` : 'Manuell'}
+                          </span>
                         </div>
                       </div>
-                      <div className="path-url">{path.path}</div>
+                      <div className="path-url">{p.path}</div>
                       <div className="path-meta">
-                        <span>Hinzugefügt am {new Date(path.created_at).toLocaleDateString('de-DE')}</span>
                         <span className="sync-status">
                           <Clock size={14} />
-                          {formatLastSync(path.last_sync)}
+                          {formatLastSync(p.last_sync)}
                         </span>
                       </div>
                     </div>
                     <div className="path-actions">
                       <button
                         className="btn btn-icon"
-                        onClick={() => handleSyncNow(path.id)}
-                        disabled={syncingPaths[path.id]}
+                        onClick={() => handleSyncNow(p.id)}
+                        disabled={syncingPaths[p.id]}
                         title="Jetzt synchronisieren"
                       >
-                        <RefreshCw size={18} className={syncingPaths[path.id] ? 'spinning' : ''} />
+                        <RefreshCw size={18} className={syncingPaths[p.id] ? 'spinning' : ''} />
                       </button>
                       <button
                         className="btn btn-icon"
-                        onClick={() => startEdit(path)}
+                        onClick={() => startEdit(p)}
                         title="Bearbeiten"
                       >
                         <Edit2 size={18} />
                       </button>
                       <button
                         className="btn btn-icon btn-danger-icon"
-                        onClick={() => handleDeletePath(path.id)}
+                        onClick={() => handleDeletePath(p.id)}
                         title="Löschen"
                       >
                         <Trash2 size={18} />
@@ -513,7 +524,7 @@ function DriveSettings() {
 
       <div className="settings-section">
         <h2>Info</h2>
-        <p className="section-description">
+        <p className="section-description" style={{ marginBottom: 0 }}>
           Die Google Drive Integration verwendet OAuth 2.0 für sicheren Zugriff auf deine Drive-Ordner.
           Nach der einmaligen Anmeldung bleiben deine Zugangsdaten dauerhaft gespeichert.
           Du musst dich nur neu anmelden, wenn deine Session nach längerer Zeit abläuft (~30 Tage).

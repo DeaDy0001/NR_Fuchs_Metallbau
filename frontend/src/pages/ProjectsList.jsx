@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Search, Plus, Edit2, Save, X, CheckSquare, Square, ZoomIn, ZoomOut, RotateCcw, ChevronLeft, ChevronRight, Trash2, Pencil, RefreshCw } from 'lucide-react';
 import ImageEditor from '../components/ImageEditor';
 import './ProjectsList.css';
@@ -22,10 +22,11 @@ const formatSQLiteDate = (dateString) => {
 
 function ProjectsList() {
   const [projects, setProjects] = useState([]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(''); // Kombiniertes Suchfeld für Projekte + Tags
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [editForm, setEditForm] = useState({ color: '', notes: '' });
+  const [editForm, setEditForm] = useState({ name: '', color: '', notes: '', tags: [] });
+  const [tagInput, setTagInput] = useState('');
   const [selectedProjects, setSelectedProjects] = useState([]); // Markierte Projekte
   const [showMarked, setShowMarked] = useState(true); // Filter: Markierte anzeigen
   const [showUnmarked, setShowUnmarked] = useState(true); // Filter: Nicht markierte anzeigen
@@ -42,6 +43,9 @@ function ProjectsList() {
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [showEditor, setShowEditor] = useState(false);
+  const [initialZoomLevel, setInitialZoomLevel] = useState(1);
+  const [initialPanPosition, setInitialPanPosition] = useState({ x: 0, y: 0 });
+  const modalImageRef = useRef(null);
 
   useEffect(() => {
     loadProjects();
@@ -63,7 +67,7 @@ function ProjectsList() {
       const params = new URLSearchParams({
         limit: 100,
         offset: 0,
-        search: searchQuery
+        search: searchQuery // Sucht in Projektnamen, Notizen UND Tags
       });
 
       const response = await fetch(`/api/projects?${params}`);
@@ -105,26 +109,93 @@ function ProjectsList() {
     }
   };
 
-  const handleSaveProject = async () => {
+  const handleSaveProject = async (updates) => {
     if (!viewingProject) return;
 
     try {
       const response = await fetch(`/api/projects/${viewingProject.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editForm)
+        body: JSON.stringify(updates)
       });
 
       if (response.ok) {
+        const updatedProject = await response.json();
         loadProjects();
         // Update viewingProject with new values
-        setViewingProject({ ...viewingProject, ...editForm });
+        setViewingProject(updatedProject);
+        setEditForm({
+          name: updatedProject.folder_name,
+          color: updatedProject.color,
+          notes: updatedProject.notes,
+          tags: updatedProject.tags
+        });
       } else {
-        alert('Fehler beim Speichern');
+        console.error('Fehler beim Speichern');
       }
     } catch (error) {
       console.error('Error saving project:', error);
-      alert('Fehler beim Speichern');
+    }
+  };
+
+  const handleAddTag = async (tag) => {
+    if (!tag.trim() || !viewingProject) return;
+
+    const trimmedTag = tag.trim();
+    if (editForm.tags.includes(trimmedTag)) return;
+
+    const newTags = [...editForm.tags, trimmedTag];
+    setEditForm({ ...editForm, tags: newTags });
+    await handleSaveProject({ ...editForm, tags: newTags });
+    setTagInput('');
+  };
+
+  const handleRemoveTag = async (index) => {
+    if (!viewingProject) return;
+
+    const newTags = editForm.tags.filter((_, i) => i !== index);
+    setEditForm({ ...editForm, tags: newTags });
+    await handleSaveProject({ ...editForm, tags: newTags });
+  };
+
+  const handleRenameProject = async () => {
+    if (!viewingProject || !editForm.name.trim()) return;
+
+    const newName = editForm.name.trim();
+    if (newName === viewingProject.folder_name) return; // Kein Unterschied
+
+    if (!confirm(`Projekt "${viewingProject.folder_name}" zu "${newName}" umbenennen?\n\nDies benennt auch den Ordner um!`)) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/projects/${viewingProject.id}/rename`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_name: newName })
+      });
+
+      if (response.ok) {
+        const updatedProject = await response.json();
+        loadProjects();
+        setViewingProject(updatedProject);
+        setEditForm({
+          name: updatedProject.folder_name,
+          color: updatedProject.color,
+          notes: updatedProject.notes,
+          tags: updatedProject.tags
+        });
+        alert('✅ Projekt erfolgreich umbenannt!');
+      } else {
+        const error = await response.json();
+        alert(`Fehler beim Umbenennen: ${error.error || 'Unbekannter Fehler'}`);
+        // Reset to original name on error
+        setEditForm({ ...editForm, name: viewingProject.folder_name });
+      }
+    } catch (error) {
+      console.error('Error renaming project:', error);
+      alert(`Fehler beim Umbenennen: ${error.message}`);
+      setEditForm({ ...editForm, name: viewingProject.folder_name });
     }
   };
 
@@ -147,9 +218,12 @@ function ProjectsList() {
 
     // Initialize edit form with current project values
     setEditForm({
+      name: project.folder_name || '',
       color: project.color || '#3b82f6',
-      notes: project.notes || ''
+      notes: project.notes || '',
+      tags: project.tags || []
     });
+    setTagInput('');
 
     try {
       const response = await fetch(`/api/projects/${project.id}/files`);
@@ -168,7 +242,7 @@ function ProjectsList() {
     setViewingProject(null);
     setProjectFiles({ images: [], pdfs: [], hasImages: false, hasPdfs: false });
     setActiveTab('images');
-    setEditForm({ color: '', notes: '' });
+    setEditForm({ name: '', color: '', notes: '', tags: [] });
   };
 
   // Helper function to reload project files (used after image updates)
@@ -193,38 +267,68 @@ function ProjectsList() {
   const handleImageClick = useCallback((image) => {
     setSelectedImage(image);
     setEditingName(image.name);
-    setZoomLevel(1);
-    setPanPosition({ x: 0, y: 0 });
   }, []);
 
   const closeImageViewer = useCallback(() => {
     setSelectedImage(null);
-    setZoomLevel(1);
-    setPanPosition({ x: 0, y: 0 });
     setShowEditor(false);
   }, []);
 
-  const handleZoomIn = () => setZoomLevel(prev => Math.min(prev + 0.25, 3));
-  const handleZoomOut = () => setZoomLevel(prev => Math.max(prev - 0.25, 0.5));
+  const handleZoomIn = () => {
+    setZoomLevel(prev => Math.min(prev + 0.25, 3)); // Max 300%
+  };
+
+  const handleZoomOut = () => {
+    setZoomLevel(prev => Math.max(prev - 0.25, initialZoomLevel));
+  };
+
   const handleZoomReset = () => {
-    setZoomLevel(1);
-    setPanPosition({ x: 0, y: 0 });
+    setZoomLevel(initialZoomLevel);
+    setPanPosition(initialPanPosition);
   };
 
   const handleMouseDown = (e) => {
-    if (zoomLevel > 1) {
+    // Allow panning with left or middle mouse button at any zoom level
+    if (e.button === 0 || e.button === 1) {
       setIsPanning(true);
       setPanStart({ x: e.clientX - panPosition.x, y: e.clientY - panPosition.y });
+      e.preventDefault();
     }
   };
 
   const handleMouseMove = (e) => {
-    if (isPanning && zoomLevel > 1) {
+    if (isPanning) {
       setPanPosition({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
     }
   };
 
   const handleMouseUp = () => setIsPanning(false);
+
+  // Shift + Wheel zoom (zoom from mouse position)
+  const handleWheel = (e) => {
+    if (e.shiftKey) {
+      e.preventDefault();
+
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      const newZoomLevel = Math.min(Math.max(zoomLevel + delta, initialZoomLevel), 3);
+
+      // Get mouse position relative to the container
+      const container = e.currentTarget;
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      // Calculate zoom ratio
+      const zoomRatio = newZoomLevel / zoomLevel;
+
+      // Adjust pan to keep the point under the mouse fixed
+      const newPanX = mouseX - (mouseX - panPosition.x) * zoomRatio;
+      const newPanY = mouseY - (mouseY - panPosition.y) * zoomRatio;
+
+      setZoomLevel(newZoomLevel);
+      setPanPosition({ x: newPanX, y: newPanY });
+    }
+  };
 
   const navigateImage = useCallback((direction) => {
     if (!selectedImage || !projectFiles.images.length) return;
@@ -419,6 +523,64 @@ function ProjectsList() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedImage, showEditor, navigateImage, closeImageViewer]);
 
+  // Auto-fit image to screen when modal opens
+  useEffect(() => {
+    if (!selectedImage) return;
+
+    // Use image dimensions from backend data if available
+    const imageWidth = selectedImage.width;
+    const imageHeight = selectedImage.height;
+
+    if (!imageWidth || !imageHeight) {
+      // Fallback: set to 100% if dimensions not available
+      setZoomLevel(1);
+      setPanPosition({ x: 0, y: 0 });
+      setInitialZoomLevel(1);
+      return;
+    }
+
+    // Use requestAnimationFrame to wait for container to be ready
+    const calculateZoom = () => {
+      const container = modalImageRef.current?.parentElement;
+      if (!container) {
+        requestAnimationFrame(calculateZoom);
+        return;
+      }
+
+      const containerRect = container.getBoundingClientRect();
+      const containerWidth = containerRect.width;
+      const containerHeight = containerRect.height;
+
+      // Safeguard: ensure container has valid dimensions
+      if (containerWidth === 0 || containerHeight === 0) {
+        requestAnimationFrame(calculateZoom);
+        return;
+      }
+
+      // Calculate zoom level to fit the image in the container with padding
+      const padding = 20; // Padding in pixels
+      const scaleX = (containerWidth - padding * 2) / imageWidth;
+      const scaleY = (containerHeight - padding * 2) / imageHeight;
+      const scale = Math.min(scaleX, scaleY, 1); // Don't zoom in beyond 100%
+
+      // Center the scaled image in the container
+      const scaledWidth = imageWidth * scale;
+      const scaledHeight = imageHeight * scale;
+      const centerX = (containerWidth - scaledWidth) / 2;
+      const centerY = (containerHeight - scaledHeight) / 2;
+
+      setZoomLevel(scale);
+      setPanPosition({ x: centerX, y: centerY });
+      setInitialZoomLevel(scale);
+      setInitialPanPosition({ x: centerX, y: centerY });
+    };
+
+    // Start calculation on next frame
+    const rafId = requestAnimationFrame(calculateZoom);
+
+    return () => cancelAnimationFrame(rafId);
+  }, [selectedImage]);
+
   // Gefilterte Projekte basierend auf Markierung
   const filteredProjects = projects.filter(project => {
     const isSelected = selectedProjects.includes(project.id);
@@ -449,7 +611,7 @@ function ProjectsList() {
           <Search size={18} />
           <input
             type="text"
-            placeholder="Projekte durchsuchen..."
+            placeholder="Projekte & Tags durchsuchen..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="search-input"
@@ -542,6 +704,20 @@ function ProjectsList() {
                     <div>Erstellt: {new Date(project.folder_created_at || project.created_at).toLocaleDateString('de-DE')}</div>
                     <div>Bilder: {project.image_count || 0}</div>
                   </div>
+
+                  {project.tags && project.tags.length > 0 && (
+                    <div className="project-tags">
+                      {project.tags.map((tag, index) => (
+                        <span
+                          key={index}
+                          className="project-tag-badge"
+                          style={{ backgroundColor: project.color }}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -561,42 +737,113 @@ function ProjectsList() {
 
             {/* Edit-Felder */}
             <div className="project-edit-section">
-              <div className="form-group">
-                <label>Farbe</label>
-                <div className="color-picker">
-                  {colorPresets.map(color => (
-                    <button
-                      key={color}
-                      className={`color-option ${editForm.color === color ? 'active' : ''}`}
-                      style={{ backgroundColor: color }}
-                      onClick={() => setEditForm({ ...editForm, color })}
-                      title={color}
+              <div className="project-form-grid">
+                {/* Left column: Project Name and Color */}
+                <div className="form-column">
+                  <div className="form-group">
+                    <label>Projektname</label>
+                    <div className="rename-input-group">
+                      <input
+                        type="text"
+                        value={editForm.name}
+                        onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleRenameProject();
+                          }
+                        }}
+                        className="input"
+                        placeholder="Projektname..."
+                      />
+                      <button
+                        className="btn btn-primary btn-sm btn-icon"
+                        onClick={handleRenameProject}
+                        title="Umbenennen (benennt auch den Ordner um!)"
+                      >
+                        <Edit2 size={16} />
+                      </button>
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
+                      ⚠️ Hiermit wird auch der Ordner umbenannt
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Farbe</label>
+                    <div className="color-picker">
+                      {colorPresets.map(color => (
+                        <button
+                          key={color}
+                          className={`color-option ${editForm.color === color ? 'active' : ''}`}
+                          style={{ backgroundColor: color }}
+                          onClick={() => {
+                            setEditForm({ ...editForm, color });
+                            handleSaveProject({ ...editForm, color });
+                          }}
+                          title={color}
+                        />
+                      ))}
+                    </div>
+                    <input
+                      type="color"
+                      value={editForm.color}
+                      onChange={(e) => setEditForm({ ...editForm, color: e.target.value })}
+                      onBlur={(e) => handleSaveProject({ ...editForm, color: e.target.value })}
+                      className="color-input"
                     />
-                  ))}
+                  </div>
                 </div>
-                <input
-                  type="color"
-                  value={editForm.color}
-                  onChange={(e) => setEditForm({ ...editForm, color: e.target.value })}
-                  className="color-input"
-                />
-              </div>
 
-              <div className="form-group">
-                <label>Notizen</label>
-                <textarea
-                  value={editForm.notes}
-                  onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
-                  className="textarea"
-                  rows="3"
-                  placeholder="Fügen Sie Notizen zum Projekt hinzu..."
-                />
+                {/* Right column: Notes and Tags */}
+                <div className="form-column">
+                  <div className="form-group">
+                    <label>Notizen</label>
+                    <textarea
+                      value={editForm.notes}
+                      onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+                      onBlur={(e) => handleSaveProject({ ...editForm, notes: e.target.value })}
+                      className="textarea"
+                      rows="5"
+                      placeholder="Fügen Sie Notizen zum Projekt hinzu..."
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Tags</label>
+                    <div className="tags-container">
+                      <div className="tags-list">
+                        {editForm.tags.map((tag, index) => (
+                          <span
+                            key={index}
+                            className="tag-badge"
+                            style={{ backgroundColor: editForm.color }}
+                          >
+                            {tag}
+                            <X
+                              size={14}
+                              className="tag-remove"
+                              onClick={() => handleRemoveTag(index)}
+                            />
+                          </span>
+                        ))}
+                      </div>
+                      <input
+                        type="text"
+                        value={tagInput}
+                        onChange={(e) => setTagInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddTag(tagInput);
+                          }
+                        }}
+                        className="input tag-input"
+                        placeholder="Tag eingeben und Enter drücken..."
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
-
-              <button className="btn btn-primary btn-save" onClick={handleSaveProject}>
-                <Save size={18} />
-                Speichern
-              </button>
             </div>
 
             <div className="modal-tabs">
@@ -673,14 +920,14 @@ function ProjectsList() {
               {/* Scrollable Image Container (Left) */}
               <div className="modal-image-container">
                 <div className="zoom-controls">
-                  <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= 0.5}>
+                  <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= initialZoomLevel}>
                     -
                   </button>
                   <span className="zoom-level">{Math.round(zoomLevel * 100)}%</span>
                   <button className="zoom-btn" onClick={handleZoomIn} title="Zoom In" disabled={zoomLevel >= 3}>
                     +
                   </button>
-                  <button className="zoom-btn zoom-reset" onClick={handleZoomReset} title="Zoom auf 100% zurücksetzen">
+                  <button className="zoom-btn zoom-reset" onClick={handleZoomReset} title="Zoom zurücksetzen">
                     Reset
                   </button>
 
@@ -727,119 +974,127 @@ function ProjectsList() {
                   onMouseMove={handleMouseMove}
                   onMouseUp={handleMouseUp}
                   onMouseLeave={handleMouseUp}
+                  onWheel={handleWheel}
                   style={{
                     cursor: isPanning ? 'grabbing' : 'grab'
                   }}
                 >
                   <img
+                    ref={modalImageRef}
                     src={selectedImage.local_path || selectedImage.url}
                     alt={selectedImage.name}
                     style={{
-                      transform: `scale(${zoomLevel}) translate(${panPosition.x / zoomLevel}px, ${panPosition.y / zoomLevel}px)`,
+                      transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomLevel})`,
                       transformOrigin: 'top left',
-                      transition: isPanning ? 'none' : 'transform 0.2s ease',
+                      transition: isPanning ? 'none' : 'transform 0.1s ease-out',
                       userSelect: 'none',
-                      pointerEvents: 'none'
+                      pointerEvents: 'none',
+                      maxWidth: 'none',
+                      maxHeight: 'none'
                     }}
                     draggable={false}
                   />
                 </div>
               </div>
 
-              {/* Fixed Sidebar (Right) */}
+              {/* Fixed Sidebar (Right) - Split in two scrollable sections */}
               <div className="modal-sidebar">
-                <div className="modal-section">
-                  <label>Name</label>
-                  <div className="rename-input-group">
-                    <input
-                      type="text"
-                      value={editingName}
-                      onChange={(e) => setEditingName(e.target.value)}
-                      className="input"
-                      disabled={!selectedImage.id}
-                    />
-                    <button
-                      className="btn btn-primary btn-sm btn-icon"
-                      onClick={handleRename}
-                      title="Umbenennen"
-                      disabled={!selectedImage.id}
-                    >
-                      <Edit2 size={16} />
-                    </button>
+                {/* Upper section: Image info (65%) */}
+                <div className="modal-sidebar-upper">
+                  <div className="modal-section">
+                    <label>Name</label>
+                    <div className="rename-input-group">
+                      <input
+                        type="text"
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        className="input"
+                        disabled={!selectedImage.id}
+                      />
+                      <button
+                        className="btn btn-primary btn-sm btn-icon"
+                        onClick={handleRename}
+                        title="Umbenennen"
+                        disabled={!selectedImage.id}
+                      >
+                        <Edit2 size={16} />
+                      </button>
+                    </div>
                   </div>
+
+                  {selectedImage.original_name && (
+                    <div className="modal-section">
+                      <label>Originalname</label>
+                      <div className="detail-text">{selectedImage.original_name}</div>
+                    </div>
+                  )}
+
+                  {selectedImage.subfolder && (
+                    <div className="modal-section">
+                      <label>Unterordner</label>
+                      <div className="subfolder-badge">{selectedImage.subfolder}</div>
+                    </div>
+                  )}
+
+                  {selectedImage.projects && selectedImage.projects.length > 0 && (
+                    <div className="modal-section">
+                      <label>🏷️ Zugeordnete Projekte</label>
+                      <div className="project-badges-modal">
+                        {selectedImage.projects.map(project => (
+                          <div
+                            key={project.id}
+                            className="project-badge"
+                            style={{ backgroundColor: project.color }}
+                            title={project.folder_name}
+                          >
+                            {project.folder_name}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedImage.file_size && (
+                    <div className="modal-section">
+                      <label>Dateigröße</label>
+                      <div className="detail-text">
+                        {(selectedImage.file_size / 1024 / 1024).toFixed(2)} MB
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedImage.width && selectedImage.height && (
+                    <div className="modal-section">
+                      <label>Auflösung</label>
+                      <div className="detail-text">
+                        {selectedImage.width} x {selectedImage.height} px
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedImage.photo_taken_at && (
+                    <div className="modal-section">
+                      <label>📸 Foto aufgenommen</label>
+                      <div className="detail-text">
+                        {formatSQLiteDate(selectedImage.photo_taken_at)}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedImage.created_at && (
+                    <div className="modal-section">
+                      <label>📅 Hochgeladen am</label>
+                      <div className="detail-text">
+                        {formatSQLiteDate(selectedImage.created_at)}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {selectedImage.original_name && (
-                  <div className="modal-section">
-                    <label>Originalname</label>
-                    <div className="detail-text">{selectedImage.original_name}</div>
-                  </div>
-                )}
-
-                {selectedImage.subfolder && (
-                  <div className="modal-section">
-                    <label>Unterordner</label>
-                    <div className="subfolder-badge">{selectedImage.subfolder}</div>
-                  </div>
-                )}
-
-                {selectedImage.projects && selectedImage.projects.length > 0 && (
-                  <div className="modal-section">
-                    <label>🏷️ Zugeordnete Projekte</label>
-                    <div className="project-badges-modal">
-                      {selectedImage.projects.map(project => (
-                        <div
-                          key={project.id}
-                          className="project-badge"
-                          style={{ backgroundColor: project.color }}
-                          title={project.folder_name}
-                        >
-                          {project.folder_name}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {selectedImage.file_size && (
-                  <div className="modal-section">
-                    <label>Dateigröße</label>
-                    <div className="detail-text">
-                      {(selectedImage.file_size / 1024 / 1024).toFixed(2)} MB
-                    </div>
-                  </div>
-                )}
-
-                {selectedImage.width && selectedImage.height && (
-                  <div className="modal-section">
-                    <label>Auflösung</label>
-                    <div className="detail-text">
-                      {selectedImage.width} x {selectedImage.height} px
-                    </div>
-                  </div>
-                )}
-
-                {selectedImage.photo_taken_at && (
-                  <div className="modal-section">
-                    <label>📸 Foto aufgenommen</label>
-                    <div className="detail-text">
-                      {formatSQLiteDate(selectedImage.photo_taken_at)}
-                    </div>
-                  </div>
-                )}
-
-                {selectedImage.created_at && (
-                  <div className="modal-section">
-                    <label>📅 Hochgeladen am</label>
-                    <div className="detail-text">
-                      {formatSQLiteDate(selectedImage.created_at)}
-                    </div>
-                  </div>
-                )}
-
-                {/* Projekt-Zuordnung */}
-                {selectedImage.id && (
-                  <div className="modal-section projects-section">
+                {/* Lower section: Project assignment (35%) */}
+                <div className="modal-sidebar-lower">
+                  {selectedImage.id && (
+                    <div className="modal-section projects-section">
                     <label>📁 Projekte</label>
                     {selectedProjects.length === 0 ? (
                       <div className="empty-hint">Keine Projekte markiert. Markiere Projekte in der Liste.</div>
@@ -875,8 +1130,9 @@ function ProjectsList() {
                           })}
                       </div>
                     )}
-                  </div>
-                )}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

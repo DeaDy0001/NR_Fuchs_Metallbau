@@ -4,7 +4,6 @@ import Layout from './components/Layout';
 import DriveImages from './pages/DriveImages';
 import ProjectsList from './pages/ProjectsList';
 import SettingsTabs from './pages/SettingsTabs';
-import UpdateNotification from './components/UpdateNotification';
 
 function App() {
   const [settings, setSettings] = useState({
@@ -13,10 +12,35 @@ function App() {
     sidebar_collapsed: false
   });
 
+  const [updateInfo, setUpdateInfo] = useState(null);
+
   // Load settings on mount
   useEffect(() => {
     loadSettings();
   }, []);
+
+  // Check for updates on mount and every hour
+  useEffect(() => {
+    checkForUpdates();
+    const interval = setInterval(checkForUpdates, 60 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const checkForUpdates = async () => {
+    try {
+      const response = await fetch('/api/system/version');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.updateAvailable) {
+          setUpdateInfo(data);
+        } else {
+          setUpdateInfo(null);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking for updates:', error);
+    }
+  };
 
   // Update favicon and title when settings change
   useEffect(() => {
@@ -71,7 +95,7 @@ function App() {
 
   return (
     <Router>
-      <Layout settings={settings} updateSettings={updateSettings}>
+      <Layout settings={settings} updateSettings={updateSettings} updateInfo={updateInfo}>
         <Routes>
           <Route path="/" element={<Navigate to="/images" replace />} />
 
@@ -92,9 +116,6 @@ function App() {
           <Route path="/projects/list" element={<Navigate to="/projects" replace />} />
           <Route path="/settings" element={<Navigate to="/settings/general" replace />} />
         </Routes>
-
-        {/* Update notification */}
-        <UpdateNotification />
       </Layout>
     </Router>
   );

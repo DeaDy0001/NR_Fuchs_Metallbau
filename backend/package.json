@@ -1,11 +1,12 @@
 {
   "name": "fuchs-metallbau-backend",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Backend für Fuchs Metallbau Netzwerk-App",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "build-info": "node ../scripts/generate-build-info.js"
   },
   "keywords": [],
   "author": "",

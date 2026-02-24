@@ -22,10 +22,10 @@ const getProjectSettings = (req, res) => {
   }
 };
 
-// Set project path
+// Set project path and sync settings
 const setProjectPath = async (req, res) => {
   try {
-    const { path: projectPath } = req.body;
+    const { path: projectPath, sync_interval, auto_sync_enabled } = req.body;
 
     if (!projectPath) {
       return res.status(400).json({ error: 'Path is required' });
@@ -37,13 +37,36 @@ const setProjectPath = async (req, res) => {
       return res.status(400).json({ error: 'Path does not exist' });
     }
 
-    const updateStmt = db.prepare("UPDATE project_settings SET project_path = ?, updated_at = datetime('now') WHERE id = 1");
-    const updateResult = updateStmt.run(projectPath);
+    // Build update query dynamically
+    const updates = ["project_path = ?", "updated_at = datetime('now')"];
+    const params = [projectPath];
+
+    if (sync_interval !== undefined) {
+      updates.push('sync_interval = ?');
+      params.push(parseInt(sync_interval));
+    }
+
+    if (auto_sync_enabled !== undefined) {
+      updates.push('auto_sync_enabled = ?');
+      params.push(auto_sync_enabled ? 1 : 0);
+    }
+
+    params.push(1); // WHERE id = 1
+
+    const updateStmt = db.prepare(`UPDATE project_settings SET ${updates.join(', ')} WHERE id = ?`);
+    const updateResult = updateStmt.run(...params);
 
     if (updateResult.changes === 0) {
       // Insert if doesn't exist
-      const insertStmt = db.prepare('INSERT INTO project_settings (project_path) VALUES (?)');
-      const insertResult = insertStmt.run(projectPath);
+      const insertStmt = db.prepare(`
+        INSERT INTO project_settings (project_path, sync_interval, auto_sync_enabled)
+        VALUES (?, ?, ?)
+      `);
+      const insertResult = insertStmt.run(
+        projectPath,
+        sync_interval !== undefined ? parseInt(sync_interval) : 30,
+        auto_sync_enabled !== undefined ? (auto_sync_enabled ? 1 : 0) : 1
+      );
       const newSettings = db.prepare('SELECT * FROM project_settings WHERE id = ?').get(insertResult.lastInsertRowid);
       return res.json(newSettings);
     }
@@ -59,18 +82,27 @@ const setProjectPath = async (req, res) => {
 // Get all projects
 const getProjects = async (req, res) => {
   try {
-    const { limit = 100, offset = 0, search = '' } = req.query;
+    const { limit = 100, offset = 0, search = '', tags = '' } = req.query;
 
     let query = 'SELECT * FROM projects WHERE 1=1';
     const params = [];
 
     if (search) {
-      query += ' AND (folder_name LIKE ? OR notes LIKE ?)';
+      // Search in folder_name, notes AND tags
+      query += ' AND (folder_name LIKE ? OR notes LIKE ? OR tags LIKE ?)';
       const searchParam = `%${search}%`;
-      params.push(searchParam, searchParam);
+      params.push(searchParam, searchParam, searchParam);
     }
 
-    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    // Filter by tags (if provided AND different from search)
+    if (tags && tags !== search) {
+      query += ' AND tags LIKE ?';
+      const tagParam = `%${tags}%`;
+      params.push(tagParam);
+    }
+
+    // Sort alphabetically by folder name
+    query += ' ORDER BY folder_name COLLATE NOCASE ASC LIMIT ? OFFSET ?';
     params.push(parseInt(limit), parseInt(offset));
 
     const projects = db.prepare(query).all(...params);
@@ -101,19 +133,27 @@ const getProjects = async (req, res) => {
 
       return {
         ...project,
+        tags: project.tags ? JSON.parse(project.tags) : [],
         image_count: imageCount.count,
         folder_created_at: folderCreatedAt
       };
     }));
 
     // Get total count
-    let countQuery = 'SELECT COUNT(*) as count FROM projects';
+    let countQuery = 'SELECT COUNT(*) as count FROM projects WHERE 1=1';
     const countParams = [];
 
     if (search) {
-      countQuery += ' WHERE folder_name LIKE ? OR notes LIKE ?';
+      // Search in folder_name, notes AND tags
+      countQuery += ' AND (folder_name LIKE ? OR notes LIKE ? OR tags LIKE ?)';
       const searchParam = `%${search}%`;
-      countParams.push(searchParam, searchParam);
+      countParams.push(searchParam, searchParam, searchParam);
+    }
+
+    if (tags && tags !== search) {
+      countQuery += ' AND tags LIKE ?';
+      const tagParam = `%${tags}%`;
+      countParams.push(tagParam);
     }
 
     const countResult = db.prepare(countQuery).get(...countParams);
@@ -141,7 +181,13 @@ const getProjectById = (req, res) => {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    res.json(result);
+    // Parse tags JSON
+    const project = {
+      ...result,
+      tags: result.tags ? JSON.parse(result.tags) : []
+    };
+
+    res.json(project);
   } catch (error) {
     console.error('Error getting project:', error);
     res.status(500).json({ error: 'Failed to get project' });
@@ -169,10 +215,10 @@ const createProject = (req, res) => {
 };
 
 // Update a project
-const updateProject = (req, res) => {
+const updateProject = async (req, res) => {
   try {
     const { id } = req.params;
-    const { color, notes } = req.body;
+    const { color, notes, tags } = req.body;
 
     // Build dynamic update query based on provided fields
     const updates = [];
@@ -186,6 +232,11 @@ const updateProject = (req, res) => {
     if (notes !== undefined) {
       updates.push('notes = ?');
       params.push(notes);
+    }
+
+    if (tags !== undefined) {
+      updates.push('tags = ?');
+      params.push(JSON.stringify(tags));
     }
 
     if (updates.length === 0) {
@@ -203,7 +254,21 @@ const updateProject = (req, res) => {
     }
 
     const updatedProject = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
-    res.json(updatedProject);
+
+    // Parse tags JSON
+    const project = {
+      ...updatedProject,
+      tags: updatedProject.tags ? JSON.parse(updatedProject.tags) : []
+    };
+
+    // Write JSON metadata to project folder
+    const setting = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    if (setting?.project_path) {
+      const projectFolderPath = path.join(setting.project_path, updatedProject.folder_name);
+      await writeProjectMetadata(updatedProject, projectFolderPath);
+    }
+
+    res.json(project);
   } catch (error) {
     console.error('Error updating project:', error);
     res.status(500).json({ error: 'Failed to update project' });
@@ -256,14 +321,63 @@ const syncProjects = async (req, res) => {
     const existingFolderNames = new Set(existingProjects.map(p => p.folder_name));
 
     let addedCount = 0;
+    let renamedCount = 0;
 
-    // Add new projects
+    // Add new projects and count images
     const insertStmt = db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)');
+    const updateFolderNameStmt = db.prepare('UPDATE projects SET folder_name = ?, updated_at = datetime(\'now\') WHERE id = ?');
+    const projectImageCounts = [];
+    const renamedProjects = [];
 
     for (const folderName of folders) {
+      // Check if .project.json exists in Bilder/ subfolder
+      const metadataPath = path.join(projectPath, folderName, 'Bilder', '.project.json');
+      let metadata = null;
+      try {
+        if (await fs.pathExists(metadataPath)) {
+          metadata = await fs.readJson(metadataPath);
+          console.log(`📖 Found metadata for "${folderName}":`, metadata);
+
+          // Check if project with this ID exists in DB
+          const existingProject = db.prepare('SELECT id, folder_name FROM projects WHERE id = ?').get(metadata.id);
+
+          if (existingProject && existingProject.folder_name !== folderName) {
+            // Folder was renamed → update DB
+            console.log(`🔄 Detected rename: "${existingProject.folder_name}" → "${folderName}" (ID: ${metadata.id})`);
+            updateFolderNameStmt.run(folderName, metadata.id);
+            renamedProjects.push({ old: existingProject.folder_name, new: folderName });
+            renamedCount++;
+
+            // Update existingFolderNames to reflect the rename
+            existingFolderNames.delete(existingProject.folder_name);
+            existingFolderNames.add(folderName);
+          }
+        }
+      } catch (err) {
+        console.error(`Error reading metadata for ${folderName}:`, err);
+      }
+
+      // Add project if it doesn't exist (either no metadata or not in DB)
       if (!existingFolderNames.has(folderName)) {
         insertStmt.run(folderName, '#3b82f6', '');
         addedCount++;
+        existingFolderNames.add(folderName);
+      }
+
+      // Count images in Bilder subfolder for reporting
+      const imagesFolderPath = path.join(projectPath, folderName, 'Bilder');
+      let imageCount = 0;
+      try {
+        if (await fs.pathExists(imagesFolderPath)) {
+          const imageFiles = await fs.readdir(imagesFolderPath);
+          imageCount = imageFiles.filter(file => /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(file)).length;
+        }
+      } catch (err) {
+        // Ignore errors (e.g., no read permission)
+      }
+
+      if (imageCount > 0) {
+        projectImageCounts.push({ folder: folderName, count: imageCount });
       }
     }
 
@@ -279,11 +393,16 @@ const syncProjects = async (req, res) => {
       }
     }
 
+    // Update last_sync timestamp
+    db.prepare("UPDATE project_settings SET last_sync = datetime('now') WHERE id = 1").run();
+
     res.json({
       message: 'Projects synced successfully',
       added: addedCount,
       removed: removedNames,
-      total: folders.length
+      renamed: renamedProjects,
+      total: folders.length,
+      imageCounts: projectImageCounts
     });
   } catch (error) {
     console.error('Error syncing projects:', error);
@@ -586,6 +705,99 @@ const serveProjectFile = async (req, res) => {
   }
 };
 
+// Rename a project (folder and database)
+const renameProject = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { new_name } = req.body;
+
+    if (!new_name || !new_name.trim()) {
+      return res.status(400).json({ error: 'New name is required' });
+    }
+
+    const trimmedName = new_name.trim();
+
+    // Get project details
+    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    // Check if name already exists
+    const existing = db.prepare('SELECT id FROM projects WHERE folder_name = ? AND id != ?').get(trimmedName, id);
+    if (existing) {
+      return res.status(400).json({ error: 'Ein Projekt mit diesem Namen existiert bereits' });
+    }
+
+    // Get project base path from settings
+    const setting = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    if (!setting || !setting.project_path) {
+      return res.status(400).json({ error: 'Project base path not configured' });
+    }
+
+    const projectBasePath = setting.project_path;
+    const oldFolderPath = path.join(projectBasePath, project.folder_name);
+    const newFolderPath = path.join(projectBasePath, trimmedName);
+
+    // Check if old folder exists
+    if (!(await fs.pathExists(oldFolderPath))) {
+      return res.status(404).json({ error: 'Project folder not found' });
+    }
+
+    // Check if new folder already exists
+    if (await fs.pathExists(newFolderPath)) {
+      return res.status(400).json({ error: 'Ein Ordner mit diesem Namen existiert bereits' });
+    }
+
+    // Rename folder
+    await fs.rename(oldFolderPath, newFolderPath);
+    console.log(`✅ Renamed folder: ${project.folder_name} → ${trimmedName}`);
+
+    // Update database
+    db.prepare('UPDATE projects SET folder_name = ?, updated_at = datetime(\'now\') WHERE id = ?').run(trimmedName, id);
+
+    // Get updated project
+    const updatedProject = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+
+    // Write JSON metadata to project folder
+    await writeProjectMetadata(updatedProject, newFolderPath);
+
+    res.json({
+      ...updatedProject,
+      tags: updatedProject.tags ? JSON.parse(updatedProject.tags) : []
+    });
+  } catch (error) {
+    console.error('Error renaming project:', error);
+    res.status(500).json({ error: 'Failed to rename project' });
+  }
+};
+
+// Helper: Write project metadata to .project.json in Bilder folder
+const writeProjectMetadata = async (project, projectFolderPath) => {
+  try {
+    const bilderPath = path.join(projectFolderPath, 'Bilder');
+
+    // Create Bilder folder if it doesn't exist
+    await fs.ensureDir(bilderPath);
+
+    const metadataPath = path.join(bilderPath, '.project.json');
+    const metadata = {
+      id: project.id,
+      folder_name: project.folder_name,
+      color: project.color,
+      notes: project.notes,
+      tags: project.tags ? JSON.parse(project.tags) : [],
+      updated_at: project.updated_at
+    };
+
+    await fs.writeJson(metadataPath, metadata, { spaces: 2 });
+    console.log(`📝 Wrote metadata: ${metadataPath}`);
+  } catch (error) {
+    console.error('Error writing project metadata:', error);
+    // Don't throw - this is optional
+  }
+};
+
 module.exports = {
   getProjectSettings,
   setProjectPath,
@@ -596,5 +808,6 @@ module.exports = {
   deleteProject,
   syncProjects,
   getProjectFiles,
-  serveProjectFile
+  serveProjectFile,
+  renameProject
 };

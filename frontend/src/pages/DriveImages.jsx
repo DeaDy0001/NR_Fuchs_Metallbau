@@ -82,7 +82,7 @@ function DriveImages() {
   const [selectedTagFilters, setSelectedTagFilters] = useState([]); // Ausgewählte Tags für Filter
   const [tagFilterSearchQuery, setTagFilterSearchQuery] = useState(''); // Tag-Suchfeld im Filter-Modal
   const [sidebarActiveTab, setSidebarActiveTab] = useState('tags'); // 'tags' oder 'projects'
-  const [showOnlyStarredProjects, setShowOnlyStarredProjects] = useState(false); // Nur markierte Projekte im Sidebar anzeigen
+  const [showOnlyStarredProjects, setShowOnlyStarredProjects] = useState(true); // Nur markierte Projekte im Sidebar anzeigen (Standard)
   const [selectedProjectId, setSelectedProjectId] = useState(null); // Aktives Projekt für Quick-Assign
 
   const TAG_PRESET_COLORS = [
@@ -558,8 +558,6 @@ function DriveImages() {
     }
     setSelectedImage(image);
     setEditingName(image.name);
-    setZoomLevel(1); // Will be adjusted in useEffect
-    setPanPosition({ x: 0, y: 0 });
   };
 
   const handleQuickAssignProject = async (imageId) => {
@@ -619,72 +617,29 @@ function DriveImages() {
   };
 
   const handleZoomIn = () => {
-    const newZoom = Math.min(zoomLevel + 0.25, 3); // Max 300%
-
-    // Zoom towards center of viewport
-    if (!modalImageRef.current?.parentElement) {
-      setZoomLevel(newZoom);
-      return;
-    }
-
-    const container = modalImageRef.current.parentElement;
-    const containerRect = container.getBoundingClientRect();
-    const centerX = containerRect.width / 2;
-    const centerY = containerRect.height / 2;
-
-    // Calculate the point in the image at the center
-    const imageX = (centerX - panPosition.x) / zoomLevel;
-    const imageY = (centerY - panPosition.y) / zoomLevel;
-
-    // Keep that point at the center
-    const newLeft = centerX - imageX * newZoom;
-    const newTop = centerY - imageY * newZoom;
-
-    setZoomLevel(newZoom);
-    setPanPosition({ x: newLeft, y: newTop });
+    setZoomLevel(prev => Math.min(prev + 0.25, 3)); // Max 300%
   };
 
   const handleZoomOut = () => {
-    const newZoom = Math.max(zoomLevel - 0.25, 0.5); // Min 50%
-
-    // Zoom towards center of viewport
-    if (!modalImageRef.current?.parentElement) {
-      setZoomLevel(newZoom);
-      return;
-    }
-
-    const container = modalImageRef.current.parentElement;
-    const containerRect = container.getBoundingClientRect();
-    const centerX = containerRect.width / 2;
-    const centerY = containerRect.height / 2;
-
-    // Calculate the point in the image at the center
-    const imageX = (centerX - panPosition.x) / zoomLevel;
-    const imageY = (centerY - panPosition.y) / zoomLevel;
-
-    // Keep that point at the center
-    const newLeft = centerX - imageX * newZoom;
-    const newTop = centerY - imageY * newZoom;
-
-    setZoomLevel(newZoom);
-    setPanPosition({ x: newLeft, y: newTop });
+    setZoomLevel(prev => Math.max(prev - 0.25, initialZoomLevel));
   };
 
   const handleZoomReset = () => {
-    // Reset to the initial auto-fit zoom and position
     setZoomLevel(initialZoomLevel);
     setPanPosition(initialPanPosition);
   };
 
   // Pan/Drag handlers for zoomed image
   const handleMouseDown = (e) => {
-    // Allow panning at any zoom level
-    setIsDragging(true);
-    setDragStart({
-      x: e.clientX - panPosition.x,
-      y: e.clientY - panPosition.y
-    });
-    e.preventDefault();
+    // Allow panning with left or middle mouse button at any zoom level
+    if (e.button === 0 || e.button === 1) {
+      setIsDragging(true);
+      setDragStart({
+        x: e.clientX - panPosition.x,
+        y: e.clientY - panPosition.y
+      });
+      e.preventDefault();
+    }
   };
 
   const handleMouseMove = (e) => {
@@ -705,29 +660,24 @@ function DriveImages() {
     if (e.shiftKey) {
       e.preventDefault();
 
-      const delta = e.deltaY > 0 ? -0.05 : 0.05; // Finer zoom steps (5% instead of 10%)
-      const newZoomLevel = Math.min(Math.max(zoomLevel + delta, 0.5), 3);
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      const newZoomLevel = Math.min(Math.max(zoomLevel + delta, initialZoomLevel), 3);
 
       // Get mouse position relative to the container
       const container = e.currentTarget;
-      const containerRect = container.getBoundingClientRect();
-      const mouseX = e.clientX - containerRect.left;
-      const mouseY = e.clientY - containerRect.top;
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
 
-      // Current image position (from state, not DOM)
-      const currentLeft = panPosition.x;
-      const currentTop = panPosition.y;
+      // Calculate zoom ratio
+      const zoomRatio = newZoomLevel / zoomLevel;
 
-      // Calculate the point in the original (unzoomed) image that's under the mouse
-      const imageX = (mouseX - currentLeft) / zoomLevel;
-      const imageY = (mouseY - currentTop) / zoomLevel;
-
-      // Calculate new position to keep that point under the mouse
-      const newLeft = mouseX - imageX * newZoomLevel;
-      const newTop = mouseY - imageY * newZoomLevel;
+      // Adjust pan to keep the point under the mouse fixed
+      const newPanX = mouseX - (mouseX - panPosition.x) * zoomRatio;
+      const newPanY = mouseY - (mouseY - panPosition.y) * zoomRatio;
 
       setZoomLevel(newZoomLevel);
-      setPanPosition({ x: newLeft, y: newTop });
+      setPanPosition({ x: newPanX, y: newPanY });
     }
   };
 
@@ -833,8 +783,6 @@ function DriveImages() {
       const prevImage = images[currentIndex - 1];
       setSelectedImage(prevImage);
       setEditingName(prevImage.name);
-      setZoomLevel(1); // Will be adjusted in useEffect
-      setPanPosition({ x: 0, y: 0 });
     }
   };
 
@@ -844,8 +792,6 @@ function DriveImages() {
       const nextImage = images[currentIndex + 1];
       setSelectedImage(nextImage);
       setEditingName(nextImage.name);
-      setZoomLevel(1); // Will be adjusted in useEffect
-      setPanPosition({ x: 0, y: 0 });
     }
   };
 
@@ -859,46 +805,52 @@ function DriveImages() {
 
     if (!imageWidth || !imageHeight) {
       // Fallback: set to 100% if dimensions not available
-      const fallbackZoom = 1;
-      const fallbackPan = { x: 0, y: 0 };
-      setZoomLevel(fallbackZoom);
-      setPanPosition(fallbackPan);
-      setInitialZoomLevel(fallbackZoom);
-      setInitialPanPosition(fallbackPan);
+      setZoomLevel(1);
+      setPanPosition({ x: 0, y: 0 });
+      setInitialZoomLevel(1);
       return;
     }
 
-    // Wait a bit for container to be ready
-    const timeout = setTimeout(() => {
+    // Use requestAnimationFrame to wait for container to be ready
+    const calculateZoom = () => {
       const container = modalImageRef.current?.parentElement;
-      if (!container) return;
+      if (!container) {
+        requestAnimationFrame(calculateZoom);
+        return;
+      }
 
       const containerRect = container.getBoundingClientRect();
       const containerWidth = containerRect.width;
       const containerHeight = containerRect.height;
 
-      // Calculate zoom level to fit the image in the container
-      const scaleX = containerWidth / imageWidth;
-      const scaleY = containerHeight / imageHeight;
+      // Safeguard: ensure container has valid dimensions
+      if (containerWidth === 0 || containerHeight === 0) {
+        requestAnimationFrame(calculateZoom);
+        return;
+      }
+
+      // Calculate zoom level to fit the image in the container with padding
+      const padding = 20; // Padding in pixels
+      const scaleX = (containerWidth - padding * 2) / imageWidth;
+      const scaleY = (containerHeight - padding * 2) / imageHeight;
       const scale = Math.min(scaleX, scaleY, 1); // Don't zoom in beyond 100%
 
-      // Center the image
+      // Center the scaled image in the container
       const scaledWidth = imageWidth * scale;
       const scaledHeight = imageHeight * scale;
       const centerX = (containerWidth - scaledWidth) / 2;
       const centerY = (containerHeight - scaledHeight) / 2;
 
-      const fitZoom = scale;
-      const fitPan = { x: centerX, y: centerY };
+      setZoomLevel(scale);
+      setPanPosition({ x: centerX, y: centerY });
+      setInitialZoomLevel(scale);
+      setInitialPanPosition({ x: centerX, y: centerY });
+    };
 
-      setZoomLevel(fitZoom);
-      setPanPosition(fitPan);
-      // Save as initial values for reset button
-      setInitialZoomLevel(fitZoom);
-      setInitialPanPosition(fitPan);
-    }, 10); // Much shorter delay
+    // Start calculation on next frame
+    const rafId = requestAnimationFrame(calculateZoom);
 
-    return () => clearTimeout(timeout);
+    return () => cancelAnimationFrame(rafId);
   }, [selectedImage]);
 
   // Keyboard shortcuts for modal
@@ -1671,6 +1623,15 @@ function DriveImages() {
                     const matchesStarred = !showOnlyStarredProjects || selectedProjects.includes(project.id);
                     return matchesSearch && matchesStarred;
                   })
+                  .sort((a, b) => {
+                    // Markierte Projekte zuerst anzeigen
+                    const aIsStarred = selectedProjects.includes(a.id);
+                    const bIsStarred = selectedProjects.includes(b.id);
+                    if (aIsStarred && !bIsStarred) return -1;
+                    if (!aIsStarred && bIsStarred) return 1;
+                    // Sonst alphabetisch sortieren
+                    return a.folder_name.localeCompare(b.folder_name);
+                  })
                   .map(project => (
                     <div key={project.id} className={`tag-list-item ${selectedProjectId === project.id ? 'tag-selected' : ''}`}>
                       <label
@@ -1842,7 +1803,7 @@ function DriveImages() {
               {/* Scrollable Image Container (Left) */}
               <div className="modal-image-container">
                 <div className="zoom-controls">
-                  <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= 0.5}>
+                  <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= initialZoomLevel}>
                     -
                   </button>
                   <span className="zoom-level">{Math.round(zoomLevel * 100)}%</span>
@@ -1904,132 +1865,136 @@ function DriveImages() {
                     src={selectedImage.local_path || selectedImage.thumbnail_url}
                     alt={selectedImage.name}
                     style={{
-                      transform: `scale(${zoomLevel})`,
-                      position: 'absolute',
-                      left: `${panPosition.x}px`,
-                      top: `${panPosition.y}px`,
-                      transition: isDragging ? 'none' : 'transform 0.2s ease, left 0.2s ease, top 0.2s ease',
+                      transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomLevel})`,
+                      transformOrigin: 'top left',
+                      transition: isDragging ? 'none' : 'transform 0.1s ease-out',
                       userSelect: 'none',
-                      pointerEvents: 'none'
+                      pointerEvents: 'none',
+                      maxWidth: 'none',
+                      maxHeight: 'none'
                     }}
                     draggable={false}
                   />
                 </div>
               </div>
 
-              {/* Fixed Sidebar (Right) */}
+              {/* Fixed Sidebar (Right) - Split in two scrollable sections */}
               <div className="modal-sidebar">
-                <div className="modal-section">
-                  <label>Name</label>
-                  <div className="rename-input-group">
-                    <input
-                      type="text"
-                      value={editingName}
-                      onChange={(e) => setEditingName(e.target.value)}
-                      className="input"
-                    />
-                    <button
-                      className="btn btn-primary btn-sm btn-icon"
-                      onClick={handleRename}
-                      title="Umbenennen"
-                    >
-                      <Edit2 size={16} />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="modal-section">
-                  <label>Originalname</label>
-                  <div className="detail-text">{selectedImage.original_name}</div>
-                </div>
-
-                {selectedImage.subfolder && (
+                {/* Upper section: Image info (65%) */}
+                <div className="modal-sidebar-upper">
                   <div className="modal-section">
-                    <label>Unterordner</label>
-                    <div className="subfolder-badge">{selectedImage.subfolder}</div>
+                    <label>Name</label>
+                    <div className="rename-input-group">
+                      <input
+                        type="text"
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        className="input"
+                      />
+                      <button
+                        className="btn btn-primary btn-sm btn-icon"
+                        onClick={handleRename}
+                        title="Umbenennen"
+                      >
+                        <Edit2 size={16} />
+                      </button>
+                    </div>
                   </div>
-                )}
 
-                {selectedImage.tags && selectedImage.tags.length > 0 && (
                   <div className="modal-section">
-                    <label>Tags</label>
-                    <div className="tag-badges-modal">
-                      {selectedImage.tags.map(tag => (
-                        <span
-                          key={tag.id}
-                          className="tag-badge-modal"
-                          style={{ backgroundColor: tag.color }}
-                        >
-                          {tag.name}
-                          <button
-                            className="tag-badge-remove-modal"
-                            onClick={() => handleRemoveTagFromImage(selectedImage.id, tag.id)}
-                            title="Tag entfernen"
+                    <label>Originalname</label>
+                    <div className="detail-text">{selectedImage.original_name}</div>
+                  </div>
+
+                  {selectedImage.subfolder && (
+                    <div className="modal-section">
+                      <label>Unterordner</label>
+                      <div className="subfolder-badge">{selectedImage.subfolder}</div>
+                    </div>
+                  )}
+
+                  {selectedImage.tags && selectedImage.tags.length > 0 && (
+                    <div className="modal-section">
+                      <label>Tags</label>
+                      <div className="tag-badges-modal">
+                        {selectedImage.tags.map(tag => (
+                          <span
+                            key={tag.id}
+                            className="tag-badge-modal"
+                            style={{ backgroundColor: tag.color }}
                           >
-                            &times;
-                          </button>
-                        </span>
-                      ))}
+                            {tag.name}
+                            <button
+                              className="tag-badge-remove-modal"
+                              onClick={() => handleRemoveTagFromImage(selectedImage.id, tag.id)}
+                              title="Tag entfernen"
+                            >
+                              &times;
+                            </button>
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {selectedImage.projects && selectedImage.projects.length > 0 && (
-                  <div className="modal-section">
-                    <label>Zugeordnete Projekte</label>
-                    <div className="project-badges-modal">
-                      {selectedImage.projects.map(project => (
-                        <div
-                          key={project.id}
-                          className="project-badge"
-                          style={{ backgroundColor: project.color }}
-                          title={project.folder_name}
-                        >
-                          {project.folder_name}
-                        </div>
-                      ))}
+                  {selectedImage.projects && selectedImage.projects.length > 0 && (
+                    <div className="modal-section">
+                      <label>Zugeordnete Projekte</label>
+                      <div className="project-badges-modal">
+                        {selectedImage.projects.map(project => (
+                          <div
+                            key={project.id}
+                            className="project-badge"
+                            style={{ backgroundColor: project.color }}
+                            title={project.folder_name}
+                          >
+                            {project.folder_name}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {selectedImage.file_size && (
-                  <div className="modal-section">
-                    <label>Dateigröße</label>
-                    <div className="detail-text">
-                      {(selectedImage.file_size / 1024 / 1024).toFixed(2)} MB
+                  {selectedImage.file_size && (
+                    <div className="modal-section">
+                      <label>Dateigröße</label>
+                      <div className="detail-text">
+                        {(selectedImage.file_size / 1024 / 1024).toFixed(2)} MB
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {selectedImage.width && selectedImage.height && (
-                  <div className="modal-section">
-                    <label>Auflösung</label>
-                    <div className="detail-text">
-                      {selectedImage.width} x {selectedImage.height} px
+                  {selectedImage.width && selectedImage.height && (
+                    <div className="modal-section">
+                      <label>Auflösung</label>
+                      <div className="detail-text">
+                        {selectedImage.width} x {selectedImage.height} px
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {selectedImage.photo_taken_at && (
-                  <div className="modal-section">
-                    <label>📸 Foto aufgenommen</label>
-                    <div className="detail-text">
-                      {formatSQLiteDate(selectedImage.photo_taken_at)}
+                  {selectedImage.photo_taken_at && (
+                    <div className="modal-section">
+                      <label>📸 Foto aufgenommen</label>
+                      <div className="detail-text">
+                        {formatSQLiteDate(selectedImage.photo_taken_at)}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {selectedImage.created_at && (
-                  <div className="modal-section">
-                    <label>📅 Hochgeladen am</label>
-                    <div className="detail-text">
-                      {formatSQLiteDate(selectedImage.created_at)}
+                  {selectedImage.created_at && (
+                    <div className="modal-section">
+                      <label>📅 Hochgeladen am</label>
+                      <div className="detail-text">
+                        {formatSQLiteDate(selectedImage.created_at)}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
 
-                {/* Projekt-Zuordnung */}
-                <div className="modal-section projects-section">
+                {/* Lower section: Project assignment (35%) */}
+                <div className="modal-sidebar-lower">
+                  <div className="modal-section projects-section">
                   <label>📁 Projekte</label>
                   {selectedProjects.length === 0 ? (
                     <div className="empty-hint">Keine Projekte markiert. Gehe zum Projekte-Tab und markiere Projekte.</div>
@@ -2065,6 +2030,7 @@ function DriveImages() {
                         })}
                     </div>
                   )}
+                  </div>
                 </div>
               </div>
             </div>
