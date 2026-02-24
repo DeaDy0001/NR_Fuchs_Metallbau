@@ -1878,119 +1878,123 @@ function DriveImages() {
                 </div>
               </div>
 
-              {/* Fixed Sidebar (Right) */}
+              {/* Fixed Sidebar (Right) - Split in two scrollable sections */}
               <div className="modal-sidebar">
-                <div className="modal-section">
-                  <label>Name</label>
-                  <div className="rename-input-group">
-                    <input
-                      type="text"
-                      value={editingName}
-                      onChange={(e) => setEditingName(e.target.value)}
-                      className="input"
-                    />
-                    <button
-                      className="btn btn-primary btn-sm btn-icon"
-                      onClick={handleRename}
-                      title="Umbenennen"
-                    >
-                      <Edit2 size={16} />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="modal-section">
-                  <label>Originalname</label>
-                  <div className="detail-text">{selectedImage.original_name}</div>
-                </div>
-
-                {selectedImage.subfolder && (
+                {/* Upper section: Image info (65%) */}
+                <div className="modal-sidebar-upper">
                   <div className="modal-section">
-                    <label>Unterordner</label>
-                    <div className="subfolder-badge">{selectedImage.subfolder}</div>
+                    <label>Name</label>
+                    <div className="rename-input-group">
+                      <input
+                        type="text"
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        className="input"
+                      />
+                      <button
+                        className="btn btn-primary btn-sm btn-icon"
+                        onClick={handleRename}
+                        title="Umbenennen"
+                      >
+                        <Edit2 size={16} />
+                      </button>
+                    </div>
                   </div>
-                )}
 
-                {selectedImage.tags && selectedImage.tags.length > 0 && (
                   <div className="modal-section">
-                    <label>Tags</label>
-                    <div className="tag-badges-modal">
-                      {selectedImage.tags.map(tag => (
-                        <span
-                          key={tag.id}
-                          className="tag-badge-modal"
-                          style={{ backgroundColor: tag.color }}
-                        >
-                          {tag.name}
-                          <button
-                            className="tag-badge-remove-modal"
-                            onClick={() => handleRemoveTagFromImage(selectedImage.id, tag.id)}
-                            title="Tag entfernen"
+                    <label>Originalname</label>
+                    <div className="detail-text">{selectedImage.original_name}</div>
+                  </div>
+
+                  {selectedImage.subfolder && (
+                    <div className="modal-section">
+                      <label>Unterordner</label>
+                      <div className="subfolder-badge">{selectedImage.subfolder}</div>
+                    </div>
+                  )}
+
+                  {selectedImage.tags && selectedImage.tags.length > 0 && (
+                    <div className="modal-section">
+                      <label>Tags</label>
+                      <div className="tag-badges-modal">
+                        {selectedImage.tags.map(tag => (
+                          <span
+                            key={tag.id}
+                            className="tag-badge-modal"
+                            style={{ backgroundColor: tag.color }}
                           >
-                            &times;
-                          </button>
-                        </span>
-                      ))}
+                            {tag.name}
+                            <button
+                              className="tag-badge-remove-modal"
+                              onClick={() => handleRemoveTagFromImage(selectedImage.id, tag.id)}
+                              title="Tag entfernen"
+                            >
+                              &times;
+                            </button>
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {selectedImage.projects && selectedImage.projects.length > 0 && (
-                  <div className="modal-section">
-                    <label>Zugeordnete Projekte</label>
-                    <div className="project-badges-modal">
-                      {selectedImage.projects.map(project => (
-                        <div
-                          key={project.id}
-                          className="project-badge"
-                          style={{ backgroundColor: project.color }}
-                          title={project.folder_name}
-                        >
-                          {project.folder_name}
-                        </div>
-                      ))}
+                  {selectedImage.projects && selectedImage.projects.length > 0 && (
+                    <div className="modal-section">
+                      <label>Zugeordnete Projekte</label>
+                      <div className="project-badges-modal">
+                        {selectedImage.projects.map(project => (
+                          <div
+                            key={project.id}
+                            className="project-badge"
+                            style={{ backgroundColor: project.color }}
+                            title={project.folder_name}
+                          >
+                            {project.folder_name}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {selectedImage.file_size && (
-                  <div className="modal-section">
-                    <label>Dateigröße</label>
-                    <div className="detail-text">
-                      {(selectedImage.file_size / 1024 / 1024).toFixed(2)} MB
+                  {selectedImage.file_size && (
+                    <div className="modal-section">
+                      <label>Dateigröße</label>
+                      <div className="detail-text">
+                        {(selectedImage.file_size / 1024 / 1024).toFixed(2)} MB
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {selectedImage.width && selectedImage.height && (
-                  <div className="modal-section">
-                    <label>Auflösung</label>
-                    <div className="detail-text">
-                      {selectedImage.width} x {selectedImage.height} px
+                  {selectedImage.width && selectedImage.height && (
+                    <div className="modal-section">
+                      <label>Auflösung</label>
+                      <div className="detail-text">
+                        {selectedImage.width} x {selectedImage.height} px
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {selectedImage.photo_taken_at && (
-                  <div className="modal-section">
-                    <label>📸 Foto aufgenommen</label>
-                    <div className="detail-text">
-                      {formatSQLiteDate(selectedImage.photo_taken_at)}
+                  {selectedImage.photo_taken_at && (
+                    <div className="modal-section">
+                      <label>📸 Foto aufgenommen</label>
+                      <div className="detail-text">
+                        {formatSQLiteDate(selectedImage.photo_taken_at)}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {selectedImage.created_at && (
-                  <div className="modal-section">
-                    <label>📅 Hochgeladen am</label>
-                    <div className="detail-text">
-                      {formatSQLiteDate(selectedImage.created_at)}
+                  {selectedImage.created_at && (
+                    <div className="modal-section">
+                      <label>📅 Hochgeladen am</label>
+                      <div className="detail-text">
+                        {formatSQLiteDate(selectedImage.created_at)}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
 
-                {/* Projekt-Zuordnung */}
-                <div className="modal-section projects-section">
+                {/* Lower section: Project assignment (35%) */}
+                <div className="modal-sidebar-lower">
+                  <div className="modal-section projects-section">
                   <label>📁 Projekte</label>
                   {selectedProjects.length === 0 ? (
                     <div className="empty-hint">Keine Projekte markiert. Gehe zum Projekte-Tab und markiere Projekte.</div>
@@ -2026,6 +2030,7 @@ function DriveImages() {
                         })}
                     </div>
                   )}
+                  </div>
                 </div>
               </div>
             </div>

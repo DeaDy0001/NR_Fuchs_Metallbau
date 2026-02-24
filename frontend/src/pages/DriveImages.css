@@ -695,17 +695,37 @@
   transform-origin: top left;
 }
 
-/* Sidebar (Right - Fixed) */
+/* Sidebar (Right - Fixed) - Split into upper and lower sections */
 .modal-sidebar {
   width: 350px;
   flex-shrink: 0;
-  overflow-y: auto;
-  padding: 2rem;
   background-color: var(--bg-primary);
   border-left: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
+  overflow: hidden; /* No overall scrollbar */
+}
+
+/* Upper section: Image info (65% height) */
+.modal-sidebar-upper {
+  flex: 65;
+  overflow-y: auto;
+  padding: 2rem;
+  padding-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
   gap: 1.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+/* Lower section: Project assignment (35% height) */
+.modal-sidebar-lower {
+  flex: 35;
+  overflow-y: auto;
+  padding: 1.5rem 2rem;
+  padding-top: 1rem;
+  display: flex;
+  flex-direction: column;
 }
 
 .modal-section label {
@@ -881,9 +901,9 @@
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  max-height: 300px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  /* No max-height - parent container (modal-sidebar-lower) controls height */
+  overflow: visible; /* Allow items to shift on hover without being cut off */
+  padding-right: 0.5rem; /* Extra space for hover shift */
 }
 
 .project-item {
