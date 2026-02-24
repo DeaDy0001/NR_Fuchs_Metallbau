@@ -82,7 +82,7 @@ function DriveImages() {
   const [selectedTagFilters, setSelectedTagFilters] = useState([]); // Ausgewählte Tags für Filter
   const [tagFilterSearchQuery, setTagFilterSearchQuery] = useState(''); // Tag-Suchfeld im Filter-Modal
   const [sidebarActiveTab, setSidebarActiveTab] = useState('tags'); // 'tags' oder 'projects'
-  const [showOnlyStarredProjects, setShowOnlyStarredProjects] = useState(false); // Nur markierte Projekte im Sidebar anzeigen
+  const [showOnlyStarredProjects, setShowOnlyStarredProjects] = useState(true); // Nur markierte Projekte im Sidebar anzeigen (Standard)
   const [selectedProjectId, setSelectedProjectId] = useState(null); // Aktives Projekt für Quick-Assign
 
   const TAG_PRESET_COLORS = [

@@ -67,8 +67,7 @@ function ProjectsList() {
       const params = new URLSearchParams({
         limit: 100,
         offset: 0,
-        search: searchQuery, // Sucht in Projektnamen UND Tags
-        tags: searchQuery    // Sucht auch in Tags
+        search: searchQuery // Sucht in Projektnamen, Notizen UND Tags
       });
 
       const response = await fetch(`/api/projects?${params}`);

@@ -88,13 +88,14 @@ const getProjects = async (req, res) => {
     const params = [];
 
     if (search) {
-      query += ' AND (folder_name LIKE ? OR notes LIKE ?)';
+      // Search in folder_name, notes AND tags
+      query += ' AND (folder_name LIKE ? OR notes LIKE ? OR tags LIKE ?)';
       const searchParam = `%${search}%`;
-      params.push(searchParam, searchParam);
+      params.push(searchParam, searchParam, searchParam);
     }
 
-    // Filter by tags (if provided)
-    if (tags) {
+    // Filter by tags (if provided AND different from search)
+    if (tags && tags !== search) {
       query += ' AND tags LIKE ?';
       const tagParam = `%${tags}%`;
       params.push(tagParam);
@@ -143,12 +144,13 @@ const getProjects = async (req, res) => {
     const countParams = [];
 
     if (search) {
-      countQuery += ' AND (folder_name LIKE ? OR notes LIKE ?)';
+      // Search in folder_name, notes AND tags
+      countQuery += ' AND (folder_name LIKE ? OR notes LIKE ? OR tags LIKE ?)';
       const searchParam = `%${search}%`;
-      countParams.push(searchParam, searchParam);
+      countParams.push(searchParam, searchParam, searchParam);
     }
 
-    if (tags) {
+    if (tags && tags !== search) {
       countQuery += ' AND tags LIKE ?';
       const tagParam = `%${tags}%`;
       countParams.push(tagParam);
