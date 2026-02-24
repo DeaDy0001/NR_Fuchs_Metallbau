@@ -1623,6 +1623,15 @@ function DriveImages() {
                     const matchesStarred = !showOnlyStarredProjects || selectedProjects.includes(project.id);
                     return matchesSearch && matchesStarred;
                   })
+                  .sort((a, b) => {
+                    // Markierte Projekte zuerst anzeigen
+                    const aIsStarred = selectedProjects.includes(a.id);
+                    const bIsStarred = selectedProjects.includes(b.id);
+                    if (aIsStarred && !bIsStarred) return -1;
+                    if (!aIsStarred && bIsStarred) return 1;
+                    // Sonst alphabetisch sortieren
+                    return a.folder_name.localeCompare(b.folder_name);
+                  })
                   .map(project => (
                     <div key={project.id} className={`tag-list-item ${selectedProjectId === project.id ? 'tag-selected' : ''}`}>
                       <label

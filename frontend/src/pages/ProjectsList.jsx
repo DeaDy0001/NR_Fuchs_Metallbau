@@ -22,8 +22,7 @@ const formatSQLiteDate = (dateString) => {
 
 function ProjectsList() {
   const [projects, setProjects] = useState([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [tagSearchQuery, setTagSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(''); // Kombiniertes Suchfeld für Projekte + Tags
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [editForm, setEditForm] = useState({ color: '', notes: '', tags: [] });
@@ -59,7 +58,7 @@ function ProjectsList() {
         console.error('Error loading selected projects:', e);
       }
     }
-  }, [searchQuery, tagSearchQuery]);
+  }, [searchQuery]);
 
   const loadProjects = async () => {
     setLoading(true);
@@ -68,8 +67,8 @@ function ProjectsList() {
       const params = new URLSearchParams({
         limit: 100,
         offset: 0,
-        search: searchQuery,
-        tags: tagSearchQuery
+        search: searchQuery, // Sucht in Projektnamen UND Tags
+        tags: searchQuery    // Sucht auch in Tags
       });
 
       const response = await fetch(`/api/projects?${params}`);
@@ -570,19 +569,9 @@ function ProjectsList() {
           <Search size={18} />
           <input
             type="text"
-            placeholder="Projekte durchsuchen..."
+            placeholder="Projekte & Tags durchsuchen..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="search-input"
-          />
-        </div>
-        <div className="search-box">
-          <Search size={18} />
-          <input
-            type="text"
-            placeholder="Tags durchsuchen..."
-            value={tagSearchQuery}
-            onChange={(e) => setTagSearchQuery(e.target.value)}
             className="search-input"
           />
         </div>
