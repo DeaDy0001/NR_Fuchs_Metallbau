@@ -297,8 +297,16 @@ function UpdateSettings() {
             )}
             {gitInfo.commitMessage && gitInfo.commitMessage !== 'Keine Git-Informationen verfügbar' && (
               <div className="info-row">
-                <span className="info-label">Letzte Änderung:</span>
-                <span className="info-value commit-message">{gitInfo.commitMessage.split('\n')[0]}</span>
+                <span className="info-label">{gitInfo.isRelease ? 'Release-Informationen:' : 'Letzte Änderung:'}</span>
+                <span className="info-value commit-message">
+                  {gitInfo.isRelease ? (
+                    <div className="release-notes-preview">
+                      {renderReleaseBody(gitInfo.releaseNotes)}
+                    </div>
+                  ) : (
+                    gitInfo.commitMessage.split('\n')[0]
+                  )}
+                </span>
               </div>
             )}
             {gitInfo.commitDate && (
