@@ -2,18 +2,27 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
 
 export default class ErrorBoundary extends React.Component {
-  state = { hasError: false, error: null };
+  state = { hasError: false, error: null, errorInfo: null };
 
   static getDerivedStateFromError(error) {
     return { hasError: true, error };
   }
 
   componentDidCatch(error, errorInfo) {
-    console.error('App Error:', error, errorInfo);
+    this.setState({ errorInfo });
+    console.error('=== APP CRASH ===');
+    console.error('Error:', error?.message || error);
+    console.error('Stack:', error?.stack);
+    console.error('Component Stack:', errorInfo?.componentStack);
+    console.error('=================');
   }
 
   render() {
     if (this.state.hasError) {
+      const errorMessage = this.state.error?.message || this.state.error?.toString?.() || 'Unbekannter Fehler';
+      const errorStack = this.state.error?.stack || '';
+      const componentStack = this.state.errorInfo?.componentStack || '';
+
       return (
         <View style={styles.container}>
           <Text style={styles.icon}>⚠</Text>
@@ -22,13 +31,24 @@ export default class ErrorBoundary extends React.Component {
             Die App ist auf einen Fehler gestoßen.
           </Text>
           <ScrollView style={styles.errorBox}>
-            <Text style={styles.errorText}>
-              {this.state.error?.toString?.() || 'Unbekannter Fehler'}
-            </Text>
+            <Text style={styles.errorLabel}>Fehler:</Text>
+            <Text style={styles.errorText}>{errorMessage}</Text>
+            {errorStack ? (
+              <>
+                <Text style={styles.errorLabel}>{'\n'}Stack Trace:</Text>
+                <Text style={styles.stackText}>{errorStack}</Text>
+              </>
+            ) : null}
+            {componentStack ? (
+              <>
+                <Text style={styles.errorLabel}>{'\n'}Component:</Text>
+                <Text style={styles.stackText}>{componentStack}</Text>
+              </>
+            ) : null}
           </ScrollView>
           <TouchableOpacity
             style={styles.button}
-            onPress={() => this.setState({ hasError: false, error: null })}
+            onPress={() => this.setState({ hasError: false, error: null, errorInfo: null })}
           >
             <Text style={styles.buttonText}>Erneut versuchen</Text>
           </TouchableOpacity>
@@ -58,7 +78,9 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 24,
   },
+  errorLabel: { fontSize: 13, color: '#94a3b8', fontWeight: '700', fontFamily: 'monospace', marginBottom: 4 },
   errorText: { fontSize: 13, color: '#ef4444', fontFamily: 'monospace' },
+  stackText: { fontSize: 11, color: '#f59e0b', fontFamily: 'monospace', lineHeight: 16 },
   button: {
     backgroundColor: '#3b82f6',
     paddingHorizontal: 32,

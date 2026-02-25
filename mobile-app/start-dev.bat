@@ -24,6 +24,11 @@ echo  [OK] Node.js %NODE_VER%
 if not exist node_modules (
     echo  [..] Installiere Abhaengigkeiten...
     call npm install
+    if %ERRORLEVEL% neq 0 (
+        echo  [FEHLER] npm install fehlgeschlagen!
+        pause
+        exit /b 1
+    )
     echo  [OK] Abhaengigkeiten installiert
 ) else (
     echo  [OK] Abhaengigkeiten vorhanden
@@ -46,6 +51,19 @@ echo      Handy-Kamera oder der Expo Go App
 echo.
 echo   4. Aenderungen am Code werden sofort
 echo      auf dem Handy sichtbar (Live Reload)
+echo.
+echo  ========================================
+echo   DEBUGGING bei Fehlern:
+echo  ========================================
+echo.
+echo   - In diesem Fenster siehst du Logs
+echo     vom Metro Bundler (Build-Fehler)
+echo.
+echo   - Handy schuetteln = Dev-Menu oeffnen
+echo     dort "Debug Remote JS" waehlen
+echo.
+echo   - Taste 'j' druecken = Chrome Debugger
+echo     (zeigt console.log im Browser)
 echo.
 echo   Zum Beenden: Strg+C druecken
 echo  ========================================
