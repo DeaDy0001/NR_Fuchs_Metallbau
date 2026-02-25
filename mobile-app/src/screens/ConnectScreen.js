@@ -28,21 +28,34 @@ export default function ConnectScreen() {
     if (name) setUserName(name);
   };
 
+  const parseQrData = (data) => {
+    // Format 1 (new): URL like http://192.168.x.x:3001/api/mobile/connect/{token}
+    const urlMatch = data.match(/^(https?:\/\/[^/]+)\/api\/mobile\/connect\/([a-f0-9]+)$/);
+    if (urlMatch) {
+      return { serverUrl: urlMatch[1], token: urlMatch[2] };
+    }
+
+    // Format 2 (legacy): JSON { token, serverUrl }
+    try {
+      const parsed = JSON.parse(data);
+      if (parsed.token && parsed.serverUrl) {
+        return parsed;
+      }
+    } catch {}
+
+    return null;
+  };
+
   const handleBarCodeScanned = ({ data }) => {
     if (scanned) return;
     setScanned(true);
 
-    try {
-      const parsed = JSON.parse(data);
-      if (parsed.token && parsed.serverUrl) {
-        setScannedData(parsed);
-        setShowNameInput(true);
-      } else {
-        Alert.alert('Ungültiger QR-Code', 'Dieser QR-Code ist nicht gültig.');
-        setScanned(false);
-      }
-    } catch {
-      Alert.alert('Ungültiger QR-Code', 'Konnte QR-Code nicht lesen.');
+    const parsed = parseQrData(data);
+    if (parsed) {
+      setScannedData(parsed);
+      setShowNameInput(true);
+    } else {
+      Alert.alert('Ungültiger QR-Code', 'Dieser QR-Code ist nicht gültig.');
       setScanned(false);
     }
   };

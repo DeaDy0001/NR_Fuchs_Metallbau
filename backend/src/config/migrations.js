@@ -465,6 +465,22 @@ const migrations = [
 
       console.log('✓ Migration add_mobile_server_url_setting completed');
     }
+  },
+  {
+    id: 19,
+    name: 'add_pending_token_server_url',
+    up: () => {
+      console.log('Running migration: add_pending_token_server_url');
+
+      const tableInfo = db.pragma('table_info(mobile_pending_tokens)');
+      const existingColumns = tableInfo.map(col => col.name);
+
+      if (!existingColumns.includes('server_url')) {
+        db.exec("ALTER TABLE mobile_pending_tokens ADD COLUMN server_url TEXT");
+      }
+
+      console.log('✓ Migration add_pending_token_server_url completed');
+    }
   }
 ];
 

@@ -33,13 +33,17 @@ const generateConnectToken = (req, res) => {
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
     db.prepare(`
-      INSERT OR REPLACE INTO mobile_pending_tokens (token, expires_at)
-      VALUES (?, ?)
-    `).run(token, expiresAt);
+      INSERT OR REPLACE INTO mobile_pending_tokens (token, expires_at, server_url)
+      VALUES (?, ?, ?)
+    `).run(token, expiresAt, serverUrl);
+
+    // QR code points to this landing page URL
+    const connectUrl = `${serverUrl}/api/mobile/connect/${token}`;
 
     res.json({
       token,
       serverUrl,
+      connectUrl,
       expiresAt
     });
   } catch (error) {
@@ -47,6 +51,192 @@ const generateConnectToken = (req, res) => {
     res.status(500).json({ error: 'Failed to generate token' });
   }
 };
+
+/**
+ * Landing page when QR code is scanned with phone camera
+ * GET /api/mobile/connect/:token
+ */
+const connectLandingPage = (req, res) => {
+  try {
+    const { token } = req.params;
+
+    // Check if token is valid
+    const pending = db.prepare(
+      "SELECT * FROM mobile_pending_tokens WHERE token = ? AND expires_at > datetime('now')"
+    ).get(token);
+
+    const isValid = !!pending;
+    const serverUrl = pending?.server_url || `${req.protocol}://${req.hostname}:${req.socket.localPort}`;
+
+    // Check if APK exists
+    const apkPath = path.join(__dirname, '../../../mobile-app/android/app.apk');
+    const apkExists = fs.existsSync(apkPath);
+    let apkSize = '';
+    if (apkExists) {
+      const stats = fs.statSync(apkPath);
+      const mb = (stats.size / (1024 * 1024)).toFixed(1);
+      apkSize = `${mb} MB`;
+    }
+
+    const connectionData = JSON.stringify({ token, serverUrl });
+
+    res.send(buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, connectionData }));
+  } catch (error) {
+    console.error('Error serving connect page:', error);
+    res.status(500).send('Fehler beim Laden der Seite');
+  }
+};
+
+function buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, connectionData }) {
+  return `<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Fuchs Metallbau - App</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+      background:#0f0f23;color:#e2e8f0;min-height:100vh;
+      display:flex;flex-direction:column;align-items:center;
+      padding:24px 16px;
+    }
+    .card{
+      background:#1a1a2e;border:1px solid #2a2a4a;border-radius:16px;
+      padding:32px 24px;max-width:420px;width:100%;text-align:center;
+    }
+    .logo{
+      width:72px;height:72px;
+      background:linear-gradient(135deg,#3b82f6,#2563eb);
+      border-radius:18px;display:flex;align-items:center;justify-content:center;
+      margin:0 auto 20px;font-size:32px;
+    }
+    h1{font-size:22px;font-weight:700;margin-bottom:6px}
+    .subtitle{font-size:14px;color:#94a3b8;margin-bottom:28px}
+    .status{
+      display:inline-flex;align-items:center;gap:8px;
+      padding:8px 16px;border-radius:20px;font-size:13px;font-weight:600;
+      margin-bottom:24px;
+    }
+    .status.valid{background:rgba(34,197,94,.15);color:#4ade80;border:1px solid rgba(34,197,94,.3)}
+    .status.expired{background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.3)}
+    .dot{width:8px;height:8px;border-radius:50%}
+    .valid .dot{background:#4ade80}.expired .dot{background:#f87171}
+    .divider{height:1px;background:#2a2a4a;margin:20px 0}
+    .label{font-size:13px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
+    .btn{
+      display:flex;align-items:center;justify-content:center;gap:10px;
+      width:100%;padding:14px 20px;border-radius:12px;font-size:16px;font-weight:600;
+      text-decoration:none;border:none;cursor:pointer;transition:all .2s;
+    }
+    .btn-primary{background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff}
+    .btn-primary:hover{opacity:.9}
+    .btn-secondary{background:#2a2a4a;color:#e2e8f0;margin-top:10px;font-size:14px}
+    .btn-secondary:hover{background:#333360}
+    .btn-disabled{background:#2a2a4a;color:#64748b;cursor:not-allowed}
+    .btn svg{width:20px;height:20px;flex-shrink:0}
+    .info-box{background:#16163a;border:1px solid #2a2a4a;border-radius:10px;padding:14px;margin-top:16px}
+    .info-row{display:flex;justify-content:space-between;align-items:center;font-size:13px}
+    .info-row+.info-row{margin-top:8px}
+    .info-label{color:#94a3b8}.info-value{color:#e2e8f0;font-family:monospace;font-size:12px}
+    .steps{text-align:left;margin-top:20px}
+    .step{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px}
+    .step-num{
+      width:26px;height:26px;border-radius:50%;background:#2a2a4a;color:#3b82f6;
+      display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;
+    }
+    .step-text{font-size:14px;color:#cbd5e1;line-height:1.4;padding-top:2px}
+    .footer{margin-top:24px;font-size:12px;color:#475569}
+    .toast{
+      position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+      background:#22c55e;color:#fff;padding:10px 20px;border-radius:10px;
+      font-size:14px;font-weight:600;opacity:0;transition:opacity .3s;pointer-events:none;
+    }
+    .toast.show{opacity:1}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">&#9874;</div>
+    <h1>Fuchs Metallbau</h1>
+    <p class="subtitle">Mobile App f\u00fcr Fotos &amp; Projekte</p>
+
+    <div class="status ${isValid ? 'valid' : 'expired'}">
+      <span class="dot"></span>
+      ${isValid ? 'Verbindung bereit' : 'Token abgelaufen oder ung\u00fcltig'}
+    </div>
+
+    <div class="divider"></div>
+
+    <p class="label">Schritt 1 \u2013 App installieren</p>
+    ${apkExists ? `
+    <a href="${serverUrl}/api/mobile/app.apk" class="btn btn-primary" download="FuchsMetallbau.apk">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+      APK herunterladen (${apkSize})
+    </a>
+    ` : `
+    <div class="btn btn-disabled">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      APK noch nicht verf\u00fcgbar
+    </div>
+    <p style="font-size:12px;color:#94a3b8;margin-top:8px">Die APK muss zuerst am Server gebaut werden.</p>
+    `}
+
+    <div class="divider"></div>
+
+    <p class="label">Schritt 2 \u2013 Mit Server verbinden</p>
+    ${isValid ? `
+    <div class="steps">
+      <div class="step">
+        <span class="step-num">1</span>
+        <span class="step-text">\u00d6ffne die installierte App</span>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <span class="step-text">Scanne den QR-Code erneut <strong>in der App</strong></span>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <span class="step-text">Gib deinen Namen ein und tippe auf <strong>Verbinden</strong></span>
+      </div>
+    </div>
+    <button class="btn btn-secondary" onclick="copyData()">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+      Verbindungsdaten kopieren
+    </button>
+    ` : `
+    <p style="font-size:14px;color:#94a3b8">Bitte erstelle in der Desktop-Software einen neuen QR-Code<br>(Einstellungen \u2192 Handy App).</p>
+    `}
+
+    <div class="info-box">
+      <div class="info-row">
+        <span class="info-label">Server</span>
+        <span class="info-value">${serverUrl}</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Status</span>
+        <span class="info-value">${isValid ? '\u2713 Bereit' : '\u2717 Abgelaufen'}</span>
+      </div>
+    </div>
+  </div>
+
+  <p class="footer">Fuchs Metallbau</p>
+  <div class="toast" id="toast">Kopiert!</div>
+
+  <script>
+    var cd=${JSON.stringify(connectionData)};
+    function copyData(){
+      navigator.clipboard.writeText(cd).then(function(){
+        var t=document.getElementById('toast');
+        t.classList.add('show');
+        setTimeout(function(){t.classList.remove('show')},1500);
+      });
+    }
+  </script>
+</body>
+</html>`;
+}
 
 /**
  * Register a mobile device using the connect token
@@ -494,6 +684,7 @@ const getInbox = (req, res) => {
 
 module.exports = {
   generateConnectToken,
+  connectLandingPage,
   registerDevice,
   authenticateDevice,
   getDevices,

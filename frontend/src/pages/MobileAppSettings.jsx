@@ -204,10 +204,7 @@ function MobileAppSettings() {
         <div className="qr-section">
           {qrData ? (
             <div className="qr-display">
-              <QRCodeSVG data={JSON.stringify({
-                token: qrData.token,
-                serverUrl: qrData.serverUrl,
-              })} size={220} />
+              <QRCodeSVG data={qrData.connectUrl} size={220} />
               <div className="qr-info">
                 <p className="qr-server">Server: <strong>{qrData.serverUrl}</strong></p>
                 <p className="qr-expires">

@@ -34,6 +34,9 @@ const upload = multer({
 // Generate QR code connection token (called from desktop)
 router.post('/connect-token', mobile.generateConnectToken);
 
+// Landing page when QR code is scanned with phone camera
+router.get('/connect/:token', mobile.connectLandingPage);
+
 // Register device with token (called from app after QR scan)
 router.post('/register', mobile.registerDevice);
 
