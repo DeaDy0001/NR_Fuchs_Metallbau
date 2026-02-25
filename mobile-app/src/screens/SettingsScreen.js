@@ -8,7 +8,7 @@ import { getCacheSize, clearCache, cleanupCache } from '../services/syncService'
 import Slider from '../components/Slider';
 
 export default function SettingsScreen({ navigation }) {
-  const { userName, userEmail, updateUserName, disconnectDrive, logout, activeConnection } = useApp();
+  const { userName, userEmail, updateUserName, disconnectDrive, logout, resetSetup, activeConnection } = useApp();
 
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(userName);
@@ -93,6 +93,17 @@ export default function SettingsScreen({ navigation }) {
       [
         { text: 'Abbrechen', style: 'cancel' },
         { text: 'Abmelden', style: 'destructive', onPress: () => logout() },
+      ]
+    );
+  };
+
+  const handleResetSetup = () => {
+    Alert.alert(
+      'Einrichtung zurücksetzen?',
+      'Alle Verbindungsdaten und die Google-Anmeldung werden gelöscht. Du musst den QR-Code erneut scannen.',
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        { text: 'Zurücksetzen', style: 'destructive', onPress: () => resetSetup() },
       ]
     );
   };
@@ -349,6 +360,11 @@ export default function SettingsScreen({ navigation }) {
         <TouchableOpacity style={styles.dangerButton} onPress={handleLogout}>
           <Ionicons name="log-out-outline" size={18} color={colors.error} />
           <Text style={styles.dangerButtonText}>Von Google abmelden</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.dangerButton, { marginTop: 8 }]} onPress={handleResetSetup}>
+          <Ionicons name="refresh-outline" size={18} color={colors.error} />
+          <Text style={styles.dangerButtonText}>Einrichtung zurücksetzen</Text>
         </TouchableOpacity>
       </View>
 

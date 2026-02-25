@@ -88,9 +88,9 @@ function MainTabs() {
 }
 
 function AppNavigator() {
-  const { isGoogleAuthed, isConnected, isLoading } = useApp();
+  const { isSetup, isGoogleAuthed, isConnected, isLoading } = useApp();
 
-  console.log('[Fuchs] AppNavigator - isLoading:', isLoading, 'authed:', isGoogleAuthed, 'connected:', isConnected);
+  console.log('[Fuchs] AppNavigator - isLoading:', isLoading, 'setup:', isSetup, 'authed:', isGoogleAuthed, 'connected:', isConnected);
 
   if (isLoading) {
     return (
@@ -102,13 +102,22 @@ function AppNavigator() {
 
   return (
     <Stack.Navigator screenOptions={screenOptions}>
-      {!isGoogleAuthed ? (
+      {!isSetup ? (
+        // Step 1: Scan QR code from desktop to get Google Client ID + Drive folder
+        <Stack.Screen
+          name="Connect"
+          component={ConnectScreen}
+          options={{ headerShown: false }}
+        />
+      ) : !isGoogleAuthed ? (
+        // Step 2: Sign in with Google
         <Stack.Screen
           name="Login"
           component={LoginScreen}
           options={{ headerShown: false }}
         />
       ) : !isConnected ? (
+        // Step 3: If Drive connection failed verification, re-connect
         <Stack.Screen
           name="Connect"
           component={ConnectScreen}

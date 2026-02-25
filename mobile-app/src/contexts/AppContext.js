@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { getSetting, setSetting, getUploadQueueCount, getActiveDriveConnection } from '../services/database';
+import { getSetting, setSetting, getUploadQueueCount, getActiveDriveConnection, updateDriveConnectionFolders } from '../services/database';
 import { isAuthenticated, clearAuth, getAccessToken } from '../services/googleAuth';
-import { checkFolderAccess } from '../services/driveService';
+import { checkFolderAccess, findOrCreateFolder } from '../services/driveService';
 import { startQueueProcessing, stopQueueProcessing, addUploadListener } from '../services/uploadQueue';
 
 const AppContext = createContext(null);
@@ -11,8 +11,9 @@ export const useApp = () => useContext(AppContext);
 export const AppProvider = ({ children }) => {
   console.log('[Fuchs] AppProvider mounting');
 
-  const [isGoogleAuthed, setIsGoogleAuthed] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
+  const [isSetup, setIsSetup] = useState(false);       // Has Google Client ID (from QR scan)
+  const [isGoogleAuthed, setIsGoogleAuthed] = useState(false);  // Has valid Google token
+  const [isConnected, setIsConnected] = useState(false);        // Has active Drive connection
   const [activeConnection, setActiveConnection] = useState(null);
   const [userName, setUserName] = useState('');
   const [userEmail, setUserEmail] = useState('');
@@ -46,9 +47,23 @@ export const AppProvider = ({ children }) => {
 
   const loadState = async () => {
     try {
-      console.log('[Fuchs] loadState - checking auth...');
+      console.log('[Fuchs] loadState - checking setup...');
 
-      // Check Google authentication
+      // Step 1: Check if app is set up (has Google Client ID from QR scan)
+      const clientId = await getSetting('googleClientId');
+      const setup = !!clientId;
+      console.log('[Fuchs] loadState - has client ID:', setup);
+      setIsSetup(setup);
+
+      if (!setup) {
+        // Not set up yet - show ConnectScreen (setup mode)
+        const count = await getUploadQueueCount();
+        setQueueCount(count);
+        setIsLoading(false);
+        return;
+      }
+
+      // Step 2: Check Google authentication
       const authed = await isAuthenticated();
       console.log('[Fuchs] loadState - google authed:', authed);
       setIsGoogleAuthed(authed);
@@ -60,18 +75,30 @@ export const AppProvider = ({ children }) => {
         setUserName(name);
         setUserEmail(email);
 
-        // Check for active Drive connection
+        // Step 3: Check for active Drive connection
         const connection = await getActiveDriveConnection();
         console.log('[Fuchs] loadState - active connection:', connection ? connection.name : 'none');
 
         if (connection) {
           // Verify the connection is still accessible
-          const accessible = await checkFolderAccess(connection.root_folder_id);
-          if (accessible) {
-            setActiveConnection(connection);
-            setIsConnected(true);
-          } else {
-            console.log('[Fuchs] loadState - connection not accessible');
+          try {
+            const accessible = await checkFolderAccess(connection.root_folder_id);
+            if (accessible) {
+              // Ensure NR_Fuchs_Meta and inbox folders exist
+              if (!connection.meta_folder_id || !connection.inbox_folder_id) {
+                const metaFolder = await findOrCreateFolder(connection.root_folder_id, 'NR_Fuchs_Meta');
+                const inboxFolder = await findOrCreateFolder(metaFolder.id, 'inbox');
+                await updateDriveConnectionFolders(connection.id, metaFolder.id, inboxFolder.id);
+                connection.meta_folder_id = metaFolder.id;
+                connection.inbox_folder_id = inboxFolder.id;
+              }
+              setActiveConnection(connection);
+              setIsConnected(true);
+            } else {
+              console.log('[Fuchs] loadState - connection not accessible');
+            }
+          } catch (e) {
+            console.log('[Fuchs] loadState - connection check failed:', e.message);
           }
         }
       }
@@ -87,6 +114,14 @@ export const AppProvider = ({ children }) => {
   };
 
   /**
+   * Called after QR code scan in setup mode
+   * Stores the Google Client ID and creates a pending Drive connection
+   */
+  const onSetupComplete = async () => {
+    setIsSetup(true);
+  };
+
+  /**
    * Called after successful Google login
    */
   const onGoogleLogin = async (userInfo) => {
@@ -94,19 +129,31 @@ export const AppProvider = ({ children }) => {
     setUserName(userInfo.name || '');
     setUserEmail(userInfo.email || '');
 
-    // Check if there's already an active connection
+    // Check if there's already an active connection (from QR scan setup)
     const connection = await getActiveDriveConnection();
     if (connection) {
-      const accessible = await checkFolderAccess(connection.root_folder_id);
-      if (accessible) {
-        setActiveConnection(connection);
-        setIsConnected(true);
+      try {
+        const accessible = await checkFolderAccess(connection.root_folder_id);
+        if (accessible) {
+          // Ensure NR_Fuchs_Meta and inbox folders exist
+          if (!connection.meta_folder_id || !connection.inbox_folder_id) {
+            const metaFolder = await findOrCreateFolder(connection.root_folder_id, 'NR_Fuchs_Meta');
+            const inboxFolder = await findOrCreateFolder(metaFolder.id, 'inbox');
+            await updateDriveConnectionFolders(connection.id, metaFolder.id, inboxFolder.id);
+            connection.meta_folder_id = metaFolder.id;
+            connection.inbox_folder_id = inboxFolder.id;
+          }
+          setActiveConnection(connection);
+          setIsConnected(true);
+        }
+      } catch (e) {
+        console.log('[Fuchs] Post-login connection verification failed:', e.message);
       }
     }
   };
 
   /**
-   * Called after selecting/scanning a Drive connection
+   * Called after selecting/scanning a Drive connection (when already authenticated)
    */
   const onDriveConnect = (connection) => {
     setActiveConnection(connection);
@@ -133,6 +180,20 @@ export const AppProvider = ({ children }) => {
     setUserEmail('');
   };
 
+  /**
+   * Full reset (removes client ID too - back to QR scan)
+   */
+  const resetSetup = async () => {
+    await clearAuth();
+    await setSetting('googleClientId', '');
+    setIsSetup(false);
+    setIsGoogleAuthed(false);
+    setIsConnected(false);
+    setActiveConnection(null);
+    setUserName('');
+    setUserEmail('');
+  };
+
   const updateUserName = async (name) => {
     await setSetting('userName', name);
     setUserName(name);
@@ -146,6 +207,7 @@ export const AppProvider = ({ children }) => {
   return (
     <AppContext.Provider value={{
       // Auth state
+      isSetup,
       isGoogleAuthed,
       isConnected,
       activeConnection,
@@ -154,10 +216,12 @@ export const AppProvider = ({ children }) => {
       queueCount,
       isLoading,
       // Actions
+      onSetupComplete,
       onGoogleLogin,
       onDriveConnect,
       disconnectDrive,
       logout,
+      resetSetup,
       updateUserName,
       refreshQueueCount,
     }}>

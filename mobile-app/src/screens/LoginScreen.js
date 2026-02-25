@@ -1,24 +1,34 @@
-import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Image } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { storeTokens, fetchUserInfo, storeUserInfo } from '../services/googleAuth';
+import { storeTokens, fetchUserInfo, storeUserInfo, getGoogleClientId } from '../services/googleAuth';
 import config from '../config';
 
 WebBrowser.maybeCompleteAuthSession();
 
 export default function LoginScreen() {
   const { onGoogleLogin } = useApp();
+  const [clientId, setClientId] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadClientId();
+  }, []);
+
+  const loadClientId = async () => {
+    const id = await getGoogleClientId();
+    console.log('[Fuchs] LoginScreen - loaded client ID:', id ? id.substring(0, 20) + '...' : 'none');
+    setClientId(id);
+    setLoading(false);
+  };
 
   const [request, response, promptAsync] = Google.useAuthRequest({
-    expoClientId: config.google.expoClientId || undefined,
-    androidClientId: config.google.androidClientId || undefined,
-    webClientId: config.google.webClientId || undefined,
+    webClientId: clientId || undefined,
     scopes: config.google.scopes,
-    responseType: 'code',
   });
 
   useEffect(() => {
@@ -50,7 +60,13 @@ export default function LoginScreen() {
     }
   };
 
-  const hasClientIds = config.google.expoClientId || config.google.androidClientId || config.google.webClientId;
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator size="large" color={colors.accent} />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -63,36 +79,25 @@ export default function LoginScreen() {
       </View>
 
       <View style={styles.loginArea}>
-        <Text style={styles.loginTitle}>Anmelden</Text>
+        <Text style={styles.loginTitle}>Mit Google anmelden</Text>
         <Text style={styles.loginDesc}>
           Melde dich mit deinem Google-Konto an, um auf die freigegebenen Google Drive Ordner zuzugreifen.
         </Text>
 
-        {!hasClientIds ? (
-          <View style={styles.configWarning}>
-            <Ionicons name="warning" size={24} color={colors.warning} />
-            <Text style={styles.configWarningText}>
-              Google OAuth ist noch nicht konfiguriert.{'\n\n'}
-              Bitte setze die Client-IDs in{'\n'}
-              src/config.js
-            </Text>
-          </View>
-        ) : (
-          <TouchableOpacity
-            style={[styles.googleButton, !request && styles.buttonDisabled]}
-            onPress={() => promptAsync()}
-            disabled={!request}
-          >
-            {!request ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <>
-                <Ionicons name="logo-google" size={22} color="white" />
-                <Text style={styles.googleButtonText}>Mit Google anmelden</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity
+          style={[styles.googleButton, !request && styles.buttonDisabled]}
+          onPress={() => promptAsync()}
+          disabled={!request}
+        >
+          {!request ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <>
+              <Ionicons name="logo-google" size={22} color="white" />
+              <Text style={styles.googleButtonText}>Mit Google anmelden</Text>
+            </>
+          )}
+        </TouchableOpacity>
       </View>
 
       <Text style={styles.footerText}>
@@ -168,21 +173,6 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: '600',
-  },
-  configWarning: {
-    alignItems: 'center',
-    gap: 12,
-    padding: 16,
-    backgroundColor: 'rgba(245, 158, 11, 0.1)',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.3)',
-  },
-  configWarningText: {
-    color: colors.warning,
-    fontSize: 13,
-    textAlign: 'center',
-    lineHeight: 18,
   },
   footerText: {
     fontSize: 12,

@@ -4,11 +4,11 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { getDriveConnections, addDriveConnection, setActiveDriveConnection, removeDriveConnection, updateDriveConnectionFolders } from '../services/database';
+import { setSetting, getDriveConnections, addDriveConnection, setActiveDriveConnection, removeDriveConnection, updateDriveConnectionFolders } from '../services/database';
 import { verifyConnection, findOrCreateFolder } from '../services/driveService';
 
 export default function ConnectScreen() {
-  const { onDriveConnect } = useApp();
+  const { isGoogleAuthed, onSetupComplete, onDriveConnect } = useApp();
   const [permission, requestPermission] = useCameraPermissions();
   const [connections, setConnections] = useState([]);
   const [showScanner, setShowScanner] = useState(false);
@@ -16,8 +16,16 @@ export default function ConnectScreen() {
   const [connecting, setConnecting] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // In setup mode (no Google auth yet), go straight to scanner
+  const isSetupMode = !isGoogleAuthed;
+
   useEffect(() => {
-    loadConnections();
+    if (isSetupMode) {
+      setShowScanner(true);
+      setLoading(false);
+    } else {
+      loadConnections();
+    }
   }, []);
 
   const loadConnections = async () => {
@@ -32,11 +40,16 @@ export default function ConnectScreen() {
   };
 
   const parseQrData = (data) => {
-    // Format 1: JSON
+    // Format 1: JSON (from desktop software)
+    // {"type":"fuchs_drive","googleClientId":"...","rootFolderId":"...","name":"..."}
     try {
       const parsed = JSON.parse(data);
       if (parsed.type === 'fuchs_drive' && parsed.rootFolderId) {
-        return { name: parsed.name || 'Drive-Verbindung', rootFolderId: parsed.rootFolderId };
+        return {
+          name: parsed.name || 'Drive-Verbindung',
+          rootFolderId: parsed.rootFolderId,
+          googleClientId: parsed.googleClientId || null,
+        };
       }
     } catch {}
 
@@ -47,7 +60,8 @@ export default function ConnectScreen() {
         const url = new URL(data);
         const rootId = url.searchParams.get('root');
         const name = url.searchParams.get('name') || 'Drive-Verbindung';
-        if (rootId) return { name, rootFolderId: rootId };
+        const clientId = url.searchParams.get('clientId') || null;
+        if (rootId) return { name, rootFolderId: rootId, googleClientId: clientId };
       }
     } catch {}
 
@@ -56,7 +70,7 @@ export default function ConnectScreen() {
     try {
       const match = data.match(/drive\.google\.com\/drive\/folders\/([a-zA-Z0-9_-]+)/);
       if (match) {
-        return { name: 'Google Drive', rootFolderId: match[1] };
+        return { name: 'Google Drive', rootFolderId: match[1], googleClientId: null };
       }
     } catch {}
 
@@ -75,56 +89,87 @@ export default function ConnectScreen() {
     }
 
     setConnecting(true);
-    try {
-      // Verify we can access the folder
-      const folderName = await verifyConnection(parsed.rootFolderId);
-      if (!folderName) {
+
+    if (isSetupMode) {
+      // SETUP MODE: Store client ID + connection, don't verify yet (no auth)
+      try {
+        if (parsed.googleClientId) {
+          await setSetting('googleClientId', parsed.googleClientId);
+        } else {
+          Alert.alert(
+            'QR-Code unvollständig',
+            'Der QR-Code enthält keine Google Client ID. Bitte erstelle einen neuen QR-Code in der Desktop-Software.'
+          );
+          setScanned(false);
+          setConnecting(false);
+          return;
+        }
+
+        // Save the Drive connection (without meta/inbox folders - will be created after Google Sign-In)
+        await addDriveConnection(parsed.name, parsed.rootFolderId);
+
         Alert.alert(
-          'Zugriff verweigert',
-          'Der Drive-Ordner ist nicht für dein Google-Konto freigegeben.\n\nBitte den Administrator, den Ordner mit deinem Google-Konto zu teilen.'
+          'Einrichtung erfolgreich!',
+          `Drive-Ordner "${parsed.name}" wurde gespeichert.\n\nMelde dich jetzt mit deinem Google-Konto an.`
         );
+
+        // Transition to LoginScreen
+        onSetupComplete();
+      } catch (error) {
+        Alert.alert('Fehler', error.message);
         setScanned(false);
+      } finally {
         setConnecting(false);
-        return;
       }
+    } else {
+      // CONNECT MODE: Already authenticated, verify and activate
+      try {
+        const folderName = await verifyConnection(parsed.rootFolderId);
+        if (!folderName) {
+          Alert.alert(
+            'Zugriff verweigert',
+            'Der Drive-Ordner ist nicht für dein Google-Konto freigegeben.\n\nBitte den Administrator, den Ordner mit deinem Google-Konto zu teilen.'
+          );
+          setScanned(false);
+          setConnecting(false);
+          return;
+        }
 
-      const connectionName = parsed.name !== 'Google Drive' ? parsed.name : folderName;
+        const connectionName = parsed.name !== 'Google Drive' ? parsed.name : folderName;
 
-      // Find or create NR_Fuchs_Meta folder
-      const metaFolder = await findOrCreateFolder(parsed.rootFolderId, 'NR_Fuchs_Meta');
+        // Find or create NR_Fuchs_Meta folder
+        const metaFolder = await findOrCreateFolder(parsed.rootFolderId, 'NR_Fuchs_Meta');
+        const inboxFolder = await findOrCreateFolder(metaFolder.id, 'inbox');
 
-      // Find or create inbox inside meta
-      const inboxFolder = await findOrCreateFolder(metaFolder.id, 'inbox');
+        // Save connection
+        await addDriveConnection(connectionName, parsed.rootFolderId, metaFolder.id, inboxFolder.id);
 
-      // Save connection
-      await addDriveConnection(
-        connectionName,
-        parsed.rootFolderId,
-        metaFolder.id,
-        inboxFolder.id
-      );
+        // Update client ID if provided
+        if (parsed.googleClientId) {
+          await setSetting('googleClientId', parsed.googleClientId);
+        }
 
-      Alert.alert('Verbunden!', `"${connectionName}" wurde verbunden.`);
-      setShowScanner(false);
+        Alert.alert('Verbunden!', `"${connectionName}" wurde verbunden.`);
+        setShowScanner(false);
 
-      // Activate this connection
-      const conns = await getDriveConnections();
-      const active = conns.find(c => c.is_active === 1);
-      if (active) {
-        onDriveConnect(active);
+        // Activate this connection
+        const conns = await getDriveConnections();
+        const active = conns.find(c => c.is_active === 1);
+        if (active) {
+          onDriveConnect(active);
+        }
+      } catch (error) {
+        Alert.alert('Fehler', error.message);
+        setScanned(false);
+      } finally {
+        setConnecting(false);
       }
-    } catch (error) {
-      Alert.alert('Fehler', error.message);
-      setScanned(false);
-    } finally {
-      setConnecting(false);
     }
   };
 
   const handleSelectConnection = async (connection) => {
     setConnecting(true);
     try {
-      // Verify access
       const accessible = await verifyConnection(connection.root_folder_id);
       if (!accessible) {
         Alert.alert('Nicht erreichbar', 'Der Drive-Ordner ist nicht mehr zugänglich.');
@@ -132,7 +177,6 @@ export default function ConnectScreen() {
         return;
       }
 
-      // Ensure meta and inbox folders exist
       if (!connection.meta_folder_id || !connection.inbox_folder_id) {
         const metaFolder = await findOrCreateFolder(connection.root_folder_id, 'NR_Fuchs_Meta');
         const inboxFolder = await findOrCreateFolder(metaFolder.id, 'inbox');
@@ -183,9 +227,11 @@ export default function ConnectScreen() {
           <TouchableOpacity style={styles.primaryButton} onPress={requestPermission}>
             <Text style={styles.primaryButtonText}>Kamera erlauben</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.linkButton} onPress={() => setShowScanner(false)}>
-            <Text style={styles.linkText}>Zurück</Text>
-          </TouchableOpacity>
+          {!isSetupMode && (
+            <TouchableOpacity style={styles.linkButton} onPress={() => setShowScanner(false)}>
+              <Text style={styles.linkText}>Zurück</Text>
+            </TouchableOpacity>
+          )}
         </View>
       );
     }
@@ -195,14 +241,30 @@ export default function ConnectScreen() {
         {connecting ? (
           <>
             <ActivityIndicator size="large" color={colors.accent} />
-            <Text style={styles.subtitle}>Verbindung wird hergestellt...</Text>
+            <Text style={styles.subtitle}>
+              {isSetupMode ? 'Einrichtung läuft...' : 'Verbindung wird hergestellt...'}
+            </Text>
           </>
         ) : (
           <>
-            <Text style={styles.title}>Drive-Ordner verbinden</Text>
-            <Text style={styles.subtitle}>
-              Scanne den QR-Code aus der Desktop-Software{'\n'}(Einstellungen → Handy App)
-            </Text>
+            {isSetupMode ? (
+              <>
+                <View style={styles.iconCircle}>
+                  <Ionicons name="construct" size={36} color={colors.accent} />
+                </View>
+                <Text style={styles.title}>Fuchs Metallbau</Text>
+                <Text style={styles.subtitle}>
+                  Scanne den QR-Code aus der Desktop-Software{'\n'}(Einstellungen → Handy App)
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.title}>Drive-Ordner verbinden</Text>
+                <Text style={styles.subtitle}>
+                  Scanne den QR-Code aus der Desktop-Software{'\n'}(Einstellungen → Handy App)
+                </Text>
+              </>
+            )}
 
             <View style={styles.cameraContainer}>
               <CameraView
@@ -215,16 +277,18 @@ export default function ConnectScreen() {
               </View>
             </View>
 
-            <TouchableOpacity style={styles.linkButton} onPress={() => { setShowScanner(false); setScanned(false); }}>
-              <Text style={styles.linkText}>Zurück zur Auswahl</Text>
-            </TouchableOpacity>
+            {!isSetupMode && (
+              <TouchableOpacity style={styles.linkButton} onPress={() => { setShowScanner(false); setScanned(false); }}>
+                <Text style={styles.linkText}>Zurück zur Auswahl</Text>
+              </TouchableOpacity>
+            )}
           </>
         )}
       </View>
     );
   }
 
-  // Main connection selection view
+  // Main connection selection view (only when authenticated)
   return (
     <View style={styles.container}>
       <View style={styles.header}>

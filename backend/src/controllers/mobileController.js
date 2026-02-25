@@ -16,39 +16,67 @@ fs.ensureDirSync(MOBILE_UPLOADS_DIR);
 // ============================================================
 
 /**
- * Generate a connection token (shown as QR code in desktop app)
+ * Generate QR code data for mobile app (shown as QR code in desktop app)
  * POST /api/mobile/connect-token
- * Body: { serverUrl: "http://192.168.1.x:3001" }
+ * Body: { drivePathId?: number }
+ *
+ * Returns JSON QR payload containing Google Client ID and Drive folder ID
+ * so the mobile app can authenticate via Google and access the shared Drive folder.
  */
 const generateConnectToken = (req, res) => {
   try {
-    const token = crypto.randomBytes(32).toString('hex');
+    const googleClientId = process.env.GOOGLE_CLIENT_ID;
+    if (!googleClientId) {
+      return res.status(400).json({
+        error: 'Google OAuth nicht konfiguriert. Bitte GOOGLE_CLIENT_ID in der .env Datei setzen.'
+      });
+    }
 
-    // Use the serverUrl from the request body (chosen by user in frontend)
-    // Fallback to request-based detection
-    const serverUrl = req.body?.serverUrl
-      || `${req.protocol}://${req.hostname}:${req.socket.localPort}`;
+    // Get configured drive paths
+    let drivePaths = [];
+    try {
+      drivePaths = db.prepare('SELECT * FROM drive_paths ORDER BY id ASC').all();
+    } catch (e) {
+      // Table might not exist yet
+    }
 
-    // Store token temporarily (valid for 5 minutes)
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    if (drivePaths.length === 0) {
+      return res.status(400).json({
+        error: 'Kein Google Drive Ordner konfiguriert. Bitte zuerst einen Drive-Ordner in den Einstellungen hinzufügen.'
+      });
+    }
 
-    db.prepare(`
-      INSERT OR REPLACE INTO mobile_pending_tokens (token, expires_at, server_url)
-      VALUES (?, ?, ?)
-    `).run(token, expiresAt, serverUrl);
+    // Use selected drive path or first one
+    const selectedId = req.body?.drivePathId;
+    const drivePath = selectedId
+      ? drivePaths.find(dp => dp.id === parseInt(selectedId)) || drivePaths[0]
+      : drivePaths[0];
 
-    // QR code points to this landing page URL
-    const connectUrl = `${serverUrl}/api/mobile/connect/${token}`;
+    // Extract folder ID from path (could be URL or plain ID)
+    let rootFolderId = drivePath.path;
+    const urlMatch = drivePath.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    if (urlMatch) {
+      rootFolderId = urlMatch[1];
+    }
+
+    // Build QR code data as JSON for the mobile app to parse
+    const qrPayload = {
+      type: 'fuchs_drive',
+      googleClientId,
+      rootFolderId,
+      name: drivePath.name || 'Fuchs Metallbau'
+    };
 
     res.json({
-      token,
-      serverUrl,
-      connectUrl,
-      expiresAt
+      qrData: JSON.stringify(qrPayload),
+      name: drivePath.name,
+      rootFolderId,
+      googleClientId,
+      drivePaths: drivePaths.map(dp => ({ id: dp.id, name: dp.name }))
     });
   } catch (error) {
-    console.error('Error generating connect token:', error);
-    res.status(500).json({ error: 'Failed to generate token' });
+    console.error('Error generating QR data:', error);
+    res.status(500).json({ error: 'QR-Daten konnten nicht generiert werden' });
   }
 };
 

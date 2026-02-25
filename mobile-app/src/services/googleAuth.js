@@ -1,8 +1,14 @@
 import { getSetting, setSetting } from './database';
-import config from '../config';
 
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const USERINFO_ENDPOINT = 'https://www.googleapis.com/oauth2/v3/userinfo';
+
+/**
+ * Get the stored Google Client ID (set via QR code scan)
+ */
+export const getGoogleClientId = async () => {
+  return await getSetting('googleClientId');
+};
 
 /**
  * Store OAuth tokens in the local database
@@ -45,7 +51,7 @@ export const getAccessToken = async () => {
  * Refresh the access token using a refresh token
  */
 const refreshAccessToken = async (refreshToken) => {
-  const clientId = config.google.webClientId || config.google.expoClientId;
+  const clientId = await getGoogleClientId();
   if (!clientId) throw new Error('Keine Google Client ID konfiguriert');
 
   const response = await fetch(TOKEN_ENDPOINT, {
@@ -73,7 +79,7 @@ const refreshAccessToken = async (refreshToken) => {
  * Exchange authorization code for tokens
  */
 export const exchangeCodeForTokens = async (code, redirectUri) => {
-  const clientId = config.google.webClientId || config.google.expoClientId;
+  const clientId = await getGoogleClientId();
   if (!clientId) throw new Error('Keine Google Client ID konfiguriert');
 
   const response = await fetch(TOKEN_ENDPOINT, {
