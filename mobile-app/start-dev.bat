@@ -21,7 +21,13 @@ for /f "tokens=*" %%i in ('node -v') do set NODE_VER=%%i
 echo  [OK] Node.js %NODE_VER%
 
 :: ── 2. Abhaengigkeiten installieren ──
-if not exist "node_modules\expo" (
+:: Pruefen ob node_modules fehlt oder ob neue Pakete in package.json dazukamen
+set "NEEDS_INSTALL=0"
+if not exist "node_modules\expo" set "NEEDS_INSTALL=1"
+if not exist "node_modules\expo-navigation-bar" set "NEEDS_INSTALL=1"
+if not exist "node_modules\babel-preset-expo" set "NEEDS_INSTALL=1"
+
+if "!NEEDS_INSTALL!"=="1" (
     echo  [..] Installiere Abhaengigkeiten...
     call npm install
     if not exist "node_modules\expo" (
