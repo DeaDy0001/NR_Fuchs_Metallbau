@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { getSetting, setSetting, cacheProjects, cacheTags } from './database';
 import { fetchSyncData, downloadImage } from './api';
 
