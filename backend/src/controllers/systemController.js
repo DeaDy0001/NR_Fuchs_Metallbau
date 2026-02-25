@@ -3,6 +3,7 @@ const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs-extra');
 const os = require('os');
+const db = require('../config/database');
 
 // GitHub repository info
 const GITHUB_OWNER = 'DeaDy0001';
@@ -17,6 +18,33 @@ try {
 } catch (e) {
   console.log('⚠️  Git ist nicht installiert. Update-System verwendet GitHub API als Fallback.');
 }
+
+/**
+ * Get GitHub API headers including auth token if configured
+ */
+const getGithubHeaders = () => {
+  const headers = {
+    'Accept': 'application/vnd.github.v3+json',
+    'User-Agent': 'Fuchs-Metallbau-App'
+  };
+
+  // Try to get token from database
+  try {
+    const setting = db.prepare('SELECT github_token FROM settings WHERE id = 1').get();
+    if (setting && setting.github_token) {
+      headers['Authorization'] = `token ${setting.github_token}`;
+    }
+  } catch (e) {
+    // DB not ready yet or no token configured
+  }
+
+  // Fallback: try environment variable
+  if (!headers['Authorization'] && process.env.GITHUB_TOKEN) {
+    headers['Authorization'] = `token ${process.env.GITHUB_TOKEN}`;
+  }
+
+  return headers;
+};
 
 // Cache version to avoid repeated console logs
 let cachedVersion = null;
@@ -75,10 +103,7 @@ const getLatestVersion = async (req, res) => {
     const response = await axios.get(
       `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`,
       {
-        headers: {
-          'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'Fuchs-Metallbau-App'
-        },
+        headers: getGithubHeaders(),
         timeout: 10000
       }
     );
@@ -178,6 +203,7 @@ const downloadAndApplyUpdate = async (tag, projectRoot) => {
     console.log(`📥 Lade Release ZIP herunter: ${zipUrl}`);
 
     const response = await axios.get(zipUrl, {
+      headers: getGithubHeaders(),
       responseType: 'arraybuffer',
       timeout: 120000,
       maxContentLength: 500 * 1024 * 1024 // 500MB max
@@ -286,7 +312,7 @@ const triggerUpdate = async (req, res) => {
           const releaseResponse = await axios.get(
             `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`,
             {
-              headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'Fuchs-Metallbau-App' },
+              headers: getGithubHeaders(),
               timeout: 10000
             }
           );
@@ -354,7 +380,7 @@ const getGitInfo = async (req, res) => {
           try {
             const releaseResponse = await axios.get(
               `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/${currentTag}`,
-              { headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'Fuchs-Metallbau-App' }, timeout: 10000 }
+              { headers: getGithubHeaders(), timeout: 10000 }
             );
             releaseNotes = releaseResponse.data.body;
           } catch (e) { /* ignore */ }
@@ -403,7 +429,7 @@ const getGitInfo = async (req, res) => {
           try {
             const releaseResponse = await axios.get(
               `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/${currentTag}`,
-              { headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'Fuchs-Metallbau-App' }, timeout: 10000 }
+              { headers: getGithubHeaders(), timeout: 10000 }
             );
             releaseNotes = releaseResponse.data.body;
           } catch (e) { /* ignore */ }
@@ -430,7 +456,7 @@ const getGitInfo = async (req, res) => {
       // Try to find a release matching current version
       const releaseResponse = await axios.get(
         `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/v${version}`,
-        { headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'Fuchs-Metallbau-App' }, timeout: 10000 }
+        { headers: getGithubHeaders(), timeout: 10000 }
       );
       releaseInfo = releaseResponse.data;
     } catch (e) {
@@ -576,7 +602,7 @@ const getTags = async (req, res) => {
     const tagsResponse = await axios.get(
       `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/tags`,
       {
-        headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'Fuchs-Metallbau-App' },
+        headers: getGithubHeaders(),
         params: { per_page: 50 },
         timeout: 10000
       }
@@ -588,7 +614,7 @@ const getTags = async (req, res) => {
       const releasesResponse = await axios.get(
         `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases`,
         {
-          headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'Fuchs-Metallbau-App' },
+          headers: getGithubHeaders(),
           params: { per_page: 50 },
           timeout: 10000
         }
@@ -618,6 +644,14 @@ const getTags = async (req, res) => {
 
     res.json({ tags, currentVersion });
   } catch (error) {
+    if (error.response && error.response.status === 404) {
+      console.error('Error fetching tags: Repository nicht gefunden (404). Ist ein GitHub Token konfiguriert?');
+      return res.json({ tags: [], currentVersion: getCurrentVersion(), error: 'GitHub Token nicht konfiguriert oder Repository nicht gefunden. Bitte unter Einstellungen einen GitHub Token hinterlegen.' });
+    }
+    if (error.response && error.response.status === 401) {
+      console.error('Error fetching tags: GitHub Token ungültig (401).');
+      return res.json({ tags: [], currentVersion: getCurrentVersion(), error: 'GitHub Token ist ungültig. Bitte unter Einstellungen einen neuen Token hinterlegen.' });
+    }
     console.error('Error fetching tags:', error.message);
     res.status(500).json({ error: 'Fehler beim Laden der Versionen' });
   }
@@ -739,10 +773,7 @@ const getReleases = async (req, res) => {
     const response = await axios.get(
       `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases`,
       {
-        headers: {
-          'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'Fuchs-Metallbau-App'
-        },
+        headers: getGithubHeaders(),
         params: { per_page: 20 },
         timeout: 10000
       }
