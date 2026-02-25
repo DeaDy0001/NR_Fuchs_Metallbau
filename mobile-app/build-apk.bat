@@ -113,59 +113,46 @@ set "APK_DEST=%CD%\android\app.apk"
 :: Alte APK loeschen damit wir sicher wissen ob der neue Build geklappt hat
 if exist "%APK_DEST%" del "%APK_DEST%"
 
-:: ── 7. APK bauen und automatisch herunterladen ──
+:: ── 7. APK bauen ──
 echo.
 echo  ========================================
 echo   Starte APK Build in der Expo Cloud...
 echo   (Das dauert ca. 5-15 Minuten)
-echo   Die APK wird automatisch heruntergeladen.
+echo   Die APK wird danach automatisch geladen.
 echo  ========================================
 echo.
 echo   Beim ersten Mal wirst du gefragt ob ein
 echo   Keystore generiert werden soll - waehle Yes.
 echo.
 
-:: Build starten mit --output fuer automatischen Download
-call eas build -p android --profile preview --non-interactive --output "%APK_DEST%"
-set BUILD_EXIT=%ERRORLEVEL%
+:: Build starten (non-interactive verhindert Emulator-Frage)
+call eas build -p android --profile preview --non-interactive
+
+:: ── 8. APK herunterladen ──
+echo.
+echo  [..] Suche Download-Link...
+
+:: JSON Output in Temp-Datei speichern (for/f kann kein mehrzeiliges JSON)
+set "TEMP_JSON=%TEMP%\eas_build_result.json"
+call eas build:list --platform android --limit 1 --status finished --json > "%TEMP_JSON%" 2>nul
+
+:: PowerShell liest JSON-Datei, extrahiert URL und laedt APK herunter
+powershell -Command ^
+  "$json = Get-Content '%TEMP_JSON%' -Raw -ErrorAction SilentlyContinue; " ^
+  "if (-not $json) { Write-Host '  [FEHLER] Keine Build-Daten gefunden'; exit 1 }; " ^
+  "$url = ($json | ConvertFrom-Json)[0].artifacts.buildUrl; " ^
+  "if (-not $url) { Write-Host '  [FEHLER] Kein Download-Link im Build gefunden'; exit 1 }; " ^
+  "Write-Host '  [OK] Download-Link:' $url; " ^
+  "Write-Host '  [..] Lade APK herunter...'; " ^
+  "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; " ^
+  "Invoke-WebRequest -Uri $url -OutFile '%APK_DEST%' -UseBasicParsing; " ^
+  "Write-Host '  [OK] Download abgeschlossen'"
+
+if exist "%TEMP_JSON%" del "%TEMP_JSON%"
 
 :: Pruefen ob APK heruntergeladen wurde
 if exist "%APK_DEST%" goto :BUILD_SUCCESS
-
-:: Fallback: Wenn --output nicht geklappt hat, manuell herunterladen
-echo.
-echo  [..] APK nicht direkt heruntergeladen, versuche Fallback...
-echo  [..] Suche Download-Link...
-
-set "APK_URL="
-
-:: Letzten erfolgreichen Build per JSON abfragen
-for /f "usebackq tokens=*" %%a in (`eas build:list --platform android --limit 1 --status finished --json 2^>nul`) do (
-    set "JSON_OUT=%%a"
-)
-
-:: URL aus JSON extrahieren (artifacts.buildUrl)
-if defined JSON_OUT (
-    for /f "tokens=*" %%u in ('powershell -Command "try { ($env:JSON_OUT | ConvertFrom-Json)[0].artifacts.buildUrl } catch { '' }" 2^>nul') do (
-        if not "%%u"=="" set "APK_URL=%%u"
-    )
-)
-
-if not defined APK_URL goto :NO_URL
-
-:: APK herunterladen
-echo  [OK] Download-Link gefunden
-echo  [..] Lade APK herunter...
-echo       %APK_URL%
-echo.
-
-curl -L -o "%APK_DEST%" "%APK_URL%" 2>nul
-if exist "%APK_DEST%" goto :BUILD_SUCCESS
-
-:: Powershell Fallback
-powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%APK_URL%' -OutFile '%APK_DEST%'" 2>nul
-if exist "%APK_DEST%" goto :BUILD_SUCCESS
-goto :DOWNLOAD_FAIL
+goto :NO_URL
 
 :BUILD_SUCCESS
 for %%F in ("%APK_DEST%") do set "APK_SIZE=%%~zF"
@@ -196,13 +183,6 @@ echo   lade die APK manuell herunter.
 echo   Speichere sie als:
 echo   %APK_DEST%
 echo  ========================================
-goto :CLEANUP
-
-:DOWNLOAD_FAIL
-echo  [FEHLER] Download fehlgeschlagen.
-echo  Bitte lade manuell herunter:
-echo  %APK_URL%
-echo  Speichere als: %APK_DEST%
 goto :CLEANUP
 
 :CLEANUP
