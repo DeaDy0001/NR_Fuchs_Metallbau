@@ -4,7 +4,8 @@ import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
-import { View, ActivityIndicator, Text } from 'react-native';
+import { View, ActivityIndicator, Platform } from 'react-native';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppProvider, useApp } from './src/contexts/AppContext';
 import { colors } from './src/theme/colors';
 import ErrorBoundary from './src/components/ErrorBoundary';
@@ -33,6 +34,8 @@ const screenOptions = {
 
 function MainTabs() {
   const { queueCount } = useApp();
+  const insets = useSafeAreaInsets();
+  const bottomPadding = Math.max(insets.bottom, 8);
 
   return (
     <Tab.Navigator
@@ -41,8 +44,8 @@ function MainTabs() {
           backgroundColor: colors.bgSecondary,
           borderTopColor: colors.border,
           borderTopWidth: 1,
-          height: 60,
-          paddingBottom: 8,
+          height: 60 + bottomPadding,
+          paddingBottom: bottomPadding,
           paddingTop: 8,
         },
         tabBarActiveTintColor: colors.accent,
@@ -143,6 +146,7 @@ export default function App() {
   console.log('[Fuchs] App component rendering');
 
   return (
+    <SafeAreaProvider>
     <ErrorBoundary>
       <AppProvider>
         <NavigationContainer
@@ -165,5 +169,6 @@ export default function App() {
         </NavigationContainer>
       </AppProvider>
     </ErrorBoundary>
+    </SafeAreaProvider>
   );
 }
