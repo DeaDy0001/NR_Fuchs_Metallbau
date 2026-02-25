@@ -5,12 +5,32 @@ echo   Fuchs Metallbau - Server Start
 echo ========================================
 echo.
 
+REM Enable ANSI colors
+for /f %%a in ('echo prompt $E^| cmd') do set "ESC=%%a"
+
 REM Check if Node.js is installed
 where node >nul 2>nul
 if %ERRORLEVEL% NEQ 0 (
-    echo [ERROR] Node.js ist nicht installiert!
-    echo Bitte installieren Sie Node.js von: https://nodejs.org/
-    echo Waehlen Sie bei der Installation "Automatically install the necessary tools" aus!
+    echo.
+    echo %ESC%[91m========================================%ESC%[0m
+    echo %ESC%[91m  [ERROR] Node.js ist nicht installiert!%ESC%[0m
+    echo %ESC%[91m========================================%ESC%[0m
+    echo.
+    echo %ESC%[93m  Node.js wird benoetigt um den Server zu starten.%ESC%[0m
+    echo.
+    echo %ESC%[96m  OPTION 1 - Installer im Projektordner:%ESC%[0m
+    echo %ESC%[97m    Oeffne den Ordner: %ESC%[92m\NR_Fuchs_Metallbau\node_js\%ESC%[0m
+    echo %ESC%[97m    und fuehre den Installer dort aus.%ESC%[0m
+    echo.
+    echo %ESC%[96m  OPTION 2 - Download von der Webseite:%ESC%[0m
+    echo %ESC%[97m    Lade Node.js herunter von: %ESC%[92mhttps://nodejs.org/%ESC%[0m
+    echo.
+    echo %ESC%[93m  WICHTIG bei der Installation:%ESC%[0m
+    echo %ESC%[97m    Setze den Haken bei%ESC%[0m
+    echo %ESC%[92m    "Automatically install the necessary tools"%ESC%[0m
+    echo.
+    echo %ESC%[91m  Nach der Installation bitte start.bat erneut ausfuehren!%ESC%[0m
+    echo.
     pause
     exit /b 1
 )
