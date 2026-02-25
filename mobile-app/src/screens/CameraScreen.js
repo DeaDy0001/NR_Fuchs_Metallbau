@@ -20,6 +20,7 @@ export default function CameraScreen({ navigation, route }) {
 
   const projectId = route.params?.projectId || null;
   const projectName = route.params?.projectName || null;
+  const projectFolderId = route.params?.projectFolderId || null;
 
   // If opened with pickFromGallery, open gallery immediately
   useEffect(() => {
@@ -36,7 +37,6 @@ export default function CameraScreen({ navigation, route }) {
     });
 
     if (!result.canceled && result.assets?.length > 0) {
-      // Handle first image (multi-upload queues the rest)
       setCapturedImage(result.assets[0]);
 
       // Queue additional images if multiple selected
@@ -44,7 +44,7 @@ export default function CameraScreen({ navigation, route }) {
         for (let i = 1; i < result.assets.length; i++) {
           const asset = result.assets[i];
           const fileName = asset.fileName || `gallery_${Date.now()}_${i}.jpg`;
-          await addToUploadQueue(asset.uri, fileName, asset.mimeType || 'image/jpeg', projectId, projectName);
+          await addToUploadQueue(asset.uri, fileName, asset.mimeType || 'image/jpeg', projectId, projectName, projectFolderId);
         }
         await refreshQueueCount();
         processUploadQueue();
@@ -76,7 +76,7 @@ export default function CameraScreen({ navigation, route }) {
 
     if (!isConnected) {
       // Queue for later
-      await addToUploadQueue(capturedImage.uri, fileName, mimeType, projectId, projectName);
+      await addToUploadQueue(capturedImage.uri, fileName, mimeType, projectId, projectName, projectFolderId);
       await refreshQueueCount();
       Alert.alert('In Warteschlange', 'Das Bild wird hochgeladen, sobald eine Verbindung besteht.');
       setCapturedImage(null);
@@ -86,11 +86,11 @@ export default function CameraScreen({ navigation, route }) {
     setUploading(true);
     try {
       await uploadImage(capturedImage.uri, fileName, mimeType, projectId, projectName);
-      Alert.alert('Hochgeladen', 'Bild wurde erfolgreich hochgeladen.');
+      Alert.alert('Hochgeladen', 'Bild wurde erfolgreich auf Google Drive hochgeladen.');
       setCapturedImage(null);
     } catch (error) {
       // Failed? Queue it
-      await addToUploadQueue(capturedImage.uri, fileName, mimeType, projectId, projectName);
+      await addToUploadQueue(capturedImage.uri, fileName, mimeType, projectId, projectName, projectFolderId);
       await refreshQueueCount();
       Alert.alert('In Warteschlange', 'Upload fehlgeschlagen. Bild wurde in die Warteschlange gelegt.');
       setCapturedImage(null);
@@ -221,167 +221,31 @@ export default function CameraScreen({ navigation, route }) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bgPrimary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 16,
-  },
-  cameraContainer: {
-    flex: 1,
-    backgroundColor: 'black',
-  },
-  camera: {
-    flex: 1,
-  },
-  topBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingTop: 48,
-    paddingHorizontal: 20,
-  },
-  topButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  projectIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 20,
-    marginTop: 12,
-  },
-  projectIndicatorText: {
-    color: 'white',
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  bottomBar: {
-    position: 'absolute',
-    bottom: 40,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    paddingHorizontal: 40,
-  },
-  captureButton: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    borderWidth: 4,
-    borderColor: 'white',
-    padding: 4,
-  },
-  captureInner: {
-    flex: 1,
-    borderRadius: 34,
-    backgroundColor: 'white',
-  },
-  galleryButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  flipButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // Preview
-  previewContainer: {
-    flex: 1,
-    backgroundColor: 'black',
-  },
-  preview: {
-    flex: 1,
-  },
-  previewInfo: {
-    padding: 16,
-    backgroundColor: 'rgba(0,0,0,0.8)',
-  },
-  projectBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  projectBadgeText: {
-    color: colors.accent,
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  noProjectText: {
-    color: colors.textTertiary,
-    fontSize: 13,
-  },
-  previewActions: {
-    flexDirection: 'row',
-    padding: 20,
-    gap: 12,
-    backgroundColor: 'rgba(0,0,0,0.9)',
-  },
-  discardButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.error,
-  },
-  uploadButton: {
-    flex: 2,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    padding: 16,
-    borderRadius: 12,
-    backgroundColor: colors.accent,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  previewButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  uploadButtonText: {
-    color: 'white',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  permissionText: {
-    color: colors.textPrimary,
-    fontSize: 16,
-  },
-  permissionButton: {
-    backgroundColor: colors.accent,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 10,
-  },
-  permissionButtonText: {
-    color: 'white',
-    fontSize: 15,
-    fontWeight: '600',
-  },
+  container: { flex: 1, backgroundColor: colors.bgPrimary, alignItems: 'center', justifyContent: 'center', gap: 16 },
+  cameraContainer: { flex: 1, backgroundColor: 'black' },
+  camera: { flex: 1 },
+  topBar: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 48, paddingHorizontal: 20 },
+  topButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
+  projectIndicator: { flexDirection: 'row', alignItems: 'center', alignSelf: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, marginTop: 12 },
+  projectIndicatorText: { color: 'white', fontSize: 13, fontWeight: '500' },
+  bottomBar: { position: 'absolute', bottom: 40, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 40 },
+  captureButton: { width: 76, height: 76, borderRadius: 38, borderWidth: 4, borderColor: 'white', padding: 4 },
+  captureInner: { flex: 1, borderRadius: 34, backgroundColor: 'white' },
+  galleryButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
+  flipButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
+  previewContainer: { flex: 1, backgroundColor: 'black' },
+  preview: { flex: 1 },
+  previewInfo: { padding: 16, backgroundColor: 'rgba(0,0,0,0.8)' },
+  projectBadge: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  projectBadgeText: { color: colors.accent, fontSize: 14, fontWeight: '500' },
+  noProjectText: { color: colors.textTertiary, fontSize: 13 },
+  previewActions: { flexDirection: 'row', padding: 20, gap: 12, backgroundColor: 'rgba(0,0,0,0.9)' },
+  discardButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 16, borderRadius: 12, borderWidth: 1, borderColor: colors.error },
+  uploadButton: { flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 16, borderRadius: 12, backgroundColor: colors.accent },
+  buttonDisabled: { opacity: 0.6 },
+  previewButtonText: { fontSize: 15, fontWeight: '600' },
+  uploadButtonText: { color: 'white', fontSize: 15, fontWeight: '600' },
+  permissionText: { color: colors.textPrimary, fontSize: 16 },
+  permissionButton: { backgroundColor: colors.accent, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10 },
+  permissionButtonText: { color: 'white', fontSize: 15, fontWeight: '600' },
 });

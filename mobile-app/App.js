@@ -12,6 +12,7 @@ import { colors } from './src/theme/colors';
 import ErrorBoundary from './src/components/ErrorBoundary';
 
 // Screens
+import LoginScreen from './src/screens/LoginScreen';
 import ConnectScreen from './src/screens/ConnectScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import CameraScreen from './src/screens/CameraScreen';
@@ -21,7 +22,6 @@ import ImageViewScreen from './src/screens/ImageViewScreen';
 import UploadQueueScreen from './src/screens/UploadQueueScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 
-// Debug logging - all console.log appear in Metro terminal
 console.log('[Fuchs] App.js module loaded');
 
 const Stack = createNativeStackNavigator();
@@ -88,9 +88,9 @@ function MainTabs() {
 }
 
 function AppNavigator() {
-  const { isConnected, isLoading } = useApp();
+  const { isGoogleAuthed, isConnected, isLoading } = useApp();
 
-  console.log('[Fuchs] AppNavigator render - isLoading:', isLoading, 'isConnected:', isConnected);
+  console.log('[Fuchs] AppNavigator - isLoading:', isLoading, 'authed:', isGoogleAuthed, 'connected:', isConnected);
 
   if (isLoading) {
     return (
@@ -102,7 +102,13 @@ function AppNavigator() {
 
   return (
     <Stack.Navigator screenOptions={screenOptions}>
-      {!isConnected ? (
+      {!isGoogleAuthed ? (
+        <Stack.Screen
+          name="Login"
+          component={LoginScreen}
+          options={{ headerShown: false }}
+        />
+      ) : !isConnected ? (
         <Stack.Screen
           name="Connect"
           component={ConnectScreen}
@@ -148,7 +154,6 @@ export default function App() {
 
   useEffect(() => {
     if (Platform.OS === 'android') {
-      // Sticky immersive mode: nav bar hidden, swipe from edge to show temporarily
       NavigationBar.setVisibilityAsync('hidden');
       NavigationBar.setBehaviorAsync('overlay-swipe');
       NavigationBar.setBackgroundColorAsync(colors.bgSecondary);

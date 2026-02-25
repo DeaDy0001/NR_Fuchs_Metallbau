@@ -50,7 +50,7 @@ export default function ProjectsScreen({ navigation }) {
       await createProject(newProjectName.trim());
       Alert.alert(
         'Projekt erstellt',
-        `"${newProjectName.trim()}" wurde erstellt und wartet auf Bestätigung in der Desktop-Software.`
+        `"${newProjectName.trim()}" wurde als Anfrage an die Desktop-Software gesendet.`
       );
       setNewProjectName('');
       setShowNewProject(false);
@@ -71,6 +71,7 @@ export default function ProjectsScreen({ navigation }) {
       onPress={() => navigation.navigate('ProjectDetail', {
         projectId: item.id,
         projectName: item.folder_name,
+        projectFolderId: item.folder_id,
       })}
     >
       <View style={[styles.colorBar, { backgroundColor: item.color || colors.accent }]} />
@@ -192,144 +193,42 @@ export default function ProjectsScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bgPrimary,
-  },
+  container: { flex: 1, backgroundColor: colors.bgPrimary },
   searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.cardBg,
-    borderRadius: 10,
-    margin: 16,
-    marginBottom: 8,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
+    flexDirection: 'row', alignItems: 'center', backgroundColor: colors.cardBg,
+    borderRadius: 10, margin: 16, marginBottom: 8, paddingHorizontal: 12,
+    borderWidth: 1, borderColor: colors.border,
   },
-  searchInput: {
-    flex: 1,
-    padding: 12,
-    fontSize: 15,
-    color: colors.textPrimary,
-  },
-  tagList: {
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-    gap: 8,
-  },
+  searchInput: { flex: 1, padding: 12, fontSize: 15, color: colors.textPrimary },
+  tagList: { paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
   tagChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.cardBg,
-    marginRight: 8,
+    paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20,
+    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardBg, marginRight: 8,
   },
-  tagText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    fontWeight: '500',
-  },
-  list: {
-    padding: 16,
-    paddingTop: 8,
-  },
+  tagText: { fontSize: 13, color: colors.textSecondary, fontWeight: '500' },
+  list: { padding: 16, paddingTop: 8 },
   projectCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.cardBg,
-    borderRadius: 12,
-    marginBottom: 10,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
+    flexDirection: 'row', alignItems: 'center', backgroundColor: colors.cardBg,
+    borderRadius: 12, marginBottom: 10, padding: 16, borderWidth: 1, borderColor: colors.border,
   },
-  colorBar: {
-    width: 4,
-    height: 40,
-    borderRadius: 2,
-    marginRight: 14,
-  },
-  projectContent: {
-    flex: 1,
-  },
-  projectName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  projectMeta: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 4,
-  },
-  metaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  metaText: {
-    fontSize: 13,
-    color: colors.textTertiary,
-  },
-  empty: {
-    alignItems: 'center',
-    paddingTop: 64,
-    gap: 12,
-  },
-  emptyText: {
-    color: colors.textTertiary,
-    fontSize: 15,
-  },
-  newProjectForm: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    margin: 16,
-    marginTop: 0,
-    gap: 8,
-  },
+  colorBar: { width: 4, height: 40, borderRadius: 2, marginRight: 14 },
+  projectContent: { flex: 1 },
+  projectName: { fontSize: 16, fontWeight: '600', color: colors.textPrimary },
+  projectMeta: { flexDirection: 'row', gap: 12, marginTop: 4 },
+  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  metaText: { fontSize: 13, color: colors.textTertiary },
+  empty: { alignItems: 'center', paddingTop: 64, gap: 12 },
+  emptyText: { color: colors.textTertiary, fontSize: 15 },
+  newProjectForm: { flexDirection: 'row', alignItems: 'center', margin: 16, marginTop: 0, gap: 8 },
   newProjectInput: {
-    flex: 1,
-    backgroundColor: colors.inputBg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    padding: 12,
-    fontSize: 15,
-    color: colors.textPrimary,
+    flex: 1, backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.border,
+    borderRadius: 10, padding: 12, fontSize: 15, color: colors.textPrimary,
   },
-  createBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cancelBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: colors.bgTertiary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  createBtn: { width: 44, height: 44, borderRadius: 10, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
+  cancelBtn: { width: 44, height: 44, borderRadius: 10, backgroundColor: colors.bgTertiary, alignItems: 'center', justifyContent: 'center' },
   fab: {
-    position: 'absolute',
-    bottom: 24,
-    right: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    position: 'absolute', bottom: 24, right: 24, width: 56, height: 56, borderRadius: 28,
+    backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center',
+    elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8,
   },
 });

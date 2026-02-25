@@ -8,7 +8,7 @@ import { getCacheSize, clearCache, cleanupCache } from '../services/syncService'
 import Slider from '../components/Slider';
 
 export default function SettingsScreen({ navigation }) {
-  const { userName, updateUserName, disconnect, serverUrl, isConnected } = useApp();
+  const { userName, userEmail, updateUserName, disconnectDrive, logout, activeConnection } = useApp();
 
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(userName);
@@ -61,7 +61,7 @@ export default function SettingsScreen({ navigation }) {
   const handleClearCache = () => {
     Alert.alert(
       'Cache leeren?',
-      'Alle heruntergeladenen Bilder werden gelöscht. Sie werden bei Bedarf neu heruntergeladen.',
+      'Alle heruntergeladenen Bilder werden gelöscht. Sie werden bei Bedarf neu von Google Drive heruntergeladen.',
       [
         { text: 'Abbrechen', style: 'cancel' },
         {
@@ -75,18 +75,24 @@ export default function SettingsScreen({ navigation }) {
     );
   };
 
-  const handleDisconnect = () => {
+  const handleDisconnectDrive = () => {
     Alert.alert(
-      'Verbindung trennen?',
-      'Du musst den QR-Code erneut scannen, um dich wieder zu verbinden.',
+      'Drive-Verbindung trennen?',
+      'Du kannst danach einen anderen Drive-Ordner auswählen oder per QR-Code hinzufügen.',
       [
         { text: 'Abbrechen', style: 'cancel' },
-        {
-          text: 'Trennen', style: 'destructive', onPress: async () => {
-            await disconnect();
-            navigation.replace('Connect');
-          }
-        },
+        { text: 'Trennen', style: 'destructive', onPress: () => disconnectDrive() },
+      ]
+    );
+  };
+
+  const handleLogout = () => {
+    Alert.alert(
+      'Abmelden?',
+      'Du wirst von deinem Google-Konto abgemeldet und musst dich erneut anmelden.',
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        { text: 'Abmelden', style: 'destructive', onPress: () => logout() },
       ]
     );
   };
@@ -155,6 +161,15 @@ export default function SettingsScreen({ navigation }) {
             </TouchableOpacity>
           )}
         </View>
+
+        {userEmail ? (
+          <View style={styles.settingRow}>
+            <View style={styles.settingInfo}>
+              <Text style={styles.settingLabel}>Google-Konto</Text>
+            </View>
+            <Text style={styles.settingValueSmall}>{userEmail}</Text>
+          </View>
+        ) : null}
       </View>
 
       {/* Upload */}
@@ -253,7 +268,7 @@ export default function SettingsScreen({ navigation }) {
         <View style={styles.settingRow}>
           <View style={styles.settingInfo}>
             <Text style={styles.settingLabel}>Alte Bilder automatisch löschen</Text>
-            <Text style={styles.settingDesc}>Nur vom Gerät, nicht vom Server</Text>
+            <Text style={styles.settingDesc}>Nur vom Gerät, nicht von Google Drive</Text>
           </View>
           <Switch
             value={autoDeleteOld}
@@ -314,21 +329,26 @@ export default function SettingsScreen({ navigation }) {
         </View>
       </View>
 
-      {/* Connection */}
+      {/* Drive Connection */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Verbindung</Text>
+        <Text style={styles.sectionTitle}>Google Drive</Text>
 
         <View style={styles.settingRow}>
           <View style={styles.settingInfo}>
-            <Text style={styles.settingLabel}>Server</Text>
-            <Text style={styles.settingDesc}>{serverUrl || 'Nicht verbunden'}</Text>
+            <Text style={styles.settingLabel}>Verbundener Ordner</Text>
+            <Text style={styles.settingDesc}>{activeConnection?.name || 'Kein Ordner'}</Text>
           </View>
-          <View style={[styles.statusDot, isConnected ? styles.statusOnline : styles.statusOffline]} />
+          <View style={[styles.statusDot, styles.statusOnline]} />
         </View>
 
-        <TouchableOpacity style={styles.dangerButton} onPress={handleDisconnect}>
+        <TouchableOpacity style={styles.secondaryButton} onPress={handleDisconnectDrive}>
+          <Ionicons name="swap-horizontal-outline" size={18} color={colors.accent} />
+          <Text style={styles.secondaryButtonText}>Drive-Ordner wechseln</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.dangerButton} onPress={handleLogout}>
           <Ionicons name="log-out-outline" size={18} color={colors.error} />
-          <Text style={styles.dangerButtonText}>Verbindung trennen</Text>
+          <Text style={styles.dangerButtonText}>Von Google abmelden</Text>
         </TouchableOpacity>
       </View>
 
@@ -338,155 +358,63 @@ export default function SettingsScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bgPrimary,
-  },
-  content: {
-    padding: 16,
-  },
+  container: { flex: 1, backgroundColor: colors.bgPrimary },
+  content: { padding: 16 },
   section: {
-    backgroundColor: colors.cardBg,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
+    backgroundColor: colors.cardBg, borderRadius: 12, padding: 16,
+    marginBottom: 16, borderWidth: 1, borderColor: colors.border,
   },
   sectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    color: colors.textTertiary,
-    marginBottom: 16,
+    fontSize: 13, fontWeight: '700', textTransform: 'uppercase',
+    letterSpacing: 0.5, color: colors.textTertiary, marginBottom: 16,
   },
   settingRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-    marginBottom: 8,
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'center', paddingVertical: 8, marginBottom: 8,
   },
-  settingInfo: {
-    flex: 1,
-    marginRight: 16,
-  },
-  settingLabel: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: colors.textPrimary,
-  },
-  settingDesc: {
-    fontSize: 12,
-    color: colors.textTertiary,
-    marginTop: 2,
-  },
-  settingValue: {
-    fontSize: 15,
-    color: colors.accent,
-  },
-  settingBlock: {
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  editRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
+  settingInfo: { flex: 1, marginRight: 16 },
+  settingLabel: { fontSize: 15, fontWeight: '500', color: colors.textPrimary },
+  settingDesc: { fontSize: 12, color: colors.textTertiary, marginTop: 2 },
+  settingValue: { fontSize: 15, color: colors.accent },
+  settingValueSmall: { fontSize: 13, color: colors.textSecondary },
+  settingBlock: { paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.border },
+  editRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   nameInput: {
-    backgroundColor: colors.inputBg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 15,
-    color: colors.textPrimary,
-    minWidth: 150,
+    backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.border,
+    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8,
+    fontSize: 15, color: colors.textPrimary, minWidth: 150,
   },
-  optionGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 10,
-  },
+  optionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   optionChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.bgTertiary,
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8,
+    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgTertiary,
   },
-  optionChipActive: {
-    borderColor: colors.accent,
-    backgroundColor: 'rgba(59, 130, 246, 0.15)',
-  },
-  optionChipText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    fontWeight: '500',
-  },
-  optionChipTextActive: {
-    color: colors.accent,
-  },
+  optionChipActive: { borderColor: colors.accent, backgroundColor: 'rgba(59, 130, 246, 0.15)' },
+  optionChipText: { fontSize: 13, color: colors.textSecondary, fontWeight: '500' },
+  optionChipTextActive: { color: colors.accent },
   cacheInfo: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.border,
   },
-  cacheSize: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginTop: 4,
-  },
+  cacheSize: { fontSize: 20, fontWeight: '700', color: colors.textPrimary, marginTop: 4 },
   clearCacheBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.error,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8,
+    borderWidth: 1, borderColor: colors.error,
   },
-  clearCacheText: {
-    fontSize: 13,
-    color: colors.error,
-    fontWeight: '500',
+  clearCacheText: { fontSize: 13, color: colors.error, fontWeight: '500' },
+  statusDot: { width: 10, height: 10, borderRadius: 5 },
+  statusOnline: { backgroundColor: colors.success },
+  secondaryButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, padding: 12, borderRadius: 10, borderWidth: 1,
+    borderColor: colors.accent, marginTop: 8, marginBottom: 8,
   },
-  statusDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  statusOnline: {
-    backgroundColor: colors.success,
-  },
-  statusOffline: {
-    backgroundColor: colors.error,
-  },
+  secondaryButtonText: { color: colors.accent, fontSize: 15, fontWeight: '500' },
   dangerButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    padding: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.error,
-    marginTop: 8,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, padding: 12, borderRadius: 10, borderWidth: 1,
+    borderColor: colors.error, marginTop: 4,
   },
-  dangerButtonText: {
-    color: colors.error,
-    fontSize: 15,
-    fontWeight: '500',
-  },
+  dangerButtonText: { color: colors.error, fontSize: 15, fontWeight: '500' },
 });

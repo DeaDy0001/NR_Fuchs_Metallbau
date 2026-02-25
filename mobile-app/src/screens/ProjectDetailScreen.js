@@ -4,37 +4,46 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { fetchProjectImages, getImageUrl } from '../services/api';
-import { getSetting } from '../services/database';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const NUM_COLUMNS = 3;
 const IMAGE_SIZE = (SCREEN_WIDTH - 32 - (NUM_COLUMNS - 1) * 4) / NUM_COLUMNS;
 
 export default function ProjectDetailScreen({ navigation, route }) {
-  const { projectId, projectName } = route.params;
+  const { projectId, projectName, projectFolderId } = route.params;
   const [images, setImages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [serverUrl, setServerUrl] = useState('');
-  const [authToken, setAuthToken] = useState('');
+  const [imageAuth, setImageAuth] = useState(null);
 
   useFocusEffect(
     useCallback(() => {
       loadImages();
-      loadServerInfo();
+      loadImageAuth();
     }, [])
   );
 
-  const loadServerInfo = async () => {
-    const url = await getSetting('serverUrl', '');
-    const token = await getSetting('authToken', '');
-    setServerUrl(url);
-    setAuthToken(token);
+  const loadImageAuth = async () => {
+    // Get auth headers for Drive image access
+    try {
+      const source = await getImageUrl('dummy');
+      if (source) {
+        setImageAuth(source.headers);
+      }
+    } catch {}
   };
 
   const loadImages = async () => {
     try {
-      const data = await fetchProjectImages(projectId);
+      // Use folder_id from the project to list images
+      const folderId = projectFolderId;
+      if (!folderId) {
+        console.log('[Fuchs] No folder_id for project', projectName);
+        setImages([]);
+        setLoading(false);
+        return;
+      }
+      const data = await fetchProjectImages(folderId);
       setImages(data);
     } catch (error) {
       console.error('Failed to load project images:', error);
@@ -49,11 +58,6 @@ export default function ProjectDetailScreen({ navigation, route }) {
     setRefreshing(false);
   };
 
-  const getThumbnailUrl = (image) => {
-    if (!serverUrl || !image.thumbnail_url) return null;
-    return `${serverUrl}${image.thumbnail_url}`;
-  };
-
   const renderImage = ({ item }) => (
     <TouchableOpacity
       style={styles.imageCard}
@@ -63,11 +67,11 @@ export default function ProjectDetailScreen({ navigation, route }) {
         projectName,
       })}
     >
-      {getThumbnailUrl(item) ? (
+      {item.thumbnail_link ? (
         <Image
           source={{
-            uri: getThumbnailUrl(item),
-            headers: { 'X-Mobile-Token': authToken },
+            uri: item.thumbnail_link,
+            headers: imageAuth || {},
           }}
           style={styles.thumbnail}
           resizeMode="cover"
@@ -75,11 +79,6 @@ export default function ProjectDetailScreen({ navigation, route }) {
       ) : (
         <View style={[styles.thumbnail, styles.placeholderThumb]}>
           <Ionicons name="image-outline" size={24} color={colors.textTertiary} />
-        </View>
-      )}
-      {item.uploaded_by && (
-        <View style={styles.uploadedByBadge}>
-          <Text style={styles.uploadedByText}>{item.uploaded_by}</Text>
         </View>
       )}
     </TouchableOpacity>
@@ -122,7 +121,7 @@ export default function ProjectDetailScreen({ navigation, route }) {
       {/* FAB - Take photo for this project */}
       <TouchableOpacity
         style={styles.fab}
-        onPress={() => navigation.navigate('Camera', { projectId, projectName })}
+        onPress={() => navigation.navigate('Camera', { projectId, projectName, projectFolderId })}
       >
         <Ionicons name="camera" size={28} color="white" />
       </TouchableOpacity>
@@ -131,81 +130,22 @@ export default function ProjectDetailScreen({ navigation, route }) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bgPrimary,
-  },
-  loadingContainer: {
-    flex: 1,
-    backgroundColor: colors.bgPrimary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  header: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  imageCount: {
-    color: colors.textSecondary,
-    fontSize: 14,
-  },
-  grid: {
-    padding: 14,
-  },
+  container: { flex: 1, backgroundColor: colors.bgPrimary },
+  loadingContainer: { flex: 1, backgroundColor: colors.bgPrimary, alignItems: 'center', justifyContent: 'center' },
+  header: { paddingHorizontal: 16, paddingVertical: 12 },
+  imageCount: { color: colors.textSecondary, fontSize: 14 },
+  grid: { padding: 14 },
   imageCard: {
-    width: IMAGE_SIZE,
-    height: IMAGE_SIZE,
-    margin: 2,
-    borderRadius: 8,
-    overflow: 'hidden',
-    backgroundColor: colors.cardBg,
+    width: IMAGE_SIZE, height: IMAGE_SIZE, margin: 2,
+    borderRadius: 8, overflow: 'hidden', backgroundColor: colors.cardBg,
   },
-  thumbnail: {
-    width: '100%',
-    height: '100%',
-  },
-  placeholderThumb: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.bgTertiary,
-  },
-  uploadedByBadge: {
-    position: 'absolute',
-    bottom: 4,
-    left: 4,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  uploadedByText: {
-    color: 'white',
-    fontSize: 10,
-    fontWeight: '500',
-  },
-  empty: {
-    alignItems: 'center',
-    paddingTop: 80,
-    gap: 12,
-  },
-  emptyText: {
-    color: colors.textTertiary,
-    fontSize: 15,
-  },
+  thumbnail: { width: '100%', height: '100%' },
+  placeholderThumb: { alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bgTertiary },
+  empty: { alignItems: 'center', paddingTop: 80, gap: 12 },
+  emptyText: { color: colors.textTertiary, fontSize: 15 },
   fab: {
-    position: 'absolute',
-    bottom: 24,
-    right: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    position: 'absolute', bottom: 24, right: 24, width: 56, height: 56, borderRadius: 28,
+    backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center',
+    elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8,
   },
 });

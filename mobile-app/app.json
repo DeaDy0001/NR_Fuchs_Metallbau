@@ -25,6 +25,7 @@
         "INTERNET"
       ]
     },
+    "scheme": "com.fuchsmetallbau.app",
     "plugins": [
       [
         "expo-camera",

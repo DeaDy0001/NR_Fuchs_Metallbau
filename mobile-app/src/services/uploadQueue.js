@@ -18,7 +18,7 @@ const notifyListeners = (event) => {
 
 /**
  * Process the upload queue
- * Checks network conditions and uploads queued images
+ * Checks network conditions and uploads queued images to Google Drive
  */
 export const processUploadQueue = async () => {
   if (isProcessing) return;
@@ -53,6 +53,7 @@ export const processUploadQueue = async () => {
           continue;
         }
 
+        // Upload to Google Drive inbox via api.js
         await uploadImage(
           item.file_uri,
           item.file_name,
