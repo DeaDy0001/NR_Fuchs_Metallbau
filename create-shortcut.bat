@@ -9,18 +9,7 @@ echo.
 REM Step 1: Convert PNG to ICO if needed
 if not exist "frontend\public\NR_Logo.ico" (
     echo [1/2] Erstelle Icon aus NR_Logo.png...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-        "Add-Type -AssemblyName System.Drawing; ^
-        $img = [System.Drawing.Image]::FromFile('%~dp0frontend\public\NR_Logo.png'); ^
-        $bmp = New-Object System.Drawing.Bitmap($img, 256, 256); ^
-        $icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon()); ^
-        $stream = [System.IO.File]::Create('%~dp0frontend\public\NR_Logo.ico'); ^
-        $icon.Save($stream); ^
-        $stream.Close(); ^
-        $icon.Dispose(); ^
-        $bmp.Dispose(); ^
-        $img.Dispose(); ^
-        Write-Host '[OK] Icon erstellt: frontend\public\NR_Logo.ico'"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.Drawing; $img = [System.Drawing.Image]::FromFile('%~dp0frontend\public\NR_Logo.png'); $bmp = New-Object System.Drawing.Bitmap($img, 256, 256); $icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon()); $stream = [System.IO.File]::Create('%~dp0frontend\public\NR_Logo.ico'); $icon.Save($stream); $stream.Close(); $icon.Dispose(); $bmp.Dispose(); $img.Dispose(); Write-Host '[OK] Icon erstellt: frontend\public\NR_Logo.ico'"
     if %ERRORLEVEL% NEQ 0 (
         echo [WARNUNG] Icon-Konvertierung fehlgeschlagen, Shortcut wird ohne Icon erstellt.
     )
@@ -45,11 +34,7 @@ echo.
 echo [OK] "Fuchs Metallbau.url" wurde im Projektordner erstellt.
 
 REM Step 3: Also create on desktop
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$desktop = [Environment]::GetFolderPath('Desktop'); ^
-    $content = @\"`r`n[InternetShortcut]`r`nURL=http://localhost:3001`r`nIconFile=%ICO_PATH%`r`nIconIndex=0`r`n\"@; ^
-    Set-Content -Path (Join-Path $desktop 'Fuchs Metallbau.url') -Value $content -Encoding ASCII; ^
-    Write-Host '[OK] Auch auf dem Desktop erstellt: Fuchs Metallbau.url'"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$desktop = [Environment]::GetFolderPath('Desktop'); $icoPath = '%ICO_PATH%'; $content = \"[InternetShortcut]`r`nURL=http://localhost:3001`r`nIconFile=$icoPath`r`nIconIndex=0\"; Set-Content -Path (Join-Path $desktop 'Fuchs Metallbau.url') -Value $content -Encoding ASCII; Write-Host '[OK] Auch auf dem Desktop erstellt: Fuchs Metallbau.url'"
 
 echo.
 echo ========================================
