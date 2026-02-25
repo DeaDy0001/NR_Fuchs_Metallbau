@@ -51,7 +51,7 @@ call eas whoami >nul 2>&1
 if %ERRORLEVEL% neq 0 goto :DO_LOGIN
 for /f "tokens=*" %%i in ('eas whoami 2^>nul') do set EAS_USER=%%i
 echo  [OK] Eingeloggt als: %EAS_USER%
-goto :INSTALL_DEPS
+goto :CHECK_PROJECT
 
 :DO_LOGIN
 echo.
@@ -64,24 +64,52 @@ call eas whoami >nul 2>&1
 if %ERRORLEVEL% neq 0 goto :LOGIN_FAIL
 for /f "tokens=*" %%i in ('eas whoami 2^>nul') do set EAS_USER=%%i
 echo  [OK] Eingeloggt als: %EAS_USER%
-goto :INSTALL_DEPS
+goto :CHECK_PROJECT
 
 :LOGIN_FAIL
 echo  [FEHLER] Login fehlgeschlagen. Bitte versuche es erneut.
 pause
 exit /b 1
 
-:: ── 4. Dependencies installieren ──
+:: ── 4. EAS Projekt pruefen/initialisieren ──
+:CHECK_PROJECT
+echo.
+echo  Pruefe EAS Projekt-Konfiguration...
+
+:: Prüfe ob projectId schon in app.json existiert
+findstr /c:"projectId" app.json >nul 2>&1
+if %ERRORLEVEL% equ 0 goto :PROJECT_OK
+
+:: Projekt noch nicht initialisiert
+echo.
+echo  EAS Projekt muss einmalig konfiguriert werden.
+echo  Waehle "Create a new EAS project" wenn gefragt.
+echo.
+call eas init
+if %ERRORLEVEL% neq 0 goto :PROJECT_FAIL
+echo  [OK] EAS Projekt konfiguriert
+goto :INSTALL_DEPS
+
+:PROJECT_OK
+echo  [OK] EAS Projekt bereits konfiguriert
+goto :INSTALL_DEPS
+
+:PROJECT_FAIL
+echo  [FEHLER] Projekt-Konfiguration fehlgeschlagen.
+pause
+exit /b 1
+
+:: ── 5. Dependencies installieren ──
 :INSTALL_DEPS
 echo.
 echo  [..] Installiere Abhaengigkeiten...
 call npm install --silent 2>nul
 echo  [OK] Abhaengigkeiten installiert
 
-:: ── 5. Output-Ordner ──
+:: ── 6. Output-Ordner ──
 if not exist android mkdir android
 
-:: ── 6. APK bauen ──
+:: ── 7. APK bauen ──
 echo.
 echo  ========================================
 echo   Starte APK Build in der Expo Cloud...
@@ -91,7 +119,7 @@ echo.
 
 set "BUILD_LOG=%TEMP%\eas-build-output.txt"
 
-:: Build starten und Output in Datei + auf Bildschirm zeigen
+:: Build starten - Output in Datei speichern
 call eas build -p android --profile preview --non-interactive > "%BUILD_LOG%" 2>&1
 set BUILD_EXIT=%ERRORLEVEL%
 
@@ -100,7 +128,7 @@ type "%BUILD_LOG%"
 
 if %BUILD_EXIT% neq 0 goto :BUILD_FAILED
 
-:: ── 7. Download-Link finden ──
+:: ── 8. Download-Link finden ──
 echo.
 echo  [..] Suche Download-Link...
 
@@ -122,7 +150,7 @@ set "APK_DEST=%CD%\android\app.apk"
 
 if not defined APK_URL goto :NO_URL
 
-:: ── 8. APK herunterladen ──
+:: ── 9. APK herunterladen ──
 echo  [OK] Download-Link gefunden
 echo  [..] Lade APK herunter...
 echo       %APK_URL%
@@ -130,11 +158,13 @@ echo.
 
 :: curl ist auf Windows 10/11 vorinstalliert
 curl -L -o "%APK_DEST%" "%APK_URL%" 2>nul
-if %ERRORLEVEL% neq 0 (
-    :: Fallback: PowerShell
-    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%APK_URL%' -OutFile '%APK_DEST%'" 2>nul
-)
+if not exist "%APK_DEST%" goto :TRY_POWERSHELL
+goto :CHECK_DOWNLOAD
 
+:TRY_POWERSHELL
+powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%APK_URL%' -OutFile '%APK_DEST%'" 2>nul
+
+:CHECK_DOWNLOAD
 if not exist "%APK_DEST%" goto :DOWNLOAD_FAIL
 
 for %%F in ("%APK_DEST%") do set "APK_SIZE=%%~zF"
