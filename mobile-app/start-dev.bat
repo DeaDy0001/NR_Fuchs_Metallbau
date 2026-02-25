@@ -21,13 +21,20 @@ for /f "tokens=*" %%i in ('node -v') do set NODE_VER=%%i
 echo  [OK] Node.js %NODE_VER%
 
 :: ── 2. Abhaengigkeiten installieren ──
-if not exist node_modules (
+if not exist "node_modules\expo" (
     echo  [..] Installiere Abhaengigkeiten...
     call npm install
-    if %ERRORLEVEL% neq 0 (
+    if not exist "node_modules\expo" (
+        echo.
         echo  [FEHLER] npm install fehlgeschlagen!
-        pause
-        exit /b 1
+        echo  Versuche: npm install --legacy-peer-deps
+        echo.
+        call npm install --legacy-peer-deps
+        if not exist "node_modules\expo" (
+            echo  [FEHLER] Installation fehlgeschlagen!
+            pause
+            exit /b 1
+        )
     )
     echo  [OK] Abhaengigkeiten installiert
 ) else (
