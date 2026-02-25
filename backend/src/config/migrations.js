@@ -389,6 +389,66 @@ const migrations = [
 
       console.log('✓ Migration add_project_tags_column completed');
     }
+  },
+  {
+    id: 17,
+    name: 'create_mobile_tables',
+    up: () => {
+      console.log('Running migration: create_mobile_tables');
+
+      // Mobile devices table - registered app instances
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mobile_devices (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          device_id TEXT UNIQUE NOT NULL,
+          device_name TEXT,
+          user_name TEXT NOT NULL,
+          auth_token TEXT UNIQUE NOT NULL,
+          last_seen TEXT,
+          created_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+
+      // Mobile uploads - images uploaded from app (inbox)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mobile_uploads (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          device_id TEXT NOT NULL,
+          user_name TEXT NOT NULL,
+          file_name TEXT NOT NULL,
+          original_name TEXT NOT NULL,
+          local_path TEXT NOT NULL,
+          thumbnail_path TEXT,
+          file_size INTEGER,
+          mime_type TEXT,
+          project_id INTEGER,
+          project_name TEXT,
+          status TEXT DEFAULT 'pending',
+          uploaded_at TEXT DEFAULT (datetime('now')),
+          processed_at TEXT,
+          FOREIGN KEY (device_id) REFERENCES mobile_devices(device_id) ON DELETE CASCADE
+        )
+      `);
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_mobile_uploads_device ON mobile_uploads(device_id)
+      `);
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_mobile_uploads_status ON mobile_uploads(status)
+      `);
+
+      // Pending tokens for QR code connection flow
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mobile_pending_tokens (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          token TEXT UNIQUE NOT NULL,
+          expires_at TEXT NOT NULL,
+          created_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+
+      console.log('✓ Migration create_mobile_tables completed');
+    }
   }
 ];
 

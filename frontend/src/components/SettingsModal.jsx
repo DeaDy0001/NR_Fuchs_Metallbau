@@ -1,15 +1,17 @@
 import { useState, useEffect } from 'react';
-import { X, Settings as SettingsIcon, Image, FolderKanban, Download } from 'lucide-react';
+import { X, Settings as SettingsIcon, Image, FolderKanban, Download, Smartphone } from 'lucide-react';
 import SettingsGeneral from '../pages/Settings';
 import DriveSettings from '../pages/DriveSettings';
 import ProjectsSettings from '../pages/ProjectsSettings';
 import UpdateSettings from '../pages/UpdateSettings';
+import MobileAppSettings from '../pages/MobileAppSettings';
 import './SettingsModal.css';
 
 const tabs = [
   { id: 'general', label: 'Allgemein', icon: SettingsIcon },
   { id: 'images', label: 'Bilder', icon: Image },
   { id: 'projects', label: 'Projekte', icon: FolderKanban },
+  { id: 'mobile', label: 'Handy App', icon: Smartphone },
   { id: 'update', label: 'Update', icon: Download },
 ];
 
@@ -79,6 +81,7 @@ function SettingsModal({ isOpen, onClose, initialTab, initialVersion, settings, 
             )}
             {activeTab === 'images' && <DriveSettings />}
             {activeTab === 'projects' && <ProjectsSettings />}
+            {activeTab === 'mobile' && <MobileAppSettings />}
             {activeTab === 'update' && (
               <UpdateSettings
                 onCheckForUpdates={onCheckForUpdates}
