@@ -22,6 +22,7 @@
     "expo-image-manipulator": "~14.0.0",
     "expo-image-picker": "~17.0.10",
     "expo-media-library": "~18.2.1",
+    "expo-navigation-bar": "~4.0.8",
     "expo-network": "~8.0.8",
     "expo-sqlite": "~16.0.10",
     "expo-status-bar": "~3.0.9",
