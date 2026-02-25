@@ -31,4 +31,7 @@ router.post('/update-version', systemController.triggerVersionUpdate);
 // Get all GitHub releases with release notes
 router.get('/releases', systemController.getReleases);
 
+// Get network interfaces and port info
+router.get('/network-info', systemController.getNetworkInfo);
+
 module.exports = router;

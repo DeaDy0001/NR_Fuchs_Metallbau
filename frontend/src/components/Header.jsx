@@ -1,8 +1,7 @@
 import { Menu, Settings, Download } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import './Header.css';
 
-function Header({ logoPath, sidebarCollapsed, onToggleSidebar, updateInfo }) {
+function Header({ logoPath, sidebarCollapsed, onToggleSidebar, updateInfo, onOpenSettings, onOpenUpdate }) {
   return (
     <header className="header">
       <div className="header-left">
@@ -29,18 +28,18 @@ function Header({ logoPath, sidebarCollapsed, onToggleSidebar, updateInfo }) {
 
       <div className="header-right">
         {updateInfo && updateInfo.updateAvailable && (
-          <Link
-            to={`/settings/update?version=v${updateInfo.latestVersion}`}
+          <button
             className="update-badge"
+            onClick={onOpenUpdate}
             title={`Update auf v${updateInfo.latestVersion} verfügbar`}
           >
             <Download size={14} />
             <span>v{updateInfo.latestVersion}</span>
-          </Link>
+          </button>
         )}
-        <Link to="/settings" className="icon-button" title="Einstellungen">
+        <button className="icon-button" onClick={onOpenSettings} title="Einstellungen">
           <Settings size={20} />
-        </Link>
+        </button>
       </div>
     </header>
   );

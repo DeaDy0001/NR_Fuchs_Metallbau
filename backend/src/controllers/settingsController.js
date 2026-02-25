@@ -51,7 +51,8 @@ const updateSettings = (req, res) => {
       images_view_mode,
       images_show_only_unassigned,
       images_show_all,
-      images_show_only_with_projects
+      images_show_only_with_projects,
+      mobile_server_url
     } = req.body;
 
     const updates = [];
@@ -106,6 +107,11 @@ const updateSettings = (req, res) => {
     if (images_show_only_with_projects !== undefined) {
       updates.push('images_show_only_with_projects = ?');
       values.push(images_show_only_with_projects ? 1 : 0);
+    }
+
+    if (mobile_server_url !== undefined) {
+      updates.push('mobile_server_url = ?');
+      values.push(mobile_server_url);
     }
 
     if (updates.length > 0) {

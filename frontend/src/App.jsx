@@ -1,9 +1,9 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useState, useEffect, useCallback } from 'react';
 import Layout from './components/Layout';
+import SettingsModal from './components/SettingsModal';
 import DriveImages from './pages/DriveImages';
 import ProjectsList from './pages/ProjectsList';
-import SettingsTabs from './pages/SettingsTabs';
 
 function App() {
   const [settings, setSettings] = useState({
@@ -13,6 +13,11 @@ function App() {
   });
 
   const [updateInfo, setUpdateInfo] = useState(null);
+
+  // Settings modal state
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [settingsModalTab, setSettingsModalTab] = useState('general');
+  const [settingsModalVersion, setSettingsModalVersion] = useState(null);
 
   // Memoized update check function to prevent multiple calls
   const checkForUpdates = useCallback(async () => {
@@ -94,9 +99,51 @@ function App() {
     setSettings(prev => ({ ...prev, ...newSettings }));
   };
 
+  const toggleSidebar = async () => {
+    const newCollapsed = !settings.sidebar_collapsed;
+
+    try {
+      const response = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sidebar_collapsed: newCollapsed })
+      });
+
+      if (response.ok) {
+        updateSettings({ sidebar_collapsed: newCollapsed });
+      }
+    } catch (error) {
+      console.error('Failed to update sidebar state:', error);
+    }
+  };
+
+  const handleOpenSettings = () => {
+    setSettingsModalTab('general');
+    setSettingsModalVersion(null);
+    setSettingsModalOpen(true);
+  };
+
+  const handleOpenUpdate = () => {
+    setSettingsModalTab('update');
+    setSettingsModalVersion(updateInfo ? `v${updateInfo.latestVersion}` : null);
+    setSettingsModalOpen(true);
+  };
+
+  const handleCloseSettings = () => {
+    setSettingsModalOpen(false);
+    setSettingsModalVersion(null);
+  };
+
   return (
     <Router>
-      <Layout settings={settings} updateSettings={updateSettings} updateInfo={updateInfo}>
+      <Layout
+        settings={settings}
+        updateSettings={updateSettings}
+        updateInfo={updateInfo}
+        onToggleSidebar={toggleSidebar}
+        onOpenSettings={handleOpenSettings}
+        onOpenUpdate={handleOpenUpdate}
+      >
         <Routes>
           <Route path="/" element={<Navigate to="/images" replace />} />
 
@@ -106,18 +153,23 @@ function App() {
           {/* Projekte */}
           <Route path="/projects" element={<ProjectsList />} />
 
-          {/* Einstellungen mit Tabs */}
-          <Route path="/settings/general" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} onCheckForUpdates={checkForUpdates} />} />
-          <Route path="/settings/images" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} onCheckForUpdates={checkForUpdates} />} />
-          <Route path="/settings/projects" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} onCheckForUpdates={checkForUpdates} />} />
-          <Route path="/settings/update" element={<SettingsTabs settings={settings} updateSettings={updateSettings} onSettingsChange={loadSettings} onCheckForUpdates={checkForUpdates} />} />
-
           {/* Redirect old routes */}
           <Route path="/drive/images" element={<Navigate to="/images" replace />} />
           <Route path="/projects/list" element={<Navigate to="/projects" replace />} />
-          <Route path="/settings" element={<Navigate to="/settings/general" replace />} />
+          <Route path="/settings/*" element={<Navigate to="/images" replace />} />
         </Routes>
       </Layout>
+
+      <SettingsModal
+        isOpen={settingsModalOpen}
+        onClose={handleCloseSettings}
+        initialTab={settingsModalTab}
+        initialVersion={settingsModalVersion}
+        settings={settings}
+        updateSettings={updateSettings}
+        onSettingsChange={loadSettings}
+        onCheckForUpdates={checkForUpdates}
+      />
     </Router>
   );
 }

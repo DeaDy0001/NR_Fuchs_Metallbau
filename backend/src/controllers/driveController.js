@@ -2,7 +2,7 @@ const db = require('../config/database');
 const path = require('path');
 const fs = require('fs-extra');
 const { syncDrivePath, startAutoSync, stopAutoSync } = require('../services/driveSyncService');
-const { deleteFile } = require('../services/googleDriveService');
+const { deleteFile, compressImage, generateThumbnail } = require('../services/googleDriveService');
 
 // Get drive settings (all configured paths)
 const getDriveSettings = (req, res) => {
@@ -899,6 +899,132 @@ const unassignImageFromProject = async (req, res) => {
   }
 };
 
+/**
+ * Bulk convert images to a specific format
+ * Supports: drive images only, project images only, or all
+ */
+const bulkConvertImages = async (req, res) => {
+  const { scope, format, quality, maxWidth, maxHeight } = req.body;
+
+  if (!scope || !format) {
+    return res.status(400).json({ error: 'Scope und Format sind erforderlich' });
+  }
+
+  if (!['drive', 'projects', 'all'].includes(scope)) {
+    return res.status(400).json({ error: 'Ungültiger Scope (drive, projects, all)' });
+  }
+
+  if (!['webp', 'jpeg', 'png'].includes(format)) {
+    return res.status(400).json({ error: 'Ungültiges Format (webp, jpeg, png)' });
+  }
+
+  // Respond immediately, process in background
+  res.json({ success: true, message: 'Konvertierung wurde gestartet' });
+
+  const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif'];
+  const uploadsRoot = path.join(__dirname, '../../../uploads');
+  let converted = 0;
+  let skipped = 0;
+  let errors = 0;
+
+  const convertFile = async (filePath) => {
+    try {
+      const ext = path.extname(filePath).toLowerCase();
+      if (!imageExtensions.includes(ext)) {
+        skipped++;
+        return;
+      }
+
+      // Skip if already in target format
+      const targetExt = `.${format === 'jpeg' ? 'jpg' : format}`;
+      if (ext === targetExt || (ext === '.jpg' && format === 'jpeg') || (ext === '.jpeg' && format === 'jpeg')) {
+        skipped++;
+        return;
+      }
+
+      const dir = path.dirname(filePath);
+      const baseName = path.basename(filePath, ext);
+      const outputPath = path.join(dir, `${baseName}.${format === 'jpeg' ? 'jpg' : format}`);
+
+      await compressImage(filePath, outputPath, {
+        format,
+        quality: quality || 85,
+        maxWidth: maxWidth || null,
+        maxHeight: maxHeight || null
+      });
+
+      // Remove original file if the output is a different file
+      if (filePath !== outputPath) {
+        await fs.remove(filePath);
+      }
+
+      // Regenerate thumbnail
+      const thumbnailDir = path.join(uploadsRoot, 'thumbnails');
+      const thumbName = `${baseName}.${format === 'jpeg' ? 'jpg' : format}`;
+      const thumbnailPath = path.join(thumbnailDir, thumbName);
+      try {
+        await generateThumbnail(outputPath, thumbnailPath);
+      } catch (e) {
+        // Non-critical, don't fail the whole operation
+      }
+
+      // Update database entry if it's a tracked drive image
+      try {
+        const relativePath = '/' + path.relative(path.join(__dirname, '../../..'), filePath).replace(/\\/g, '/');
+        const newRelativePath = '/' + path.relative(path.join(__dirname, '../../..'), outputPath).replace(/\\/g, '/');
+        const newThumbnailPath = '/uploads/thumbnails/' + thumbName;
+        const stats = await fs.stat(outputPath);
+
+        db.prepare(
+          'UPDATE drive_images SET local_path = ?, thumbnail_url = ?, file_size = ?, is_compressed = 1 WHERE local_path = ?'
+        ).run(newRelativePath, newThumbnailPath, stats.size, relativePath);
+      } catch (e) {
+        // Image may not be in DB (e.g. project images), that's fine
+      }
+
+      converted++;
+    } catch (err) {
+      console.error(`Fehler bei Konvertierung von ${filePath}:`, err.message);
+      errors++;
+    }
+  };
+
+  const processDirectory = async (dirPath) => {
+    if (!await fs.pathExists(dirPath)) return;
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        await processDirectory(fullPath);
+      } else {
+        await convertFile(fullPath);
+      }
+    }
+  };
+
+  try {
+    // Process drive images
+    if (scope === 'drive' || scope === 'all') {
+      const driveDir = path.join(uploadsRoot, 'drive');
+      console.log(`🔄 Bulk-Konvertierung: Drive-Bilder → ${format.toUpperCase()}`);
+      await processDirectory(driveDir);
+    }
+
+    // Process project images
+    if (scope === 'projects' || scope === 'all') {
+      const projectSettings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+      if (projectSettings && projectSettings.project_path) {
+        console.log(`🔄 Bulk-Konvertierung: Projekt-Bilder → ${format.toUpperCase()}`);
+        await processDirectory(projectSettings.project_path);
+      }
+    }
+
+    console.log(`✅ Bulk-Konvertierung abgeschlossen: ${converted} konvertiert, ${skipped} übersprungen, ${errors} Fehler`);
+  } catch (err) {
+    console.error('❌ Bulk-Konvertierung fehlgeschlagen:', err.message);
+  }
+};
+
 module.exports = {
   getDriveSettings,
   addDrivePath,
@@ -911,5 +1037,6 @@ module.exports = {
   syncDrive,
   refreshImages,
   assignImageToProject,
-  unassignImageFromProject
+  unassignImageFromProject,
+  bulkConvertImages
 };

@@ -25,6 +25,7 @@ app.use('/api/color-presets', require('./routes/colorPresets'));
 app.use('/api/system', require('./routes/system'));
 app.use('/api/github', require('./routes/github'));
 app.use('/api/tags', require('./routes/tags'));
+app.use('/api/mobile', require('./routes/mobile'));
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -55,7 +56,9 @@ const initDirectories = async () => {
     path.join(__dirname, '../../uploads'),
     path.join(__dirname, '../../uploads/thumbnails'),
     path.join(__dirname, '../../uploads/logos'),
-    path.join(__dirname, '../../uploads/drive')
+    path.join(__dirname, '../../uploads/drive'),
+    path.join(__dirname, '../../uploads/mobile'),
+    path.join(__dirname, '../../uploads/mobile-temp')
   ];
 
   for (const dir of dirs) {
