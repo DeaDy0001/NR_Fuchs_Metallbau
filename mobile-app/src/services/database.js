@@ -4,8 +4,16 @@ let db = null;
 
 export const getDb = async () => {
   if (!db) {
-    db = await SQLite.openDatabaseAsync('fuchs_metallbau_app.db');
-    await initTables();
+    console.log('[Fuchs] Database: opening...');
+    try {
+      db = await SQLite.openDatabaseAsync('fuchs_metallbau_app.db');
+      console.log('[Fuchs] Database: opened, creating tables...');
+      await initTables();
+      console.log('[Fuchs] Database: ready');
+    } catch (error) {
+      console.error('[Fuchs] Database FEHLER:', error?.message, error?.stack);
+      throw error;
+    }
   }
   return db;
 };

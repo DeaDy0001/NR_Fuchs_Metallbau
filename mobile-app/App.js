@@ -1,27 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
-import { View, ActivityIndicator, LogBox } from 'react-native';
+import { View, ActivityIndicator, Text } from 'react-native';
 import { AppProvider, useApp } from './src/contexts/AppContext';
 import { colors } from './src/theme/colors';
 import ErrorBoundary from './src/components/ErrorBoundary';
-
-// Global error logging for debugging
-const originalConsoleError = console.error;
-console.error = (...args) => {
-  originalConsoleError('[Fuchs App Error]', ...args);
-};
-
-if (__DEV__) {
-  const originalHandler = ErrorUtils.getGlobalHandler();
-  ErrorUtils.setGlobalHandler((error, isFatal) => {
-    console.error('GLOBAL ERROR:', isFatal ? 'FATAL' : 'non-fatal', error?.message, error?.stack);
-    originalHandler(error, isFatal);
-  });
-}
 
 // Screens
 import ConnectScreen from './src/screens/ConnectScreen';
@@ -32,6 +18,9 @@ import ProjectDetailScreen from './src/screens/ProjectDetailScreen';
 import ImageViewScreen from './src/screens/ImageViewScreen';
 import UploadQueueScreen from './src/screens/UploadQueueScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
+
+// Debug logging - all console.log appear in Metro terminal
+console.log('[Fuchs] App.js module loaded');
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -97,6 +86,8 @@ function MainTabs() {
 function AppNavigator() {
   const { isConnected, isLoading } = useApp();
 
+  console.log('[Fuchs] AppNavigator render - isLoading:', isLoading, 'isConnected:', isConnected);
+
   if (isLoading) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.bgPrimary, alignItems: 'center', justifyContent: 'center' }}>
@@ -149,6 +140,8 @@ function AppNavigator() {
 }
 
 export default function App() {
+  console.log('[Fuchs] App component rendering');
+
   return (
     <ErrorBoundary>
       <AppProvider>

@@ -8,6 +8,7 @@ const AppContext = createContext(null);
 export const useApp = () => useContext(AppContext);
 
 export const AppProvider = ({ children }) => {
+  console.log('[Fuchs] AppProvider mounting');
   const [isConnected, setIsConnected] = useState(false);
   const [serverUrl, setServerUrl] = useState(null);
   const [userName, setUserName] = useState('');
@@ -16,6 +17,7 @@ export const AppProvider = ({ children }) => {
 
   // Load saved state
   useEffect(() => {
+    console.log('[Fuchs] AppProvider useEffect - calling loadState');
     loadState();
   }, []);
 
@@ -40,8 +42,11 @@ export const AppProvider = ({ children }) => {
 
   const loadState = async () => {
     try {
+      console.log('[Fuchs] loadState - opening database...');
       const url = await getSetting('serverUrl');
+      console.log('[Fuchs] loadState - serverUrl:', url ? 'set' : 'empty');
       const token = await getSetting('authToken');
+      console.log('[Fuchs] loadState - token:', token ? 'set' : 'empty');
       const name = await getSetting('userName', '');
 
       setServerUrl(url);
@@ -55,8 +60,9 @@ export const AppProvider = ({ children }) => {
       const count = await getUploadQueueCount();
       setQueueCount(count);
     } catch (error) {
-      console.error('Failed to load app state:', error);
+      console.error('[Fuchs] FEHLER in loadState:', error?.message, error?.stack);
     } finally {
+      console.log('[Fuchs] loadState fertig - isLoading wird false');
       setIsLoading(false);
     }
   };
