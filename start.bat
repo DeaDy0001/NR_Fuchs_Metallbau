@@ -25,9 +25,10 @@ if %ERRORLEVEL% NEQ 0 (
     echo %ESC%[96m  OPTION 2 - Download von der Webseite:%ESC%[0m
     echo %ESC%[97m    Lade Node.js herunter von: %ESC%[92mhttps://nodejs.org/%ESC%[0m
     echo.
-    echo %ESC%[93m  WICHTIG bei der Installation:%ESC%[0m
-    echo %ESC%[97m    Setze den Haken bei%ESC%[0m
-    echo %ESC%[92m    "Automatically install the necessary tools"%ESC%[0m
+    echo %ESC%[93m  HINWEIS zur Installation:%ESC%[0m
+    echo %ESC%[97m    Den Haken bei "Automatically install the necessary tools"%ESC%[0m
+    echo %ESC%[97m    kannst du %ESC%[92mweglassen%ESC%[97m - wird fuer diese App nicht benoetigt%ESC%[0m
+    echo %ESC%[97m    und spart viel Zeit und Speicherplatz.%ESC%[0m
     echo.
     echo %ESC%[91m  Nach der Installation bitte start.bat erneut ausfuehren!%ESC%[0m
     echo.
