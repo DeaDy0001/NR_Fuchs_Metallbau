@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { View, ActivityIndicator } from 'react-native';
 import { AppProvider, useApp } from './src/contexts/AppContext';
 import { colors } from './src/theme/colors';
+import ErrorBoundary from './src/components/ErrorBoundary';
 
 // Screens
 import ConnectScreen from './src/screens/ConnectScreen';
@@ -135,23 +136,25 @@ function AppNavigator() {
 
 export default function App() {
   return (
-    <AppProvider>
-      <NavigationContainer
-        theme={{
-          dark: true,
-          colors: {
-            primary: colors.accent,
-            background: colors.bgPrimary,
-            card: colors.bgSecondary,
-            text: colors.textPrimary,
-            border: colors.border,
-            notification: colors.warning,
-          },
-        }}
-      >
-        <StatusBar style="light" />
-        <AppNavigator />
-      </NavigationContainer>
-    </AppProvider>
+    <ErrorBoundary>
+      <AppProvider>
+        <NavigationContainer
+          theme={{
+            dark: true,
+            colors: {
+              primary: colors.accent,
+              background: colors.bgPrimary,
+              card: colors.bgSecondary,
+              text: colors.textPrimary,
+              border: colors.border,
+              notification: colors.warning,
+            },
+          }}
+        >
+          <StatusBar style="light" />
+          <AppNavigator />
+        </NavigationContainer>
+      </AppProvider>
+    </ErrorBoundary>
   );
 }
