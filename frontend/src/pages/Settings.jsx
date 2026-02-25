@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react';
-import { Upload, Trash2 } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Upload, Trash2, Network, Copy, Check } from 'lucide-react';
 import './Settings.css';
 
 function Settings({ settings, updateSettings, onSettingsChange }) {
@@ -7,8 +7,36 @@ function Settings({ settings, updateSettings, onSettingsChange }) {
   const [uploadingFavicon, setUploadingFavicon] = useState(false);
   const [companyName, setCompanyName] = useState(settings.company_name || 'Fuchs Metallbau');
   const [primaryColor, setPrimaryColor] = useState(settings.primary_color || '#3b82f6');
+  const [networkInfo, setNetworkInfo] = useState(null);
+  const [copiedUrl, setCopiedUrl] = useState(null);
   const fileInputRef = useRef(null);
   const faviconInputRef = useRef(null);
+
+  useEffect(() => {
+    loadNetworkInfo();
+  }, []);
+
+  const loadNetworkInfo = async () => {
+    try {
+      const response = await fetch('/api/system/network-info');
+      if (response.ok) {
+        const data = await response.json();
+        setNetworkInfo(data);
+      }
+    } catch (error) {
+      console.error('Error loading network info:', error);
+    }
+  };
+
+  const copyToClipboard = async (url) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedUrl(url);
+      setTimeout(() => setCopiedUrl(null), 2000);
+    } catch (error) {
+      console.error('Error copying to clipboard:', error);
+    }
+  };
 
   const handleLogoUpload = async (e) => {
     const file = e.target.files[0];
@@ -322,6 +350,38 @@ function Settings({ settings, updateSettings, onSettingsChange }) {
             Dark Mode aktiv
           </div>
         </div>
+      </div>
+
+      <div className="settings-section">
+        <h2>
+          <Network size={20} style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />
+          Netzwerk-Zugriff
+        </h2>
+        <p className="section-description">
+          Über folgende Adressen ist dieser Server erreichbar. Teile eine Adresse mit anderen Geräten im selben Netzwerk, um darauf zuzugreifen.
+        </p>
+        {networkInfo ? (
+          <div className="network-list">
+            {networkInfo.addresses.map((entry, i) => (
+              <div key={i} className="network-item">
+                <div className="network-item-info">
+                  <span className="network-item-name">{entry.name}</span>
+                  <span className="network-item-url">{entry.url}</span>
+                </div>
+                <button
+                  className="btn-copy"
+                  onClick={() => copyToClipboard(entry.url)}
+                  title="In Zwischenablage kopieren"
+                >
+                  {copiedUrl === entry.url ? <Check size={16} /> : <Copy size={16} />}
+                  {copiedUrl === entry.url ? 'Kopiert' : 'Kopieren'}
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="section-description" style={{ marginBottom: 0 }}>Lade Netzwerk-Informationen...</p>
+        )}
       </div>
     </div>
   );

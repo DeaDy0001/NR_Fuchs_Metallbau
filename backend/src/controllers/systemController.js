@@ -797,6 +797,44 @@ const getReleases = async (req, res) => {
   }
 };
 
+/**
+ * Get network interfaces and port info
+ * Returns all non-internal IPv4 addresses the server is reachable on
+ */
+const getNetworkInfo = (req, res) => {
+  try {
+    const port = process.env.PORT || 3001;
+    const interfaces = os.networkInterfaces();
+    const addresses = [];
+
+    for (const [name, nets] of Object.entries(interfaces)) {
+      for (const net of nets) {
+        // Skip internal (loopback) and non-IPv4
+        if (net.internal) continue;
+        if (net.family !== 'IPv4' && net.family !== 4) continue;
+
+        addresses.push({
+          name,
+          address: net.address,
+          url: `http://${net.address}:${port}`
+        });
+      }
+    }
+
+    // Add localhost
+    addresses.unshift({
+      name: 'Localhost',
+      address: '127.0.0.1',
+      url: `http://localhost:${port}`
+    });
+
+    res.json({ port, addresses });
+  } catch (error) {
+    console.error('Error getting network info:', error);
+    res.status(500).json({ error: 'Fehler beim Laden der Netzwerk-Informationen' });
+  }
+};
+
 module.exports = {
   getLatestVersion,
   triggerUpdate,
@@ -805,5 +843,6 @@ module.exports = {
   getGitInfo,
   getTags,
   getBranches,
-  getReleases
+  getReleases,
+  getNetworkInfo
 };
