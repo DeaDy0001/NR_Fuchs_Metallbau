@@ -71,10 +71,11 @@
   padding: 0.35rem 0.75rem;
   background: #10b981;
   color: white;
+  border: none;
   border-radius: 999px;
   font-size: 0.8rem;
   font-weight: 600;
-  text-decoration: none;
+  cursor: pointer;
   transition: all 0.2s;
   animation: badge-pulse 2s ease-in-out 3;
   white-space: nowrap;

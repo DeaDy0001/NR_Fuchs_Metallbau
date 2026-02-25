@@ -1,6 +1,5 @@
-import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Image, FolderKanban, Settings, ChevronDown, ChevronRight } from 'lucide-react';
+import { Image, FolderKanban } from 'lucide-react';
 import './Sidebar.css';
 
 const menuItems = [
@@ -15,56 +14,14 @@ const menuItems = [
     label: 'Projekte',
     icon: FolderKanban,
     path: '/projects'
-  },
-  {
-    id: 'settings',
-    label: 'Einstellungen',
-    icon: Settings,
-    path: '/settings/general',
-    subItems: [
-      { id: 'settings-general', label: 'Allgemein', path: '/settings/general' },
-      { id: 'settings-images', label: 'Bilder', path: '/settings/images' },
-      { id: 'settings-projects', label: 'Projekte', path: '/settings/projects' },
-      { id: 'settings-update', label: 'Update', path: '/settings/update' }
-    ]
   }
 ];
 
 function Sidebar({ collapsed }) {
   const location = useLocation();
 
-  // Check if we're on a settings page
-  const isOnSettingsPage = location.pathname.startsWith('/settings');
-
-  // Only expand settings if we're on a settings page
-  const [expandedItems, setExpandedItems] = useState(
-    isOnSettingsPage ? ['settings'] : []
-  );
-
-  const toggleExpand = (itemId) => {
-    setExpandedItems(prev =>
-      prev.includes(itemId)
-        ? prev.filter(id => id !== itemId)
-        : [...prev, itemId]
-    );
-  };
-
-  // Auto-expand settings when navigating to a settings page
-  useEffect(() => {
-    if (isOnSettingsPage && !expandedItems.includes('settings')) {
-      setExpandedItems(prev => [...prev, 'settings']);
-    } else if (!isOnSettingsPage && expandedItems.includes('settings')) {
-      setExpandedItems(prev => prev.filter(id => id !== 'settings'));
-    }
-  }, [isOnSettingsPage]);
-
   const isActive = (path) => {
     return location.pathname === path;
-  };
-
-  const isParentActive = (item) => {
-    if (item.path) return isActive(item.path);
-    return item.subItems?.some(sub => isActive(sub.path));
   };
 
   return (
@@ -72,85 +29,18 @@ function Sidebar({ collapsed }) {
       <nav className="sidebar-nav">
         {menuItems.map(item => {
           const Icon = item.icon;
-          const hasSubItems = item.subItems && item.subItems.length > 0;
-          const isExpanded = expandedItems.includes(item.id);
-          const isItemActive = isParentActive(item);
-
-          if (!hasSubItems) {
-            // Simple menu item without sub-items
-            return (
-              <Link
-                key={item.id}
-                to={item.path}
-                className={`menu-item ${isItemActive ? 'active' : ''}`}
-                title={collapsed ? item.label : ''}
-              >
-                <div className="menu-item-content">
-                  <Icon size={20} />
-                  {!collapsed && <span className="menu-item-label">{item.label}</span>}
-                </div>
-              </Link>
-            );
-          }
-
-          // Menu item with sub-items
           return (
-            <div key={item.id} className="menu-group">
-              <Link
-                to={item.path}
-                className={`menu-item ${isItemActive ? 'active' : ''}`}
-                title={collapsed ? item.label : ''}
-              >
-                <div className="menu-item-content">
-                  <Icon size={20} />
-                  {!collapsed && (
-                    <>
-                      <span className="menu-item-label">{item.label}</span>
-                      <button
-                        className="menu-item-expand-btn"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          toggleExpand(item.id);
-                        }}
-                      >
-                        {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      </button>
-                    </>
-                  )}
-                </div>
-              </Link>
-
-              {/* Sub-items */}
-              {!collapsed && isExpanded && (
-                <div className="sub-menu">
-                  {item.subItems.map(subItem => (
-                    <Link
-                      key={subItem.id}
-                      to={subItem.path}
-                      className={`sub-menu-item ${isActive(subItem.path) ? 'active' : ''}`}
-                    >
-                      <span>{subItem.label}</span>
-                    </Link>
-                  ))}
-                </div>
-              )}
-
-              {/* Collapsed sub-items as tooltip */}
-              {collapsed && (
-                <div className="collapsed-submenu">
-                  {item.subItems.map(subItem => (
-                    <Link
-                      key={subItem.id}
-                      to={subItem.path}
-                      className={`collapsed-submenu-item ${isActive(subItem.path) ? 'active' : ''}`}
-                    >
-                      {subItem.label}
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </div>
+            <Link
+              key={item.id}
+              to={item.path}
+              className={`menu-item ${isActive(item.path) ? 'active' : ''}`}
+              title={collapsed ? item.label : ''}
+            >
+              <div className="menu-item-content">
+                <Icon size={20} />
+                {!collapsed && <span className="menu-item-label">{item.label}</span>}
+              </div>
+            </Link>
           );
         })}
       </nav>

@@ -1,11 +1,9 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { Download, RefreshCw, AlertCircle, GitBranch, Lock, Tag, ChevronDown, Key, CheckCircle, FileText, Calendar, ExternalLink } from 'lucide-react';
 import GitHubTokenModal from '../components/GitHubTokenModal';
 import './UpdateSettings.css';
 
-function UpdateSettings({ onCheckForUpdates }) {
-  const [searchParams] = useSearchParams();
+function UpdateSettings({ onCheckForUpdates, initialVersion }) {
   const [gitInfo, setGitInfo] = useState(null);
   const [updating, setUpdating] = useState(false);
   const [error, setError] = useState('');
@@ -77,12 +75,19 @@ function UpdateSettings({ onCheckForUpdates }) {
         setTags(data.tags);
         setCurrentVersion(data.currentVersion);
 
-        // Auto-select version from URL parameter (e.g. ?version=v1.0.3)
-        const versionParam = searchParams.get('version');
-        if (versionParam) {
-          const matchingTag = data.tags.find(t => t.name === versionParam);
+        // Auto-select version from prop (e.g. when opened from update badge)
+        if (initialVersion) {
+          const matchingTag = data.tags.find(t => t.name === initialVersion);
           if (matchingTag) {
             setSelectedTag(matchingTag.name);
+          }
+        } else if (data.currentVersion) {
+          // Pre-select the current version in the dropdown
+          const currentTag = data.tags.find(t =>
+            t.name === `v${data.currentVersion}` || t.name === data.currentVersion
+          );
+          if (currentTag) {
+            setSelectedTag(currentTag.name);
           }
         }
       }
