@@ -584,11 +584,97 @@
 }
 
 /* ==========================================
+   BULK CONVERT
+   ========================================== */
+.bulk-convert-form {
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.bulk-section {
+  padding: 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.bulk-section:last-of-type {
+  border-bottom: none;
+}
+
+.scope-selector {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+}
+
+.scope-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.75rem 0.5rem;
+  background: var(--bg-primary);
+  border: 2px solid var(--border-color);
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+}
+
+.scope-option:hover {
+  border-color: var(--accent-primary);
+  background: var(--bg-hover);
+}
+
+.scope-option.active {
+  border-color: var(--accent-primary);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.scope-option-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.scope-option-desc {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+}
+
+.scope-option.active .scope-option-label {
+  color: var(--accent-primary);
+}
+
+.scope-option.active .scope-option-desc {
+  color: var(--accent-primary);
+  opacity: 0.8;
+}
+
+.bulk-convert-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+}
+
+.bulk-convert-actions .btn {
+  align-self: flex-start;
+}
+
+/* ==========================================
    RESPONSIVE
    ========================================== */
 @media (max-width: 768px) {
   .format-selector {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .scope-selector {
+    grid-template-columns: 1fr;
   }
 
   .form-row-inline {
@@ -617,6 +703,10 @@
 @media (max-width: 480px) {
   .format-selector {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .scope-selector {
+    grid-template-columns: 1fr;
   }
 
   .toggle-row {

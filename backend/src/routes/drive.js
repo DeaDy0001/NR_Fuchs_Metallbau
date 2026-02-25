@@ -18,4 +18,7 @@ router.post('/images/refresh', driveController.refreshImages);
 router.post('/images/assign-to-project', driveController.assignImageToProject);
 router.post('/images/unassign-from-project', driveController.unassignImageFromProject);
 
+// Bulk convert images
+router.post('/convert-bulk', driveController.bulkConvertImages);
+
 module.exports = router;

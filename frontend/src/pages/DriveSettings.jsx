@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Trash2, Save, Edit2, RefreshCw, Image, AlertCircle, Clock, CheckCircle, XCircle } from 'lucide-react';
+import { Plus, Trash2, Save, Edit2, RefreshCw, Image, AlertCircle, Clock, CheckCircle, XCircle, Wand2 } from 'lucide-react';
 import AuthStatus from '../components/AuthStatus';
 import './DriveSettings.css';
 
@@ -23,6 +23,14 @@ function DriveSettings() {
   const [editForm, setEditForm] = useState(null);
   const [syncingPaths, setSyncingPaths] = useState({});
   const [notification, setNotification] = useState(null);
+
+  // Bulk conversion state
+  const [bulkScope, setBulkScope] = useState('all');
+  const [bulkFormat, setBulkFormat] = useState('webp');
+  const [bulkQuality, setBulkQuality] = useState(85);
+  const [bulkMaxWidth, setBulkMaxWidth] = useState('');
+  const [bulkMaxHeight, setBulkMaxHeight] = useState('');
+  const [bulkConverting, setBulkConverting] = useState(false);
 
   useEffect(() => {
     loadPaths();
@@ -234,6 +242,54 @@ function DriveSettings() {
     { value: 'jpeg', label: 'JPEG', desc: 'Universell kompatibel' },
     { value: 'png', label: 'PNG', desc: 'Verlustfrei' }
   ];
+
+  const bulkFormatOptions = [
+    { value: 'webp', label: 'WebP', desc: 'Beste Komprimierung' },
+    { value: 'jpeg', label: 'JPEG', desc: 'Universell kompatibel' },
+    { value: 'png', label: 'PNG', desc: 'Verlustfrei' }
+  ];
+
+  const scopeOptions = [
+    { value: 'all', label: 'Alle Bilder', desc: 'Drive + Projekte' },
+    { value: 'drive', label: 'Nur Drive', desc: 'Heruntergeladene Bilder' },
+    { value: 'projects', label: 'Nur Projekte', desc: 'Projekt-Ordner' }
+  ];
+
+  const handleBulkConvert = async () => {
+    const scopeLabels = { all: 'ALLE Bilder', drive: 'alle Drive-Bilder', projects: 'alle Projekt-Bilder' };
+    if (!window.confirm(
+      `Achtung: ${scopeLabels[bulkScope]} werden unwiderruflich in ${bulkFormat.toUpperCase()} konvertiert. ` +
+      `Die Originaldateien werden dabei ersetzt.\n\nFortfahren?`
+    )) {
+      return;
+    }
+
+    setBulkConverting(true);
+    try {
+      const response = await fetch('/api/drive/convert-bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scope: bulkScope,
+          format: bulkFormat,
+          quality: bulkQuality,
+          maxWidth: bulkMaxWidth ? parseInt(bulkMaxWidth) : null,
+          maxHeight: bulkMaxHeight ? parseInt(bulkMaxHeight) : null
+        })
+      });
+
+      if (response.ok) {
+        showNotification('Konvertierung wurde gestartet. Dies kann je nach Anzahl der Bilder einige Minuten dauern.');
+      } else {
+        showNotification('Fehler beim Starten der Konvertierung', 'error');
+      }
+    } catch (error) {
+      console.error('Error starting bulk conversion:', error);
+      showNotification('Fehler beim Starten der Konvertierung', 'error');
+    } finally {
+      setBulkConverting(false);
+    }
+  };
 
   const PathForm = ({ formData, setFormData, onSubmit, onCancel, isEdit = false }) => (
     <div className="path-form">
@@ -519,6 +575,124 @@ function DriveSettings() {
               </div>
             ))
           )}
+        </div>
+      </div>
+
+      {/* Bulk Conversion */}
+      <div className="settings-section">
+        <h2>
+          <Wand2 size={20} style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />
+          Bilder konvertieren
+        </h2>
+        <p className="section-description">
+          Konvertiere alle bestehenden Bilder auf einmal in ein anderes Format. Die Originaldateien werden dabei ersetzt. Dies ist eine einmalige Aktion.
+        </p>
+
+        <div className="bulk-convert-form">
+          {/* Scope */}
+          <div className="bulk-section">
+            <div className="form-section-title">Welche Bilder?</div>
+            <div className="scope-selector">
+              {scopeOptions.map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`scope-option ${bulkScope === opt.value ? 'active' : ''}`}
+                  onClick={() => setBulkScope(opt.value)}
+                >
+                  <span className="scope-option-label">{opt.label}</span>
+                  <span className="scope-option-desc">{opt.desc}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Format */}
+          <div className="bulk-section">
+            <div className="form-section-title">Zielformat</div>
+            <div className="format-selector">
+              {bulkFormatOptions.map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`format-option ${bulkFormat === opt.value ? 'active' : ''}`}
+                  onClick={() => setBulkFormat(opt.value)}
+                >
+                  <span className="format-option-label">{opt.label}</span>
+                  <span className="format-option-desc">{opt.desc}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Quality & Size */}
+          <div className="bulk-section">
+            <div className="form-section-title">Komprimierung</div>
+            <div className="form-group">
+              <label className="form-label">
+                Qualität: <strong>{bulkQuality}%</strong>
+              </label>
+              <div className="slider-container">
+                <span className="slider-label">Klein</span>
+                <input
+                  type="range"
+                  min="10"
+                  max="100"
+                  value={bulkQuality}
+                  onChange={(e) => setBulkQuality(parseInt(e.target.value))}
+                  className="slider"
+                />
+                <span className="slider-label">Original</span>
+              </div>
+            </div>
+
+            <div className="form-row-inline" style={{ marginTop: '0.75rem' }}>
+              <div className="form-group">
+                <label className="form-label">Max. Breite (px)</label>
+                <input
+                  type="number"
+                  placeholder="z.B. 1920 (leer = keine)"
+                  value={bulkMaxWidth}
+                  onChange={(e) => setBulkMaxWidth(e.target.value)}
+                  className="input"
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Max. Höhe (px)</label>
+                <input
+                  type="number"
+                  placeholder="z.B. 1080 (leer = keine)"
+                  value={bulkMaxHeight}
+                  onChange={(e) => setBulkMaxHeight(e.target.value)}
+                  className="input"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="bulk-convert-actions">
+            <div className="warning-text">
+              <AlertCircle size={14} />
+              Originaldateien werden unwiderruflich ersetzt. Bilder, die bereits im Zielformat vorliegen, werden übersprungen.
+            </div>
+            <button
+              className="btn btn-primary"
+              onClick={handleBulkConvert}
+              disabled={bulkConverting}
+            >
+              {bulkConverting ? (
+                <>
+                  <RefreshCw size={16} className="spinning" />
+                  Wird gestartet...
+                </>
+              ) : (
+                <>
+                  <Wand2 size={16} />
+                  Jetzt konvertieren
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
