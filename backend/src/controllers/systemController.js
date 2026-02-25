@@ -2,37 +2,94 @@ const axios = require('axios');
 const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs-extra');
+const os = require('os');
+const db = require('../config/database');
 
 // GitHub repository info
 const GITHUB_OWNER = 'DeaDy0001';
 const GITHUB_REPO = 'NR_Fuchs_Metallbau';
 
+// Check once at startup if git is available
+let gitAvailable = false;
+try {
+  execSync('git --version', { stdio: ['pipe', 'pipe', 'pipe'] });
+  gitAvailable = true;
+  console.log('✅ Git ist verfügbar');
+} catch (e) {
+  console.log('⚠️  Git ist nicht installiert. Update-System verwendet GitHub API als Fallback.');
+}
+
+/**
+ * Get GitHub API headers including auth token if configured
+ */
+const getGithubHeaders = () => {
+  const headers = {
+    'Accept': 'application/vnd.github.v3+json',
+    'User-Agent': 'Fuchs-Metallbau-App'
+  };
+
+  // Try to get token from database
+  try {
+    const setting = db.prepare('SELECT github_token FROM settings WHERE id = 1').get();
+    if (setting && setting.github_token) {
+      headers['Authorization'] = `token ${setting.github_token}`;
+    }
+  } catch (e) {
+    // DB not ready yet or no token configured
+  }
+
+  // Fallback: try environment variable
+  if (!headers['Authorization'] && process.env.GITHUB_TOKEN) {
+    headers['Authorization'] = `token ${process.env.GITHUB_TOKEN}`;
+  }
+
+  return headers;
+};
+
+// Cache version to avoid repeated console logs
+let cachedVersion = null;
+
 /**
  * Get current version
  * Tries to get version from Git tag first (if on a tag)
- * Falls back to package.json if not on a tag
+ * Falls back to package.json if not on a tag or git unavailable
  */
 const getCurrentVersion = () => {
+  if (cachedVersion) return cachedVersion;
+
   const projectRoot = path.join(__dirname, '../../..');
 
-  try {
-    // Try to get exact tag if we're on one
-    const currentTag = execSync('git describe --tags --exact-match', {
-      cwd: projectRoot,
-      stdio: ['pipe', 'pipe', 'pipe'] // Suppress stderr
-    }).toString().trim();
+  if (gitAvailable) {
+    try {
+      const currentTag = execSync('git describe --tags --exact-match', {
+        cwd: projectRoot,
+        stdio: ['pipe', 'pipe', 'pipe']
+      }).toString().trim();
 
-    // Extract version from tag (remove 'v' prefix if exists)
-    const versionFromTag = currentTag.replace(/^v/, '');
-    console.log(`📌 On tag: ${currentTag} → Version: ${versionFromTag}`);
-    return versionFromTag;
-  } catch (e) {
-    // Not on a tag, fall back to package.json
-    const packagePath = path.join(__dirname, '../../package.json');
-    const packageJson = require(packagePath);
-    console.log(`📦 Not on tag, using package.json version: ${packageJson.version}`);
-    return packageJson.version;
+      const versionFromTag = currentTag.replace(/^v/, '');
+      console.log(`📌 On tag: ${currentTag} → Version: ${versionFromTag}`);
+      cachedVersion = versionFromTag;
+      return versionFromTag;
+    } catch (e) {
+      // Not on a tag, fall through to package.json
+    }
   }
+
+  // Fall back to package.json
+  const packagePath = path.join(__dirname, '../../package.json');
+  // Clear require cache so we always read fresh version
+  delete require.cache[require.resolve(packagePath)];
+  const packageJson = require(packagePath);
+  console.log(`📦 Version aus package.json: ${packageJson.version}`);
+  cachedVersion = packageJson.version;
+  return packageJson.version;
+};
+
+/**
+ * Reset cached version (call after update)
+ */
+const resetVersionCache = () => {
+  cachedVersion = null;
 };
 
 /**
@@ -46,15 +103,13 @@ const getLatestVersion = async (req, res) => {
     const response = await axios.get(
       `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`,
       {
-        headers: {
-          'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'Fuchs-Metallbau-App'
-        }
+        headers: getGithubHeaders(),
+        timeout: 10000
       }
     );
 
     const latestRelease = response.data;
-    const latestVersion = latestRelease.tag_name.replace(/^v/, ''); // Remove 'v' prefix if exists
+    const latestVersion = latestRelease.tag_name.replace(/^v/, '');
 
     res.json({
       currentVersion,
@@ -66,7 +121,6 @@ const getLatestVersion = async (req, res) => {
       downloadUrl: latestRelease.html_url
     });
   } catch (error) {
-    // If no releases found or other error
     if (error.response && error.response.status === 404) {
       return res.json({
         currentVersion: getCurrentVersion(),
@@ -104,58 +158,183 @@ const compareVersions = (v1, v2) => {
 };
 
 /**
+ * Update the version in package.json files after a successful update
+ */
+const updatePackageJsonVersion = (projectRoot, newVersion) => {
+  const version = newVersion.replace(/^v/, '');
+
+  // Update backend/package.json
+  const backendPkgPath = path.join(projectRoot, 'backend', 'package.json');
+  if (fs.existsSync(backendPkgPath)) {
+    const pkg = JSON.parse(fs.readFileSync(backendPkgPath, 'utf8'));
+    pkg.version = version;
+    fs.writeFileSync(backendPkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+    console.log(`📝 backend/package.json Version aktualisiert: ${version}`);
+  }
+
+  // Update frontend/package.json
+  const frontendPkgPath = path.join(projectRoot, 'frontend', 'package.json');
+  if (fs.existsSync(frontendPkgPath)) {
+    const pkg = JSON.parse(fs.readFileSync(frontendPkgPath, 'utf8'));
+    pkg.version = version;
+    fs.writeFileSync(frontendPkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+    console.log(`📝 frontend/package.json Version aktualisiert: ${version}`);
+  }
+
+  resetVersionCache();
+};
+
+/**
+ * Download and extract a GitHub release ZIP (for systems without git)
+ * Downloads the source code ZIP, extracts it, and copies files over
+ */
+const downloadAndApplyUpdate = async (tag, projectRoot) => {
+  const tempDir = path.join(os.tmpdir(), `fuchs-update-${Date.now()}`);
+  const zipPath = path.join(tempDir, 'release.zip');
+  const extractDir = path.join(tempDir, 'extracted');
+
+  try {
+    // 1. Create temp directory
+    fs.mkdirSync(tempDir, { recursive: true });
+    fs.mkdirSync(extractDir, { recursive: true });
+
+    // 2. Download ZIP from GitHub
+    const zipUrl = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/archive/refs/tags/${tag}.zip`;
+    console.log(`📥 Lade Release ZIP herunter: ${zipUrl}`);
+
+    const response = await axios.get(zipUrl, {
+      headers: getGithubHeaders(),
+      responseType: 'arraybuffer',
+      timeout: 120000,
+      maxContentLength: 500 * 1024 * 1024 // 500MB max
+    });
+
+    fs.writeFileSync(zipPath, Buffer.from(response.data));
+    console.log(`💾 ZIP gespeichert (${Math.round(response.data.byteLength / 1024)} KB)`);
+
+    // 3. Extract ZIP
+    console.log('📦 Entpacke ZIP...');
+    if (process.platform === 'win32') {
+      execSync(
+        `powershell -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force"`,
+        { timeout: 120000 }
+      );
+    } else {
+      execSync(`unzip -o "${zipPath}" -d "${extractDir}"`, { timeout: 120000 });
+    }
+
+    // 4. Find the extracted directory (GitHub adds prefix like "NR_Fuchs_Metallbau-v1.0.5/")
+    const extractedDirs = fs.readdirSync(extractDir);
+    if (extractedDirs.length === 0) {
+      throw new Error('ZIP-Archiv ist leer');
+    }
+    const sourceDir = path.join(extractDir, extractedDirs[0]);
+    console.log(`📂 Quelle: ${sourceDir}`);
+
+    // 5. Copy source files over (preserve node_modules, data, uploads, .env)
+    const filesToCopy = [
+      { src: 'backend/src', dest: 'backend/src' },
+      { src: 'backend/package.json', dest: 'backend/package.json' },
+      { src: 'frontend/src', dest: 'frontend/src' },
+      { src: 'frontend/public', dest: 'frontend/public' },
+      { src: 'frontend/package.json', dest: 'frontend/package.json' },
+      { src: 'frontend/vite.config.js', dest: 'frontend/vite.config.js' },
+      { src: 'frontend/index.html', dest: 'frontend/index.html' },
+    ];
+
+    for (const item of filesToCopy) {
+      const srcPath = path.join(sourceDir, item.src);
+      const destPath = path.join(projectRoot, item.dest);
+
+      if (fs.existsSync(srcPath)) {
+        const stat = fs.statSync(srcPath);
+        if (stat.isDirectory()) {
+          // Remove old directory and copy new one
+          fs.removeSync(destPath);
+          fs.copySync(srcPath, destPath);
+          console.log(`  ✅ ${item.src}/ kopiert`);
+        } else {
+          fs.copySync(srcPath, destPath);
+          console.log(`  ✅ ${item.src} kopiert`);
+        }
+      }
+    }
+
+    // 6. Also copy any new files in the root (like start.bat, etc.)
+    const rootFiles = ['start.bat', 'start.sh', 'README.md', '.gitignore'];
+    for (const file of rootFiles) {
+      const srcPath = path.join(sourceDir, file);
+      if (fs.existsSync(srcPath)) {
+        fs.copySync(srcPath, path.join(projectRoot, file));
+      }
+    }
+
+    // 7. Update version in package.json
+    updatePackageJsonVersion(projectRoot, tag);
+
+    console.log('✅ Dateien erfolgreich kopiert');
+  } finally {
+    // 8. Clean up temp directory
+    try {
+      fs.removeSync(tempDir);
+      console.log('🧹 Temp-Verzeichnis aufgeräumt');
+    } catch (e) {
+      console.warn('Konnte Temp-Verzeichnis nicht löschen:', tempDir);
+    }
+  }
+};
+
+/**
  * Trigger update from GitHub
- * Pulls latest changes and restarts server
+ * Uses git pull if available, otherwise downloads ZIP
  */
 const triggerUpdate = async (req, res) => {
   try {
     const projectRoot = path.join(__dirname, '../../..');
 
-    // Send response immediately before pulling (connection will be lost during restart)
     res.json({
       success: true,
       message: 'Update wird durchgeführt. Server startet neu...'
     });
 
-    // Schedule update after sending response
     setTimeout(async () => {
       try {
         console.log('🔄 Starting update process...');
 
-        // 1. Stash any local changes
-        console.log('📦 Stashing local changes...');
-        try {
-          execSync('git stash', { cwd: projectRoot });
-        } catch (e) {
-          // Ignore if nothing to stash
+        if (gitAvailable) {
+          // Git-based update
+          try { execSync('git stash', { cwd: projectRoot }); } catch (e) { /* ignore */ }
+          execSync('git fetch origin main', { cwd: projectRoot });
+          execSync('git pull origin main', { cwd: projectRoot });
+        } else {
+          // ZIP-based update: get latest release tag, then download
+          console.log('📥 Kein Git verfügbar, verwende ZIP-Download...');
+          const releaseResponse = await axios.get(
+            `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`,
+            {
+              headers: getGithubHeaders(),
+              timeout: 10000
+            }
+          );
+          const latestTag = releaseResponse.data.tag_name;
+          await downloadAndApplyUpdate(latestTag, projectRoot);
         }
 
-        // 2. Fetch latest from origin
-        console.log('📥 Fetching latest changes...');
-        execSync('git fetch origin main', { cwd: projectRoot });
-
-        // 3. Pull latest changes
-        console.log('⬇️  Pulling changes...');
-        execSync('git pull origin main', { cwd: projectRoot });
-
-        // 4. Install/update dependencies
+        // Install dependencies
         console.log('📦 Updating backend dependencies...');
-        execSync('npm install', { cwd: path.join(projectRoot, 'backend') });
+        execSync('npm install', { cwd: path.join(projectRoot, 'backend'), timeout: 120000 });
 
         console.log('📦 Updating frontend dependencies...');
-        execSync('npm install', { cwd: path.join(projectRoot, 'frontend') });
+        execSync('npm install', { cwd: path.join(projectRoot, 'frontend'), timeout: 120000 });
 
-        // 5. Build frontend
+        // Build frontend
         console.log('🏗️  Building frontend...');
-        execSync('npm run build', { cwd: path.join(projectRoot, 'frontend') });
+        execSync('npm run build', { cwd: path.join(projectRoot, 'frontend'), timeout: 120000 });
 
         console.log('✅ Update completed! Restarting server...');
-
-        // 6. Restart server (exit code 100 triggers restart in start.bat)
         process.exit(100);
       } catch (error) {
         console.error('❌ Update failed:', error.message);
-        // Exit anyway to trigger restart - user can manually fix issues
         process.exit(1);
       }
     }, 1000);
@@ -170,9 +349,7 @@ const triggerUpdate = async (req, res) => {
 
 /**
  * Get current Git commit info
- * Tries to read from build-info.json first (for releases without .git folder)
- * Falls back to git commands if build-info.json is not available
- * If on a tag, fetches release notes from GitHub API
+ * Works with git, build-info.json, or pure GitHub API fallback
  */
 const getGitInfo = async (req, res) => {
   try {
@@ -180,15 +357,17 @@ const getGitInfo = async (req, res) => {
     const projectRoot = path.join(__dirname, '../../..');
     const buildInfoPath = path.join(__dirname, '../build-info.json');
 
-    // Check if we're on a tag
+    // Check if we're on a tag (only if git available)
     let currentTag = null;
-    try {
-      currentTag = execSync('git describe --tags --exact-match', {
-        cwd: projectRoot,
-        stdio: ['pipe', 'pipe', 'pipe']
-      }).toString().trim();
-    } catch (e) {
-      // Not on a tag
+    if (gitAvailable) {
+      try {
+        currentTag = execSync('git describe --tags --exact-match', {
+          cwd: projectRoot,
+          stdio: ['pipe', 'pipe', 'pipe']
+        }).toString().trim();
+      } catch (e) {
+        // Not on a tag
+      }
     }
 
     // Try to read from build-info.json first
@@ -196,26 +375,17 @@ const getGitInfo = async (req, res) => {
       try {
         const buildInfo = JSON.parse(fs.readFileSync(buildInfoPath, 'utf8'));
 
-        // If on a tag, try to fetch release notes from GitHub
         let releaseNotes = null;
         if (currentTag) {
           try {
             const releaseResponse = await axios.get(
               `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/${currentTag}`,
-              {
-                headers: {
-                  'Accept': 'application/vnd.github.v3+json',
-                  'User-Agent': 'Fuchs-Metallbau-App'
-                }
-              }
+              { headers: getGithubHeaders(), timeout: 10000 }
             );
             releaseNotes = releaseResponse.data.body;
-          } catch (e) {
-            // Release not found or API error, continue without release notes
-          }
+          } catch (e) { /* ignore */ }
         }
 
-        // If build-info.json exists and has git info, use it
         if (buildInfo.git) {
           return res.json({
             branch: buildInfo.git.branch,
@@ -229,7 +399,6 @@ const getGitInfo = async (req, res) => {
             source: 'build-info'
           });
         } else {
-          // build-info.json exists but no git info (release build)
           return res.json({
             branch: 'release',
             commit: 'N/A',
@@ -243,65 +412,76 @@ const getGitInfo = async (req, res) => {
           });
         }
       } catch (parseError) {
-        console.warn('Failed to parse build-info.json, falling back to git:', parseError.message);
+        console.warn('Failed to parse build-info.json:', parseError.message);
       }
     }
 
-    // Fallback: Try to get info from git commands (for development)
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: projectRoot })
-      .toString()
-      .trim();
-
-    const commit = execSync('git rev-parse --short HEAD', { cwd: projectRoot })
-      .toString()
-      .trim();
-
-    const commitMessage = execSync('git log -1 --pretty=%B', { cwd: projectRoot })
-      .toString()
-      .trim();
-
-    const commitDate = execSync('git log -1 --pretty=%cd --date=iso', { cwd: projectRoot })
-      .toString()
-      .trim();
-
-    // If on a tag, try to fetch release notes from GitHub
-    let releaseNotes = null;
-    if (currentTag) {
+    // Try git commands if available
+    if (gitAvailable) {
       try {
-        const releaseResponse = await axios.get(
-          `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/${currentTag}`,
-          {
-            headers: {
-              'Accept': 'application/vnd.github.v3+json',
-              'User-Agent': 'Fuchs-Metallbau-App'
-            }
-          }
-        );
-        releaseNotes = releaseResponse.data.body;
-      } catch (e) {
-        // Release not found or API error, continue without release notes
+        const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: projectRoot }).toString().trim();
+        const commit = execSync('git rev-parse --short HEAD', { cwd: projectRoot }).toString().trim();
+        const commitMessage = execSync('git log -1 --pretty=%B', { cwd: projectRoot }).toString().trim();
+        const commitDate = execSync('git log -1 --pretty=%cd --date=iso', { cwd: projectRoot }).toString().trim();
+
+        let releaseNotes = null;
+        if (currentTag) {
+          try {
+            const releaseResponse = await axios.get(
+              `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/${currentTag}`,
+              { headers: getGithubHeaders(), timeout: 10000 }
+            );
+            releaseNotes = releaseResponse.data.body;
+          } catch (e) { /* ignore */ }
+        }
+
+        return res.json({
+          branch,
+          commit,
+          commitMessage: releaseNotes || commitMessage,
+          commitDate,
+          version,
+          releaseNotes: releaseNotes,
+          isRelease: !!releaseNotes,
+          source: 'git'
+        });
+      } catch (gitError) {
+        // Git commands failed, fall through to API fallback
       }
+    }
+
+    // Fallback: Use GitHub API to get info about current version
+    let releaseInfo = null;
+    try {
+      // Try to find a release matching current version
+      const releaseResponse = await axios.get(
+        `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/v${version}`,
+        { headers: getGithubHeaders(), timeout: 10000 }
+      );
+      releaseInfo = releaseResponse.data;
+    } catch (e) {
+      // No release found for this version
     }
 
     res.json({
-      branch,
-      commit,
-      commitMessage: releaseNotes || commitMessage,
-      commitDate,
-      version,
-      releaseNotes: releaseNotes,
-      isRelease: !!releaseNotes,
-      source: 'git'
+      branch: releaseInfo ? 'release' : 'unknown',
+      commit: 'N/A',
+      commitMessage: releaseInfo ? (releaseInfo.body || `Release v${version}`) : `Version ${version}`,
+      commitDate: releaseInfo ? releaseInfo.published_at : null,
+      version: version,
+      buildDate: releaseInfo ? releaseInfo.published_at : null,
+      releaseNotes: releaseInfo ? releaseInfo.body : null,
+      isRelease: !!releaseInfo,
+      source: 'github-api'
     });
   } catch (error) {
-    console.error('Error getting git info:', error);
+    console.error('Error getting git info:', error.message);
 
-    // Final fallback: Just return version
     res.json({
       branch: 'unknown',
       commit: 'N/A',
-      commitMessage: 'Keine Git-Informationen verfügbar',
-      commitDate: new Date().toISOString(),
+      commitMessage: `Version ${getCurrentVersion()}`,
+      commitDate: null,
       version: getCurrentVersion(),
       releaseNotes: null,
       isRelease: false,
@@ -312,73 +492,54 @@ const getGitInfo = async (req, res) => {
 
 /**
  * Trigger update from specific branch (developer only)
- * Requires password authentication
+ * Requires password authentication and git
  */
 const triggerBranchUpdate = async (req, res) => {
   try {
     const { branch, password } = req.body;
 
-    // Validate inputs
     if (!branch || !password) {
       return res.status(400).json({ error: 'Branch und Passwort erforderlich' });
     }
 
-    // Check developer password
     if (password !== 'netrock!') {
       return res.status(403).json({ error: 'Falsches Entwickler-Passwort' });
     }
 
+    if (!gitAvailable) {
+      return res.status(400).json({ error: 'Branch-Update benötigt Git. Bitte Git installieren oder Versions-Update verwenden.' });
+    }
+
     const projectRoot = path.join(__dirname, '../../..');
 
-    // Send response immediately before pulling
     res.json({
       success: true,
       message: `Update von Branch "${branch}" wird durchgeführt. Server startet neu...`
     });
 
-    // Schedule update after sending response
     setTimeout(async () => {
       try {
         console.log(`🔄 Starting branch update from "${branch}"...`);
 
-        // 1. Stash any local changes
-        console.log('📦 Stashing local changes...');
-        try {
-          execSync('git stash', { cwd: projectRoot });
-        } catch (e) {
-          // Ignore if nothing to stash
-        }
+        try { execSync('git stash', { cwd: projectRoot }); } catch (e) { /* ignore */ }
 
-        // 2. Fetch all branches from origin
-        console.log('📥 Fetching all branches...');
         execSync('git fetch origin', { cwd: projectRoot });
-
-        // 3. Checkout to specified branch
-        console.log(`🔀 Switching to branch "${branch}"...`);
         execSync(`git checkout ${branch}`, { cwd: projectRoot });
-
-        // 4. Pull latest changes from the branch
-        console.log('⬇️  Pulling changes...');
         execSync(`git pull origin ${branch}`, { cwd: projectRoot });
 
-        // 5. Install/update dependencies
         console.log('📦 Updating backend dependencies...');
-        execSync('npm install', { cwd: path.join(projectRoot, 'backend') });
+        execSync('npm install', { cwd: path.join(projectRoot, 'backend'), timeout: 120000 });
 
         console.log('📦 Updating frontend dependencies...');
-        execSync('npm install', { cwd: path.join(projectRoot, 'frontend') });
+        execSync('npm install', { cwd: path.join(projectRoot, 'frontend'), timeout: 120000 });
 
-        // 6. Build frontend
         console.log('🏗️  Building frontend...');
-        execSync('npm run build', { cwd: path.join(projectRoot, 'frontend') });
+        execSync('npm run build', { cwd: path.join(projectRoot, 'frontend'), timeout: 120000 });
 
         console.log(`✅ Branch update from "${branch}" completed! Restarting server...`);
-
-        // 7. Restart server
         process.exit(100);
       } catch (error) {
         console.error('❌ Branch update failed:', error.message);
-        // Exit anyway to trigger restart - user can manually fix issues
         process.exit(1);
       }
     }, 1000);
@@ -392,55 +553,112 @@ const triggerBranchUpdate = async (req, res) => {
 };
 
 /**
- * Get all tags (versions) from remote repository
+ * Get all tags (versions) - uses git if available, otherwise GitHub API
  */
 const getTags = async (req, res) => {
   try {
-    const projectRoot = path.join(__dirname, '../../..');
+    const currentVersion = getCurrentVersion();
 
-    // Fetch latest tags from remote
-    try {
-      execSync('git fetch origin --tags', { cwd: projectRoot });
-    } catch (e) {
-      // Continue even if fetch fails (offline mode)
+    if (gitAvailable) {
+      // Git-based tag loading
+      const projectRoot = path.join(__dirname, '../../..');
+
+      try {
+        execSync('git fetch origin --tags', { cwd: projectRoot, timeout: 30000 });
+      } catch (e) {
+        // Continue even if fetch fails (offline mode)
+      }
+
+      const tagsOutput = execSync(
+        'git tag --sort=-version:refname',
+        { cwd: projectRoot }
+      ).toString().trim();
+
+      const tags = tagsOutput
+        ? tagsOutput.split('\n').map(tag => {
+            let date = '';
+            try {
+              date = execSync(`git log -1 --format=%cd --date=iso "${tag}"`, { cwd: projectRoot })
+                .toString().trim();
+            } catch (e) { /* ignore */ }
+
+            let message = '';
+            try {
+              message = execSync(`git tag -l -n1 "${tag}"`, { cwd: projectRoot })
+                .toString().trim().replace(tag, '').trim();
+            } catch (e) { /* ignore */ }
+
+            return { name: tag, date, message };
+          })
+        : [];
+
+      return res.json({ tags, currentVersion });
     }
 
-    // Get all tags sorted by version (newest first)
-    const tagsOutput = execSync(
-      'git tag --sort=-version:refname',
-      { cwd: projectRoot }
-    ).toString().trim();
+    // Fallback: Use GitHub API to get tags
+    console.log('📡 Lade Tags über GitHub API...');
 
-    const tags = tagsOutput
-      ? tagsOutput.split('\n').map(tag => {
-          let date = '';
-          try {
-            date = execSync(`git log -1 --format=%cd --date=iso "${tag}"`, { cwd: projectRoot })
-              .toString().trim();
-          } catch (e) { /* ignore */ }
+    // Get tags from GitHub API
+    const tagsResponse = await axios.get(
+      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/tags`,
+      {
+        headers: getGithubHeaders(),
+        params: { per_page: 50 },
+        timeout: 10000
+      }
+    );
 
-          let message = '';
-          try {
-            message = execSync(`git tag -l -n1 "${tag}"`, { cwd: projectRoot })
-              .toString().trim().replace(tag, '').trim();
-          } catch (e) { /* ignore */ }
+    // Also get releases for dates and descriptions
+    let releasesMap = {};
+    try {
+      const releasesResponse = await axios.get(
+        `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases`,
+        {
+          headers: getGithubHeaders(),
+          params: { per_page: 50 },
+          timeout: 10000
+        }
+      );
+      for (const release of releasesResponse.data) {
+        releasesMap[release.tag_name] = {
+          date: release.published_at,
+          message: release.name || ''
+        };
+      }
+    } catch (e) {
+      // Continue without release info
+    }
 
-          return { name: tag, date, message };
-        })
-      : [];
+    // Sort tags by version (newest first)
+    const tags = tagsResponse.data
+      .map(tag => ({
+        name: tag.name,
+        date: releasesMap[tag.name]?.date || '',
+        message: releasesMap[tag.name]?.message || ''
+      }))
+      .sort((a, b) => {
+        const vA = a.name.replace(/^v/, '');
+        const vB = b.name.replace(/^v/, '');
+        return compareVersions(vB, vA); // Newest first
+      });
 
-    res.json({
-      tags,
-      currentVersion: getCurrentVersion()
-    });
+    res.json({ tags, currentVersion });
   } catch (error) {
-    console.error('Error fetching tags:', error);
+    if (error.response && error.response.status === 404) {
+      console.error('Error fetching tags: Repository nicht gefunden (404). Ist ein GitHub Token konfiguriert?');
+      return res.json({ tags: [], currentVersion: getCurrentVersion(), error: 'GitHub Token nicht konfiguriert oder Repository nicht gefunden. Bitte unter Einstellungen einen GitHub Token hinterlegen.' });
+    }
+    if (error.response && error.response.status === 401) {
+      console.error('Error fetching tags: GitHub Token ungültig (401).');
+      return res.json({ tags: [], currentVersion: getCurrentVersion(), error: 'GitHub Token ist ungültig. Bitte unter Einstellungen einen neuen Token hinterlegen.' });
+    }
+    console.error('Error fetching tags:', error.message);
     res.status(500).json({ error: 'Fehler beim Laden der Versionen' });
   }
 };
 
 /**
- * Get all remote branches (requires dev password)
+ * Get all remote branches (requires dev password and git)
  */
 const getBranches = async (req, res) => {
   try {
@@ -450,16 +668,18 @@ const getBranches = async (req, res) => {
       return res.status(403).json({ error: 'Falsches Entwickler-Passwort' });
     }
 
+    if (!gitAvailable) {
+      return res.status(400).json({ error: 'Branch-Zugriff benötigt Git. Bitte Git installieren.' });
+    }
+
     const projectRoot = path.join(__dirname, '../../..');
 
-    // Fetch all branches from remote
     try {
-      execSync('git fetch origin --prune', { cwd: projectRoot });
+      execSync('git fetch origin --prune', { cwd: projectRoot, timeout: 30000 });
     } catch (e) {
       // Continue even if fetch fails
     }
 
-    // Get all remote branches
     const branchesOutput = execSync(
       'git branch -r --format="%(refname:short)"',
       { cwd: projectRoot }
@@ -476,10 +696,7 @@ const getBranches = async (req, res) => {
           .map(b => b.replace('origin/', ''))
       : [];
 
-    res.json({
-      branches,
-      currentBranch
-    });
+    res.json({ branches, currentBranch });
   } catch (error) {
     console.error('Error fetching branches:', error);
     res.status(500).json({ error: 'Fehler beim Laden der Branches' });
@@ -487,7 +704,8 @@ const getBranches = async (req, res) => {
 };
 
 /**
- * Trigger update to a specific version (tag) from main branch
+ * Trigger update to a specific version (tag)
+ * Uses git checkout if available, otherwise downloads ZIP from GitHub
  */
 const triggerVersionUpdate = async (req, res) => {
   try {
@@ -508,31 +726,31 @@ const triggerVersionUpdate = async (req, res) => {
       try {
         console.log(`🔄 Starting version update to "${tag}"...`);
 
-        // 1. Stash any local changes
-        try {
-          execSync('git stash', { cwd: projectRoot });
-        } catch (e) { /* ignore */ }
+        if (gitAvailable) {
+          // Git-based version update
+          try { execSync('git stash', { cwd: projectRoot }); } catch (e) { /* ignore */ }
+          execSync('git fetch origin --tags', { cwd: projectRoot, timeout: 30000 });
+          execSync('git checkout main', { cwd: projectRoot });
+          execSync('git pull origin main', { cwd: projectRoot });
+          execSync(`git checkout "${tag}"`, { cwd: projectRoot });
 
-        // 2. Fetch latest from origin
-        execSync('git fetch origin --tags', { cwd: projectRoot });
+          // Also update package.json version for consistency
+          updatePackageJsonVersion(projectRoot, tag);
+        } else {
+          // ZIP-based version update
+          console.log('📥 Kein Git verfügbar, verwende ZIP-Download...');
+          await downloadAndApplyUpdate(tag, projectRoot);
+        }
 
-        // 3. Checkout main and pull
-        execSync('git checkout main', { cwd: projectRoot });
-        execSync('git pull origin main', { cwd: projectRoot });
-
-        // 4. Checkout the specific tag
-        console.log(`🏷️  Checking out tag "${tag}"...`);
-        execSync(`git checkout "${tag}"`, { cwd: projectRoot });
-
-        // 5. Install dependencies
+        // Install dependencies
         console.log('📦 Updating backend dependencies...');
-        execSync('npm install', { cwd: path.join(projectRoot, 'backend') });
+        execSync('npm install', { cwd: path.join(projectRoot, 'backend'), timeout: 120000 });
         console.log('📦 Updating frontend dependencies...');
-        execSync('npm install', { cwd: path.join(projectRoot, 'frontend') });
+        execSync('npm install', { cwd: path.join(projectRoot, 'frontend'), timeout: 120000 });
 
-        // 6. Build frontend
+        // Build frontend
         console.log('🏗️  Building frontend...');
-        execSync('npm run build', { cwd: path.join(projectRoot, 'frontend') });
+        execSync('npm run build', { cwd: path.join(projectRoot, 'frontend'), timeout: 120000 });
 
         console.log(`✅ Version update to "${tag}" completed! Restarting server...`);
         process.exit(100);
@@ -555,13 +773,9 @@ const getReleases = async (req, res) => {
     const response = await axios.get(
       `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases`,
       {
-        headers: {
-          'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'Fuchs-Metallbau-App'
-        },
-        params: {
-          per_page: 20
-        }
+        headers: getGithubHeaders(),
+        params: { per_page: 20 },
+        timeout: 10000
       }
     );
 
