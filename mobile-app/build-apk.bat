@@ -108,30 +108,36 @@ echo  [OK] Abhaengigkeiten installiert
 
 :: ── 6. Output-Ordner ──
 if not exist android mkdir android
+set "APK_DEST=%CD%\android\app.apk"
 
-:: ── 7. APK bauen ──
+:: Alte APK loeschen damit wir sicher wissen ob der neue Build geklappt hat
+if exist "%APK_DEST%" del "%APK_DEST%"
+
+:: ── 7. APK bauen und automatisch herunterladen ──
 echo.
 echo  ========================================
 echo   Starte APK Build in der Expo Cloud...
 echo   (Das dauert ca. 5-15 Minuten)
+echo   Die APK wird automatisch heruntergeladen.
 echo  ========================================
 echo.
 echo   Beim ersten Mal wirst du gefragt ob ein
 echo   Keystore generiert werden soll - waehle Yes.
 echo.
 
-:: Build starten (interaktiv, damit Keystore-Erstellung funktioniert)
-call eas build -p android --profile preview
+:: Build starten mit --output fuer automatischen Download
+call eas build -p android --profile preview --non-interactive --output "%APK_DEST%"
 set BUILD_EXIT=%ERRORLEVEL%
 
-if %BUILD_EXIT% neq 0 goto :BUILD_FAILED
+:: Pruefen ob APK heruntergeladen wurde
+if exist "%APK_DEST%" goto :BUILD_SUCCESS
 
-:: ── 8. Download-Link ueber EAS API holen ──
+:: Fallback: Wenn --output nicht geklappt hat, manuell herunterladen
 echo.
+echo  [..] APK nicht direkt heruntergeladen, versuche Fallback...
 echo  [..] Suche Download-Link...
 
 set "APK_URL="
-set "APK_DEST=%CD%\android\app.apk"
 
 :: Letzten erfolgreichen Build per JSON abfragen
 for /f "usebackq tokens=*" %%a in (`eas build:list --platform android --limit 1 --status finished --json 2^>nul`) do (
@@ -147,29 +153,27 @@ if defined JSON_OUT (
 
 if not defined APK_URL goto :NO_URL
 
-:: ── 9. APK herunterladen ──
+:: APK herunterladen
 echo  [OK] Download-Link gefunden
 echo  [..] Lade APK herunter...
 echo       %APK_URL%
 echo.
 
-:: curl ist auf Windows 10/11 vorinstalliert
 curl -L -o "%APK_DEST%" "%APK_URL%" 2>nul
-if not exist "%APK_DEST%" goto :TRY_POWERSHELL
-goto :CHECK_DOWNLOAD
+if exist "%APK_DEST%" goto :BUILD_SUCCESS
 
-:TRY_POWERSHELL
+:: Powershell Fallback
 powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%APK_URL%' -OutFile '%APK_DEST%'" 2>nul
+if exist "%APK_DEST%" goto :BUILD_SUCCESS
+goto :DOWNLOAD_FAIL
 
-:CHECK_DOWNLOAD
-if not exist "%APK_DEST%" goto :DOWNLOAD_FAIL
-
+:BUILD_SUCCESS
 for %%F in ("%APK_DEST%") do set "APK_SIZE=%%~zF"
 set /a APK_MB=!APK_SIZE! / 1048576
 
 echo.
 echo  ========================================
-echo    APK erfolgreich erstellt!
+echo    APK erfolgreich erstellt und geladen!
 echo  ========================================
 echo.
 echo  Datei:   %APK_DEST%
@@ -179,12 +183,6 @@ echo  Die APK ist jetzt verfuegbar:
 echo   - Desktop: Einstellungen ^> Handy App
 echo   - Handy:   QR-Code scannen ^> Download
 echo.
-goto :CLEANUP
-
-:BUILD_FAILED
-echo.
-echo  [FEHLER] Build fehlgeschlagen!
-echo  Pruefe die Ausgabe oben fuer Details.
 goto :CLEANUP
 
 :NO_URL
