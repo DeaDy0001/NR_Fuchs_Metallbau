@@ -116,37 +116,34 @@ echo   Starte APK Build in der Expo Cloud...
 echo   (Das dauert ca. 5-15 Minuten)
 echo  ========================================
 echo.
+echo   Beim ersten Mal wirst du gefragt ob ein
+echo   Keystore generiert werden soll - waehle Yes.
+echo.
 
-set "BUILD_LOG=%TEMP%\eas-build-output.txt"
-
-:: Build starten - Output in Datei speichern
-call eas build -p android --profile preview --non-interactive > "%BUILD_LOG%" 2>&1
+:: Build starten (interaktiv, damit Keystore-Erstellung funktioniert)
+call eas build -p android --profile preview
 set BUILD_EXIT=%ERRORLEVEL%
-
-:: Output anzeigen
-type "%BUILD_LOG%"
 
 if %BUILD_EXIT% neq 0 goto :BUILD_FAILED
 
-:: ── 8. Download-Link finden ──
+:: ── 8. Download-Link ueber EAS API holen ──
 echo.
 echo  [..] Suche Download-Link...
 
 set "APK_URL="
+set "APK_DEST=%CD%\android\app.apk"
 
-:: Suche nach expo.dev artifact URL im Log
-for /f "usebackq tokens=*" %%a in ("%BUILD_LOG%") do (
-    set "LINE=%%a"
-    echo !LINE! | findstr /i "https://expo.dev/artifacts" >nul 2>&1
-    if !ERRORLEVEL! equ 0 (
-        for %%w in (%%a) do (
-            echo %%w | findstr /i "https://" >nul 2>&1
-            if !ERRORLEVEL! equ 0 set "APK_URL=%%w"
-        )
-    )
+:: Letzten erfolgreichen Build per JSON abfragen
+for /f "usebackq tokens=*" %%a in (`eas build:list --platform android --limit 1 --status finished --json 2^>nul`) do (
+    set "JSON_OUT=%%a"
 )
 
-set "APK_DEST=%CD%\android\app.apk"
+:: URL aus JSON extrahieren (artifacts.buildUrl)
+if defined JSON_OUT (
+    for /f "tokens=*" %%u in ('powershell -Command "try { ($env:JSON_OUT | ConvertFrom-Json)[0].artifacts.buildUrl } catch { '' }" 2^>nul') do (
+        if not "%%u"=="" set "APK_URL=%%u"
+    )
+)
 
 if not defined APK_URL goto :NO_URL
 
@@ -211,6 +208,5 @@ echo  Speichere als: %APK_DEST%
 goto :CLEANUP
 
 :CLEANUP
-if exist "%BUILD_LOG%" del "%BUILD_LOG%" >nul 2>&1
 echo.
 pause
