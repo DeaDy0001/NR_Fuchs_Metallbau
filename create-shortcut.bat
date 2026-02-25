@@ -7,9 +7,9 @@ echo ========================================
 echo.
 
 REM Step 1: Convert PNG to ICO if needed
-if not exist "frontend\public\NR_Logo.ico" (
-    echo [1/2] Erstelle Icon aus NR_Logo.png...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.Drawing; $img = [System.Drawing.Image]::FromFile('%~dp0frontend\public\NR_Logo.png'); $bmp = New-Object System.Drawing.Bitmap($img, 256, 256); $icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon()); $stream = [System.IO.File]::Create('%~dp0frontend\public\NR_Logo.ico'); $icon.Save($stream); $stream.Close(); $icon.Dispose(); $bmp.Dispose(); $img.Dispose(); Write-Host '[OK] Icon erstellt: frontend\public\NR_Logo.ico'"
+if not exist "frontend\public\NR_Logo_150x150.ico" (
+    echo [1/2] Erstelle Icon aus NR_Logo_150x150.png...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.Drawing; $img = [System.Drawing.Image]::FromFile('%~dp0frontend\public\NR_Logo_150x150.png'); $bmp = New-Object System.Drawing.Bitmap($img, 256, 256); $icon = [System.Drawing.Icon]::FromHandle($bmp.GetHicon()); $stream = [System.IO.File]::Create('%~dp0frontend\public\NR_Logo_150x150.ico'); $icon.Save($stream); $stream.Close(); $icon.Dispose(); $bmp.Dispose(); $img.Dispose(); Write-Host '[OK] Icon erstellt: frontend\public\NR_Logo_150x150.ico'"
     if %ERRORLEVEL% NEQ 0 (
         echo [WARNUNG] Icon-Konvertierung fehlgeschlagen, Shortcut wird ohne Icon erstellt.
     )
@@ -21,7 +21,7 @@ echo.
 REM Step 2: Create "Fuchs Metallbau.url" in project root
 echo [2/2] Erstelle Browser-Verknuepfung...
 
-set "ICO_PATH=%~dp0frontend\public\NR_Logo.ico"
+set "ICO_PATH=%~dp0frontend\public\NR_Logo_150x150.ico"
 
 (
 echo [InternetShortcut]
