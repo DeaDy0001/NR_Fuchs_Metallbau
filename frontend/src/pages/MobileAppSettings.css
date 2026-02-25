@@ -2,6 +2,74 @@
   max-width: 1000px;
 }
 
+/* Network Selector */
+.network-selector {
+  margin-bottom: 1rem;
+}
+
+.network-selector-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.network-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.network-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 0.625rem 1rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-width: 180px;
+  color: var(--text-primary);
+  font-family: inherit;
+}
+
+.network-option:hover {
+  border-color: var(--accent-primary);
+}
+
+.network-option.active {
+  border-color: var(--accent-primary);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.network-option-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.network-option-url {
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  font-family: monospace;
+  margin-top: 0.125rem;
+}
+
+.network-option.active .network-option-url {
+  color: var(--accent-primary);
+}
+
+.network-loading {
+  font-size: 0.85rem;
+  color: var(--text-tertiary);
+  margin: 0;
+}
+
 /* QR Section */
 .qr-section {
   display: flex;

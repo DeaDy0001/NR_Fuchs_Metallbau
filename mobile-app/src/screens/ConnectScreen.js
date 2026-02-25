@@ -7,8 +7,8 @@ import { useApp } from '../contexts/AppContext';
 import { registerDevice } from '../services/api';
 import { getSetting } from '../services/database';
 
-export default function ConnectScreen({ navigation }) {
-  const { connect, isConnected } = useApp();
+export default function ConnectScreen() {
+  const { connect } = useApp();
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -20,12 +20,8 @@ export default function ConnectScreen({ navigation }) {
     loadUserName();
   }, []);
 
-  // Redirect if already connected
-  useEffect(() => {
-    if (isConnected) {
-      navigation.replace('Main');
-    }
-  }, [isConnected]);
+  // No need for navigation redirect here - App.js handles
+  // the screen swap automatically when isConnected changes
 
   const loadUserName = async () => {
     const name = await getSetting('userName', '');
@@ -68,8 +64,8 @@ export default function ConnectScreen({ navigation }) {
         userName.trim()
       );
 
+      // connect() sets isConnected=true which triggers App.js to show MainTabs
       await connect(scannedData.serverUrl, result.authToken, userName.trim());
-      navigation.replace('Main');
     } catch (error) {
       Alert.alert('Verbindung fehlgeschlagen', error.message);
       setScanned(false);

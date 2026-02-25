@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Smartphone, QrCode, RefreshCw, Trash2, Download, CheckCircle, XCircle, Wifi, Clock } from 'lucide-react';
+import { Smartphone, QrCode, RefreshCw, Trash2, Download, CheckCircle, XCircle, Wifi, Clock, Globe } from 'lucide-react';
 import './MobileAppSettings.css';
 
 function MobileAppSettings() {
@@ -8,11 +8,14 @@ function MobileAppSettings() {
   const [devices, setDevices] = useState([]);
   const [inbox, setInbox] = useState([]);
   const [notification, setNotification] = useState(null);
+  const [networkAddresses, setNetworkAddresses] = useState([]);
+  const [selectedServerUrl, setSelectedServerUrl] = useState('');
   const qrTimerRef = useRef(null);
 
   useEffect(() => {
     loadDevices();
     loadInbox();
+    loadNetworkInfo();
     return () => {
       if (qrTimerRef.current) clearInterval(qrTimerRef.current);
     };
@@ -23,10 +26,62 @@ function MobileAppSettings() {
     setTimeout(() => setNotification(null), 3000);
   };
 
+  const loadNetworkInfo = async () => {
+    try {
+      // Load network interfaces and saved setting in parallel
+      const [networkRes, settingsRes] = await Promise.all([
+        fetch('/api/system/network-info'),
+        fetch('/api/settings')
+      ]);
+      const networkData = await networkRes.json();
+      const settingsData = await settingsRes.json();
+
+      const addresses = networkData.addresses || [];
+      setNetworkAddresses(addresses);
+
+      // Use saved URL from DB, or first non-localhost address, or first address
+      const savedUrl = settingsData.mobile_server_url;
+      if (savedUrl && addresses.some(a => a.url === savedUrl)) {
+        setSelectedServerUrl(savedUrl);
+      } else if (addresses.length > 1) {
+        // Pick first non-localhost
+        setSelectedServerUrl(addresses[1].url);
+      } else if (addresses.length > 0) {
+        setSelectedServerUrl(addresses[0].url);
+      }
+    } catch (error) {
+      console.error('Failed to load network info:', error);
+    }
+  };
+
+  const handleServerUrlChange = async (url) => {
+    setSelectedServerUrl(url);
+    // Save to DB
+    try {
+      await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobile_server_url: url })
+      });
+    } catch (error) {
+      console.error('Failed to save server URL:', error);
+    }
+    // Reset QR code since URL changed
+    setQrData(null);
+  };
+
   const generateQR = async () => {
+    if (!selectedServerUrl) {
+      showNotification('Bitte zuerst eine Netzwerkadresse auswählen', 'error');
+      return;
+    }
     setQrLoading(true);
     try {
-      const response = await fetch('/api/mobile/connect-token');
+      const response = await fetch('/api/mobile/connect-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serverUrl: selectedServerUrl })
+      });
       const data = await response.json();
       setQrData(data);
 
@@ -123,6 +178,29 @@ function MobileAppSettings() {
           </div>
         </div>
 
+        {/* Network address selector */}
+        <div className="network-selector">
+          <label className="network-selector-label">
+            <Globe size={16} />
+            Server-Adresse für die App
+          </label>
+          <div className="network-options">
+            {networkAddresses.map(addr => (
+              <button
+                key={addr.url}
+                className={`network-option ${selectedServerUrl === addr.url ? 'active' : ''}`}
+                onClick={() => handleServerUrlChange(addr.url)}
+              >
+                <div className="network-option-name">{addr.name}</div>
+                <div className="network-option-url">{addr.url}</div>
+              </button>
+            ))}
+          </div>
+          {networkAddresses.length === 0 && (
+            <p className="network-loading">Netzwerk-Adressen werden geladen...</p>
+          )}
+        </div>
+
         <div className="qr-section">
           {qrData ? (
             <div className="qr-display">
@@ -149,7 +227,7 @@ function MobileAppSettings() {
               <button
                 className="btn btn-primary"
                 onClick={generateQR}
-                disabled={qrLoading}
+                disabled={qrLoading || !selectedServerUrl}
               >
                 {qrLoading ? (
                   <><RefreshCw size={16} className="spinning" /> Wird erstellt...</>

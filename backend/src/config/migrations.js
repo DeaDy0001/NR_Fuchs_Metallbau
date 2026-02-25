@@ -449,6 +449,22 @@ const migrations = [
 
       console.log('✓ Migration create_mobile_tables completed');
     }
+  },
+  {
+    id: 18,
+    name: 'add_mobile_server_url_setting',
+    up: () => {
+      console.log('Running migration: add_mobile_server_url_setting');
+
+      const tableInfo = db.pragma('table_info(settings)');
+      const existingColumns = tableInfo.map(col => col.name);
+
+      if (!existingColumns.includes('mobile_server_url')) {
+        db.exec("ALTER TABLE settings ADD COLUMN mobile_server_url TEXT");
+      }
+
+      console.log('✓ Migration add_mobile_server_url_setting completed');
+    }
   }
 ];
 

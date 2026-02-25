@@ -17,17 +17,21 @@ fs.ensureDirSync(MOBILE_UPLOADS_DIR);
 
 /**
  * Generate a connection token (shown as QR code in desktop app)
- * GET /api/mobile/connect-token
+ * POST /api/mobile/connect-token
+ * Body: { serverUrl: "http://192.168.1.x:3001" }
  */
 const generateConnectToken = (req, res) => {
   try {
     const token = crypto.randomBytes(32).toString('hex');
-    const serverUrl = `${req.protocol}://${req.hostname}:${req.socket.localPort}`;
+
+    // Use the serverUrl from the request body (chosen by user in frontend)
+    // Fallback to request-based detection
+    const serverUrl = req.body?.serverUrl
+      || `${req.protocol}://${req.hostname}:${req.socket.localPort}`;
 
     // Store token temporarily (valid for 5 minutes)
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
-    // Use settings table to store pending token
     db.prepare(`
       INSERT OR REPLACE INTO mobile_pending_tokens (token, expires_at)
       VALUES (?, ?)

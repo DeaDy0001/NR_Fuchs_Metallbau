@@ -32,7 +32,7 @@ const upload = multer({
 // ---- Public routes (no auth needed) ----
 
 // Generate QR code connection token (called from desktop)
-router.get('/connect-token', mobile.generateConnectToken);
+router.post('/connect-token', mobile.generateConnectToken);
 
 // Register device with token (called from app after QR scan)
 router.post('/register', mobile.registerDevice);
