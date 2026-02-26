@@ -473,6 +473,53 @@ const findOrCreateSubfolder = async (parentFolderId, folderName) => {
   return await createFolderOnDrive(folderName, parentFolderId);
 };
 
+/**
+ * Upload a local file to Google Drive
+ * @param {string} localFilePath - Full path to the local file
+ * @param {string} parentFolderId - Drive folder to upload into
+ * @param {string} [fileName] - Optional name override (defaults to basename)
+ * @returns {Object} Uploaded file { id, name }
+ */
+const uploadFileToDrive = async (localFilePath, parentFolderId, fileName) => {
+  try {
+    if (!await isAuthenticated()) {
+      throw new Error('Not authenticated');
+    }
+
+    const drive = await getDriveClient();
+    const name = fileName || path.basename(localFilePath);
+
+    // Detect mime type from extension
+    const ext = path.extname(localFilePath).toLowerCase();
+    const mimeTypes = {
+      '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+      '.png': 'image/png', '.webp': 'image/webp',
+      '.gif': 'image/gif', '.bmp': 'image/bmp',
+      '.tiff': 'image/tiff', '.tif': 'image/tiff',
+      '.heic': 'image/heic', '.heif': 'image/heif',
+    };
+    const mimeType = mimeTypes[ext] || 'application/octet-stream';
+
+    const response = await drive.files.create({
+      requestBody: {
+        name,
+        parents: [parentFolderId],
+      },
+      media: {
+        mimeType,
+        body: fs.createReadStream(localFilePath),
+      },
+      fields: 'id, name',
+    });
+
+    console.log(`⬆️ Uploaded to Drive: ${name} (${response.data.id})`);
+    return response.data;
+  } catch (error) {
+    console.error('Error uploading file to Drive:', error.message);
+    throw error;
+  }
+};
+
 module.exports = {
   extractFolderId,
   listFilesInFolder,
@@ -489,4 +536,5 @@ module.exports = {
   moveFileOnDrive,
   getFileMetadata,
   findOrCreateSubfolder,
+  uploadFileToDrive,
 };

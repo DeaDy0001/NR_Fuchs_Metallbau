@@ -13,6 +13,7 @@ const {
   getFileMetadata,
   findOrCreateSubfolder,
   listFilesInFolder,
+  uploadFileToDrive,
 } = require('../services/googleDriveService');
 const { isAuthenticated, getDriveClient } = require('../services/authService');
 
@@ -1159,7 +1160,9 @@ const ensureProjekteFolderOnDrive = async () => {
  *
  * Creates Projekte/ folder structure on Drive.
  * For each local project, creates a subfolder on Drive.
- * Optionally moves assigned images from the main Drive folder to the project folder.
+ * When includePhotos is true:
+ *   - Images with drive_file_id are MOVED on Drive to the project folder
+ *   - Images without drive_file_id (local only) are UPLOADED to Drive
  */
 const syncProjectsToDrive = async (req, res) => {
   try {
@@ -1173,6 +1176,9 @@ const syncProjectsToDrive = async (req, res) => {
     const { projekteFolder } = await ensureProjekteFolderOnDrive();
     console.log(`📁 Projekte folder on Drive: ${projekteFolder.id}`);
 
+    // Get project base path
+    const setting = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+
     // Get all local projects
     const projects = db.prepare('SELECT * FROM projects').all();
 
@@ -1182,6 +1188,7 @@ const syncProjectsToDrive = async (req, res) => {
 
     let createdFolders = 0;
     let movedImages = 0;
+    let uploadedImages = 0;
     let skippedImages = 0;
     const errors = [];
 
@@ -1195,47 +1202,72 @@ const syncProjectsToDrive = async (req, res) => {
           console.log(`📁 Created Drive folder: ${project.folder_name}`);
         }
 
-        // Move images if requested
-        if (includePhotos) {
-          // Get images assigned to this project that have a drive_file_id
-          const assignedImages = db.prepare(`
-            SELECT di.* FROM drive_images di
-            JOIN image_project_assignments ipa ON di.id = ipa.image_id
-            WHERE ipa.project_id = ? AND di.drive_file_id IS NOT NULL
-          `).all(project.id);
+        // Sync images if requested
+        if (includePhotos && setting?.project_path) {
+          // Get files already in the project folder on Drive (to avoid duplicates)
+          const existingDriveFiles = await listAllFilesInFolder(projectDriveFolder.id);
+          const existingDriveFileNames = new Set(existingDriveFiles.map(f => f.name.toLowerCase()));
 
-          // Get files already in the project folder on Drive
-          const existingFiles = await listAllFilesInFolder(projectDriveFolder.id);
-          const existingFileNames = new Set(existingFiles.map(f => f.name.toLowerCase()));
+          // Scan the local Bilder/ folder for this project
+          const bilderPath = path.join(setting.project_path, project.folder_name, 'Bilder');
+          if (await fs.pathExists(bilderPath)) {
+            const localFiles = await fs.readdir(bilderPath);
+            const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif', '.heic', '.heif'];
 
-          for (const img of assignedImages) {
-            try {
-              // Skip if file already exists in project folder by name
-              if (existingFileNames.has(img.name.toLowerCase())) {
-                skippedImages++;
-                continue;
+            for (const fileName of localFiles) {
+              const ext = path.extname(fileName).toLowerCase();
+              if (!imageExtensions.includes(ext)) continue;
+
+              try {
+                // Skip if already on Drive in this project folder
+                if (existingDriveFileNames.has(fileName.toLowerCase())) {
+                  skippedImages++;
+                  continue;
+                }
+
+                // Check if this image has a drive_file_id in the DB
+                // (meaning it exists somewhere else on Drive and should be MOVED)
+                const dbImage = db.prepare(`
+                  SELECT di.drive_file_id FROM drive_images di
+                  JOIN image_project_assignments ipa ON di.id = ipa.image_id
+                  WHERE ipa.project_id = ?
+                    AND (di.name = ? OR di.original_name = ?)
+                    AND di.drive_file_id IS NOT NULL
+                  LIMIT 1
+                `).get(project.id, fileName, fileName);
+
+                if (dbImage && dbImage.drive_file_id) {
+                  // Image exists on Drive → MOVE it to the project folder
+                  try {
+                    const fileMeta = await getFileMetadata(dbImage.drive_file_id);
+                    if (fileMeta && fileMeta.parents && fileMeta.parents.length > 0) {
+                      if (fileMeta.parents.includes(projectDriveFolder.id)) {
+                        skippedImages++;
+                        continue;
+                      }
+                      await moveFileOnDrive(dbImage.drive_file_id, projectDriveFolder.id, fileMeta.parents[0]);
+                      movedImages++;
+                      console.log(`📦 Moved "${fileName}" → ${project.folder_name}/`);
+                    }
+                  } catch (moveErr) {
+                    // If move fails (e.g. file deleted from Drive), upload instead
+                    console.log(`⚠️ Move failed for "${fileName}", uploading instead...`);
+                    const localFilePath = path.join(bilderPath, fileName);
+                    await uploadFileToDrive(localFilePath, projectDriveFolder.id, fileName);
+                    uploadedImages++;
+                    console.log(`⬆️ Uploaded "${fileName}" → ${project.folder_name}/`);
+                  }
+                } else {
+                  // Image is local only → UPLOAD to Drive
+                  const localFilePath = path.join(bilderPath, fileName);
+                  await uploadFileToDrive(localFilePath, projectDriveFolder.id, fileName);
+                  uploadedImages++;
+                  console.log(`⬆️ Uploaded "${fileName}" → ${project.folder_name}/`);
+                }
+              } catch (imgError) {
+                console.error(`Error syncing image ${fileName}:`, imgError.message);
+                errors.push(`${project.folder_name}/${fileName}: ${imgError.message}`);
               }
-
-              // Get current file parents to know where to move from
-              const fileMeta = await getFileMetadata(img.drive_file_id);
-              if (!fileMeta || !fileMeta.parents || fileMeta.parents.length === 0) {
-                skippedImages++;
-                continue;
-              }
-
-              // Check if already in the project folder
-              if (fileMeta.parents.includes(projectDriveFolder.id)) {
-                skippedImages++;
-                continue;
-              }
-
-              // Move file: remove from current parent, add to project folder
-              await moveFileOnDrive(img.drive_file_id, projectDriveFolder.id, fileMeta.parents[0]);
-              movedImages++;
-              console.log(`📦 Moved "${img.name}" → ${project.folder_name}/`);
-            } catch (imgError) {
-              console.error(`Error moving image ${img.name}:`, imgError.message);
-              errors.push(`${img.name}: ${imgError.message}`);
             }
           }
         }
@@ -1250,6 +1282,7 @@ const syncProjectsToDrive = async (req, res) => {
       totalProjects: projects.length,
       createdFolders,
       movedImages,
+      uploadedImages,
       skippedImages,
       errors: errors.length > 0 ? errors : undefined,
     });

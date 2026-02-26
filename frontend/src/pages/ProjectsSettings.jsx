@@ -242,7 +242,8 @@ function ProjectsSettings() {
         </h2>
         <p className="section-description">
           Synchronisieren Sie alle Projekte mit Google Drive. Für jedes Projekt wird ein Ordner
-          unter <code>NR_Fuchs_Meta/Projekte/</code> erstellt. Bilder werden verschoben (nicht kopiert).
+          unter <code>NR_Fuchs_Meta/Projekte/</code> erstellt.
+          Bilder aus dem lokalen Projektordner werden auf Drive hochgeladen bzw. verschoben.
         </p>
 
         <div className="sync-settings">
@@ -253,10 +254,11 @@ function ProjectsSettings() {
                 checked={includePhotos}
                 onChange={(e) => setIncludePhotos(e.target.checked)}
               />
-              Fotos mit verschieben (zugeordnete Bilder in Projektordner verschieben)
+              Fotos synchronisieren (Bilder in Projektordner auf Drive hochladen/verschieben)
             </label>
             <small className="help-text">
-              Bilder werden auf Google Drive vom Hauptordner in den jeweiligen Projektordner verschoben.
+              Lokale Projektbilder werden auf Google Drive hochgeladen.
+              Bereits auf Drive vorhandene Bilder werden in den Projektordner verschoben.
             </small>
           </div>
         </div>
@@ -278,11 +280,14 @@ function ProjectsSettings() {
                 <ul>
                   <li>{driveSyncResult.totalProjects} Projekte verarbeitet</li>
                   <li>{driveSyncResult.createdFolders} neue Ordner auf Drive erstellt</li>
+                  {driveSyncResult.uploadedImages > 0 && (
+                    <li>{driveSyncResult.uploadedImages} Bilder hochgeladen</li>
+                  )}
                   {driveSyncResult.movedImages > 0 && (
                     <li>{driveSyncResult.movedImages} Bilder verschoben</li>
                   )}
                   {driveSyncResult.skippedImages > 0 && (
-                    <li>{driveSyncResult.skippedImages} Bilder bereits im Zielordner</li>
+                    <li>{driveSyncResult.skippedImages} Bilder bereits auf Drive</li>
                   )}
                 </ul>
                 {driveSyncResult.errors && driveSyncResult.errors.length > 0 && (
