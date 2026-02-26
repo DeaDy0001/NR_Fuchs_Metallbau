@@ -1,6 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { getSetting, setSetting, cacheProjects, cacheTags } from './database';
-import { fetchSyncData, downloadImageFile } from './api';
+import { getSetting, setSetting, cacheProjects, cacheTags, cacheProject, clearCachedProjects } from './database';
+import { fetchSyncData, fetchProjects, downloadImageFile } from './api';
 
 const IMAGE_CACHE_DIR = FileSystem.documentDirectory + 'image_cache/';
 const THUMBNAIL_CACHE_DIR = FileSystem.documentDirectory + 'thumbnail_cache/';
@@ -15,20 +15,42 @@ const ensureCacheDirs = async () => {
 
 /**
  * Sync project and tag data from Google Drive
+ * @param {function} onProjectFound - optional callback for progressive loading, called per project
  */
-export const syncMetadata = async () => {
+export const syncMetadata = async (onProjectFound = null) => {
   try {
-    const data = await fetchSyncData();
+    if (onProjectFound) {
+      // Progressive sync: clear old data, then stream projects one by one
+      await clearCachedProjects();
+      const projects = await fetchProjects(async (project) => {
+        await cacheProject(project);
+        onProjectFound(project);
+      });
 
-    if (data.projects) await cacheProjects(data.projects);
-    if (data.tags) await cacheTags(data.tags);
+      // Also sync tags
+      const data = await fetchSyncData(true); // tagsOnly
+      if (data.tags) await cacheTags(data.tags);
 
-    await setSetting('lastMetadataSync', data.serverTime);
+      await setSetting('lastMetadataSync', new Date().toISOString());
 
-    return {
-      projectCount: data.projects?.length || 0,
-      tagCount: data.tags?.length || 0,
-    };
+      return {
+        projectCount: projects.length,
+        tagCount: data.tags?.length || 0,
+      };
+    } else {
+      // Batch sync (old behavior)
+      const data = await fetchSyncData();
+
+      if (data.projects) await cacheProjects(data.projects);
+      if (data.tags) await cacheTags(data.tags);
+
+      await setSetting('lastMetadataSync', data.serverTime);
+
+      return {
+        projectCount: data.projects?.length || 0,
+        tagCount: data.tags?.length || 0,
+      };
+    }
   } catch (error) {
     console.error('Metadata sync failed:', error);
     throw error;

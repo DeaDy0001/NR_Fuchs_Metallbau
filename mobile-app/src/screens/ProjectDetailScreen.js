@@ -103,13 +103,15 @@ export default function ProjectDetailScreen({ navigation, route }) {
     }
   };
 
-  const renderImage = ({ item }) => (
+  const renderImage = ({ item, index }) => (
     <TouchableOpacity
       style={styles.imageCard}
       onPress={() => navigation.navigate('ImageView', {
         imageId: item.id,
         imageName: item.name,
         projectName,
+        images: images.map(img => ({ id: img.id, name: img.name })),
+        initialIndex: index,
       })}
     >
       {item.thumbnail_link ? (

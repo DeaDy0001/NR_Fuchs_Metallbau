@@ -205,6 +205,33 @@ export const createJsonFile = async (folderId, fileName, data) => {
   return response.json();
 };
 
+/**
+ * Update an existing JSON file on Drive (overwrite content)
+ */
+export const updateJsonFile = async (fileId, data) => {
+  const token = await getAccessToken();
+  if (!token) throw new Error('Nicht mit Google angemeldet');
+
+  const response = await fetch(
+    `${DRIVE_UPLOAD_API}/files/${fileId}?uploadType=media`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json; charset=UTF-8',
+      },
+      body: JSON.stringify(data, null, 2),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error?.message || `JSON-Datei update fehlgeschlagen: ${response.status}`);
+  }
+
+  return response.json();
+};
+
 // ============================================================
 // Folder Operations
 // ============================================================

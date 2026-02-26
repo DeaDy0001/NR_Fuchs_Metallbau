@@ -17,9 +17,11 @@
 import { getActiveDriveConnection, getSetting } from './database';
 import {
   listFiles,
+  readJsonFile,
   readJsonFileByName,
   uploadFile,
   createJsonFile,
+  updateJsonFile,
   downloadFile,
   getImageSource,
   checkFolderAccess,
@@ -45,8 +47,9 @@ const getProjekteFolderId = async () => {
 /**
  * Fetch projects by scanning subfolders of NR_Fuchs_Meta/Projekte/
  * Each subfolder = one project
+ * @param {function} onProject - optional callback, called with each project as it's found
  */
-export const fetchProjects = async () => {
+export const fetchProjects = async (onProject = null) => {
   const projekteFolderId = await getProjekteFolderId();
 
   // List all subfolders
@@ -56,33 +59,75 @@ export const fetchProjects = async () => {
     orderBy: 'name',
   });
 
-  // For each folder, count images
+  // For each folder, count images and read metadata
   const projects = [];
   for (const folder of folders) {
     let imageCount = 0;
+    let meta = {};
+
     try {
-      const images = await listFiles(folder.id, {
-        fields: 'files(id)',
+      // Count images and find project.json in one listing
+      const files = await listFiles(folder.id, {
+        fields: 'files(id,name,mimeType)',
         pageSize: 1000,
       });
-      imageCount = images.filter(f => f.mimeType && f.mimeType.startsWith('image/')).length;
+      imageCount = files.filter(f => f.mimeType && f.mimeType.startsWith('image/')).length;
+
+      // Read project.json if it exists
+      const metaFile = files.find(f => f.name === 'project.json');
+      if (metaFile) {
+        try {
+          meta = await readJsonFile(metaFile.id) || {};
+        } catch {}
+      }
     } catch {}
 
-    projects.push({
+    const project = {
       id: folder.id,
       folder_name: folder.name,
       folder_id: folder.id,
-      color: null,
-      notes: null,
-      tags: '[]',
+      color: meta.color || null,
+      notes: meta.notes || null,
+      tags: JSON.stringify(meta.tags || []),
       image_count: imageCount,
       is_own: 1,
-      is_starred: 0,
+      is_starred: meta.is_starred ? 1 : 0,
       updated_at: folder.modifiedTime,
-    });
+    };
+
+    projects.push(project);
+    if (onProject) onProject(project);
   }
 
   return projects;
+};
+
+/**
+ * Save project metadata (tags, color, notes, starred) to project.json in the project folder
+ */
+export const saveProjectMetadata = async (projectFolderId, metadata) => {
+  // Check if project.json already exists
+  const files = await listFiles(projectFolderId, {
+    fields: 'files(id,name)',
+    pageSize: 100,
+  });
+  const metaFile = files.find(f => f.name === 'project.json');
+
+  const data = {
+    tags: metadata.tags || [],
+    color: metadata.color || null,
+    notes: metadata.notes || null,
+    is_starred: metadata.is_starred || false,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (metaFile) {
+    await updateJsonFile(metaFile.id, data);
+  } else {
+    await createJsonFile(projectFolderId, 'project.json', data);
+  }
+
+  return data;
 };
 
 /**
@@ -202,13 +247,14 @@ export const uploadImage = async (fileUri, fileName, mimeType, projectId = null,
 
 /**
  * Fetch sync data (projects from Drive folders, tags if available)
+ * @param {boolean} tagsOnly - if true, only fetch tags (projects already handled progressively)
  */
-export const fetchSyncData = async () => {
+export const fetchSyncData = async (tagsOnly = false) => {
   const connection = await getActiveDriveConnection();
   if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
 
-  // Scan project folders
-  const projects = await fetchProjects();
+  // Scan project folders (unless tagsOnly)
+  const projects = tagsOnly ? [] : await fetchProjects();
 
   // Try to read tags.json (optional - may not exist)
   let tags = [];

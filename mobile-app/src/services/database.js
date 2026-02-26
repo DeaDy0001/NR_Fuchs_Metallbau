@@ -233,6 +233,21 @@ export const cacheProjects = async (projects) => {
   }
 };
 
+/** Cache a single project (upsert) - used for progressive sync */
+export const cacheProject = async (p) => {
+  const db = await getDb();
+  await db.runAsync(
+    'INSERT OR REPLACE INTO cached_projects (id, folder_name, folder_id, color, notes, tags, image_count, is_own, is_starred, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [String(p.id), String(p.folder_name || ''), String(p.folder_id || ''), String(p.color || ''), String(p.notes || ''), String(p.tags || '[]'), Number(p.image_count) || 0, p.is_own ? 1 : 0, p.is_starred ? 1 : 0, String(p.updated_at || '')]
+  );
+};
+
+/** Clear all cached projects - used before progressive sync */
+export const clearCachedProjects = async () => {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM cached_projects');
+};
+
 export const getCachedProjects = async () => {
   const db = await getDb();
   // Own projects first, then starred, then the rest - all sorted by updated_at
