@@ -78,13 +78,19 @@ export default function LoginScreen() {
 
     try {
       // Step 1: Request device code from Google
-      console.log('[Fuchs] Starting device authorization flow...');
+      // Device flow does not support the full 'drive' scope, use 'drive.file' instead
+      const deviceFlowScopes = config.google.scopes.map(s =>
+        s === 'https://www.googleapis.com/auth/drive'
+          ? 'https://www.googleapis.com/auth/drive.file'
+          : s
+      );
+      console.log('[Fuchs] Starting device authorization flow with scopes:', deviceFlowScopes);
       const deviceRes = await fetch('https://oauth2.googleapis.com/device/code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           client_id: clientId,
-          scope: config.google.scopes.join(' '),
+          scope: deviceFlowScopes.join(' '),
         }).toString(),
       });
 
