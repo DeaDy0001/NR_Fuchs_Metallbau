@@ -49,6 +49,7 @@ export default function ConnectScreen() {
           name: parsed.name || 'Drive-Verbindung',
           rootFolderId: parsed.rootFolderId,
           googleClientId: parsed.googleClientId || null,
+          serverUrl: parsed.serverUrl || null,
         };
       }
     } catch {}
@@ -61,7 +62,8 @@ export default function ConnectScreen() {
         const rootId = url.searchParams.get('root');
         const name = url.searchParams.get('name') || 'Drive-Verbindung';
         const clientId = url.searchParams.get('clientId') || null;
-        if (rootId) return { name, rootFolderId: rootId, googleClientId: clientId };
+        const serverUrl = url.searchParams.get('serverUrl') || null;
+        if (rootId) return { name, rootFolderId: rootId, googleClientId: clientId, serverUrl };
       }
     } catch {}
 
@@ -70,7 +72,7 @@ export default function ConnectScreen() {
     try {
       const match = data.match(/drive\.google\.com\/drive\/folders\/([a-zA-Z0-9_-]+)/);
       if (match) {
-        return { name: 'Google Drive', rootFolderId: match[1], googleClientId: null };
+        return { name: 'Google Drive', rootFolderId: match[1], googleClientId: null, serverUrl: null };
       }
     } catch {}
 
@@ -103,6 +105,11 @@ export default function ConnectScreen() {
           setScanned(false);
           setConnecting(false);
           return;
+        }
+
+        // Store server URL for OAuth proxy
+        if (parsed.serverUrl) {
+          await setSetting('serverUrl', parsed.serverUrl);
         }
 
         // Save the Drive connection (without meta/inbox folders - will be created after Google Sign-In)
@@ -147,6 +154,11 @@ export default function ConnectScreen() {
         // Update client ID if provided
         if (parsed.googleClientId) {
           await setSetting('googleClientId', parsed.googleClientId);
+        }
+
+        // Update server URL if provided
+        if (parsed.serverUrl) {
+          await setSetting('serverUrl', parsed.serverUrl);
         }
 
         Alert.alert('Verbunden!', `"${connectionName}" wurde verbunden.`);

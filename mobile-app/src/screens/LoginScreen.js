@@ -1,93 +1,100 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
-import { useAuthRequest, makeRedirectUri, ResponseType } from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
+import * as Linking from 'expo-linking';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { storeTokens, fetchUserInfo, storeUserInfo, getGoogleClientId } from '../services/googleAuth';
-import config from '../config';
+import { storeTokens, storeUserInfo } from '../services/googleAuth';
+import { getSetting } from '../services/database';
 
 WebBrowser.maybeCompleteAuthSession();
 
-// Google OAuth endpoints
-const discovery = {
-  authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
-  tokenEndpoint: 'https://oauth2.googleapis.com/token',
-  revocationEndpoint: 'https://oauth2.googleapis.com/revoke',
-};
-
 export default function LoginScreen() {
   const { onGoogleLogin } = useApp();
-  const [clientId, setClientId] = useState(null);
+  const [serverUrl, setServerUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [authLoading, setAuthLoading] = useState(false);
 
   useEffect(() => {
-    loadClientId();
+    loadServerUrl();
   }, []);
 
-  const loadClientId = async () => {
-    const id = await getGoogleClientId();
-    console.log('[Fuchs] LoginScreen - loaded client ID:', id ? id.substring(0, 20) + '...' : 'none');
-    setClientId(id);
+  const loadServerUrl = async () => {
+    const url = await getSetting('serverUrl');
+    console.log('[Fuchs] LoginScreen - serverUrl:', url);
+    setServerUrl(url);
     setLoading(false);
   };
 
-  // Use generic useAuthRequest instead of Google-specific provider
-  // to avoid platform-specific client ID requirements
-  const redirectUri = makeRedirectUri({
-    scheme: 'com.fuchsmetallbau.app',
-  });
+  const handleSignIn = async () => {
+    if (!serverUrl) {
+      Alert.alert('Fehler', 'Server-URL nicht konfiguriert. Bitte scanne den QR-Code erneut.');
+      return;
+    }
 
-  console.log('[Fuchs] LoginScreen - redirect URI:', redirectUri);
+    setAuthLoading(true);
+    try {
+      // Create callback URL (works in both Expo Go and standalone builds)
+      const appRedirect = Linking.createURL('auth');
+      console.log('[Fuchs] LoginScreen - appRedirect:', appRedirect);
 
-  const [request, response, promptAsync] = useAuthRequest(
-    {
-      clientId: clientId || 'loading',
-      redirectUri,
-      scopes: config.google.scopes,
-      responseType: ResponseType.Token,
-      usePKCE: false,
-      extraParams: {
-        prompt: 'select_account',
-      },
-    },
-    discovery
-  );
+      // Open browser to backend's OAuth proxy
+      const authUrl = `${serverUrl}/api/mobile/auth/google?app_redirect=${encodeURIComponent(appRedirect)}`;
+      console.log('[Fuchs] LoginScreen - opening auth URL:', authUrl);
 
-  useEffect(() => {
-    handleAuthResponse();
-  }, [response]);
+      const result = await WebBrowser.openAuthSessionAsync(authUrl, appRedirect);
+      console.log('[Fuchs] LoginScreen - auth result type:', result.type);
 
-  const handleAuthResponse = async () => {
-    if (response?.type === 'success') {
-      setAuthLoading(true);
-      try {
-        const { access_token, expires_in } = response.params;
-        if (access_token) {
-          // Store tokens (no refresh token with implicit grant)
-          await storeTokens(access_token, null, parseInt(expires_in) || 3600);
-
-          // Fetch and store user info
-          const userInfo = await fetchUserInfo(access_token);
-          await storeUserInfo(userInfo);
-
-          // Notify app context
-          onGoogleLogin(userInfo);
-        }
-      } catch (error) {
-        console.error('[Fuchs] Google Auth Error:', error);
-        Alert.alert('Anmeldung fehlgeschlagen', error.message);
-      } finally {
-        setAuthLoading(false);
+      if (result.type === 'success' && result.url) {
+        await handleAuthResult(result.url);
+      } else if (result.type === 'cancel') {
+        console.log('[Fuchs] LoginScreen - user cancelled');
       }
-    } else if (response?.type === 'error') {
-      console.error('[Fuchs] Auth error:', response.error);
-      Alert.alert(
-        'Anmeldung fehlgeschlagen',
-        response.error?.message || 'Ein Fehler ist aufgetreten. Bitte versuche es erneut.'
+    } catch (error) {
+      console.error('[Fuchs] LoginScreen - auth error:', error);
+      Alert.alert('Anmeldung fehlgeschlagen', error.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleAuthResult = async (url) => {
+    try {
+      const parsed = Linking.parse(url);
+      const params = parsed.queryParams || {};
+
+      console.log('[Fuchs] LoginScreen - auth callback keys:', Object.keys(params));
+
+      if (params.error) {
+        throw new Error(decodeURIComponent(params.error));
+      }
+
+      const accessToken = params.access_token;
+      if (!accessToken) {
+        throw new Error('Kein Access Token erhalten');
+      }
+
+      // Store tokens (including refresh_token for server-side refresh)
+      await storeTokens(
+        accessToken,
+        params.refresh_token || null,
+        parseInt(params.expires_in) || 3600
       );
+
+      // Build and store user info
+      const userInfo = {
+        name: params.user_name || '',
+        email: params.user_email || '',
+        picture: params.user_photo || '',
+      };
+      await storeUserInfo(userInfo);
+
+      // Notify app context
+      onGoogleLogin(userInfo);
+    } catch (error) {
+      console.error('[Fuchs] LoginScreen - handleAuthResult error:', error);
+      Alert.alert('Anmeldung fehlgeschlagen', error.message);
     }
   };
 
@@ -98,8 +105,6 @@ export default function LoginScreen() {
       </View>
     );
   }
-
-  const canSignIn = !!clientId && !!request && !authLoading;
 
   return (
     <View style={styles.container}>
@@ -118,11 +123,11 @@ export default function LoginScreen() {
         </Text>
 
         <TouchableOpacity
-          style={[styles.googleButton, !canSignIn && styles.buttonDisabled]}
-          onPress={() => promptAsync()}
-          disabled={!canSignIn}
+          style={[styles.googleButton, authLoading && styles.buttonDisabled]}
+          onPress={handleSignIn}
+          disabled={authLoading}
         >
-          {authLoading || !request ? (
+          {authLoading ? (
             <ActivityIndicator color="white" />
           ) : (
             <>
@@ -132,6 +137,12 @@ export default function LoginScreen() {
           )}
         </TouchableOpacity>
       </View>
+
+      {!serverUrl && (
+        <Text style={[styles.footerText, { color: '#f59e0b' }]}>
+          Server-URL fehlt. Bitte gehe zuruck und scanne den QR-Code erneut.
+        </Text>
+      )}
 
       <Text style={styles.footerText}>
         Dein Google-Konto wird nur verwendet, um auf freigegebene Ordner zuzugreifen.

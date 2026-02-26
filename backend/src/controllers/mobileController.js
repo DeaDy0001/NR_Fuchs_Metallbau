@@ -3,6 +3,8 @@ const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
 const { compressImage, generateThumbnail } = require('../services/googleDriveService');
+const { google } = require('googleapis');
+const os = require('os');
 
 const UPLOADS_DIR = path.join(__dirname, '../../../uploads');
 const MOBILE_UPLOADS_DIR = path.join(UPLOADS_DIR, 'mobile');
@@ -10,6 +12,20 @@ const THUMBNAILS_DIR = path.join(UPLOADS_DIR, 'thumbnails');
 
 // Ensure mobile uploads directory exists
 fs.ensureDirSync(MOBILE_UPLOADS_DIR);
+
+// Helper: get local network IPv4 addresses for QR code
+const getNetworkAddresses = () => {
+  const interfaces = os.networkInterfaces();
+  const addresses = [];
+  for (const [name, nets] of Object.entries(interfaces)) {
+    for (const net of nets) {
+      if (net.family === 'IPv4' && !net.internal) {
+        addresses.push({ name, address: net.address });
+      }
+    }
+  }
+  return addresses;
+};
 
 // ============================================================
 // AUTH & DEVICE MANAGEMENT
@@ -59,12 +75,20 @@ const generateConnectToken = (req, res) => {
       rootFolderId = urlMatch[1];
     }
 
+    // Determine server URL for mobile OAuth proxy
+    const networkAddresses = getNetworkAddresses();
+    const serverPort = process.env.PORT || 3001;
+    const selectedAddress = req.body?.networkAddress;
+    const primaryAddress = selectedAddress || (networkAddresses.length > 0 ? networkAddresses[0].address : 'localhost');
+    const serverUrl = `http://${primaryAddress}:${serverPort}`;
+
     // Build QR code data as JSON for the mobile app to parse
     const qrPayload = {
       type: 'fuchs_drive',
       googleClientId,
       rootFolderId,
-      name: drivePath.name || 'Fuchs Metallbau'
+      name: drivePath.name || 'Fuchs Metallbau',
+      serverUrl,
     };
 
     res.json({
@@ -72,6 +96,9 @@ const generateConnectToken = (req, res) => {
       name: drivePath.name,
       rootFolderId,
       googleClientId,
+      serverUrl,
+      networkAddresses: networkAddresses.map(a => ({ name: a.name, address: a.address, url: `http://${a.address}:${serverPort}` })),
+      mobileCallbackUrl: `${serverUrl}/api/mobile/auth/callback`,
       drivePaths: drivePaths.map(dp => ({ id: dp.id, name: dp.name }))
     });
   } catch (error) {
@@ -710,6 +737,168 @@ const getInbox = (req, res) => {
   }
 };
 
+// ============================================================
+// MOBILE OAUTH PROXY
+// ============================================================
+
+/**
+ * Mobile OAuth proxy - initiates Google sign-in for mobile app
+ * GET /api/mobile/auth/google?app_redirect=CALLBACK_URL
+ *
+ * The mobile app can't do OAuth directly because Web-type Google client IDs
+ * reject custom scheme redirect URIs (exp://, com.fuchsmetallbau.app://).
+ * This endpoint proxies the OAuth flow through the backend which has the client secret.
+ */
+const mobileGoogleAuth = (req, res) => {
+  try {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+      return res.status(500).send('Google OAuth nicht konfiguriert. GOOGLE_CLIENT_ID und GOOGLE_CLIENT_SECRET in .env setzen.');
+    }
+
+    const appRedirect = req.query.app_redirect;
+    if (!appRedirect) {
+      return res.status(400).send('app_redirect Parameter fehlt');
+    }
+
+    // Build redirect URI from the incoming request (phone browser's perspective)
+    const redirectUri = `${req.protocol}://${req.get('host')}/api/mobile/auth/callback`;
+
+    const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+
+    // Encode app_redirect and redirectUri in state for the callback
+    const state = Buffer.from(JSON.stringify({
+      appRedirect,
+      redirectUri,
+    })).toString('base64url');
+
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: [
+        'https://www.googleapis.com/auth/drive',
+        'https://www.googleapis.com/auth/userinfo.profile',
+        'https://www.googleapis.com/auth/userinfo.email',
+      ],
+      prompt: 'consent',
+      state,
+    });
+
+    res.redirect(authUrl);
+  } catch (error) {
+    console.error('[Fuchs] Mobile auth error:', error);
+    res.status(500).send('Authentifizierungsfehler: ' + error.message);
+  }
+};
+
+/**
+ * Mobile OAuth callback - exchanges code for tokens and redirects to app
+ * GET /api/mobile/auth/callback?code=...&state=...
+ *
+ * Google redirects the phone's browser here after sign-in.
+ * We exchange the code for tokens (server-side) and redirect to the mobile app.
+ */
+const mobileGoogleCallback = async (req, res) => {
+  let appRedirect = 'com.fuchsmetallbau.app://auth';
+
+  try {
+    const { code, error: authError, state } = req.query;
+
+    // Decode state to get app redirect
+    if (state) {
+      try {
+        const stateData = JSON.parse(Buffer.from(state, 'base64url').toString());
+        appRedirect = stateData.appRedirect || appRedirect;
+      } catch {}
+    }
+
+    if (authError) {
+      return res.redirect(`${appRedirect}?error=${encodeURIComponent(authError)}`);
+    }
+
+    if (!code || !state) {
+      return res.redirect(`${appRedirect}?error=${encodeURIComponent('Ungültige Callback-Parameter')}`);
+    }
+
+    const stateData = JSON.parse(Buffer.from(state, 'base64url').toString());
+    const { redirectUri } = stateData;
+
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+    const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+
+    // Exchange authorization code for tokens
+    const { tokens } = await oauth2Client.getToken(code);
+
+    // Fetch user info using the access token
+    const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
+    const userInfo = await userInfoResponse.json();
+
+    // Calculate expires_in
+    const expiresIn = tokens.expiry_date
+      ? Math.floor((tokens.expiry_date - Date.now()) / 1000)
+      : 3600;
+
+    // Build redirect URL with tokens and user info
+    const params = new URLSearchParams();
+    params.set('access_token', tokens.access_token);
+    if (tokens.refresh_token) params.set('refresh_token', tokens.refresh_token);
+    params.set('expires_in', String(expiresIn));
+    if (userInfo.name) params.set('user_name', userInfo.name);
+    if (userInfo.email) params.set('user_email', userInfo.email);
+    if (userInfo.picture) params.set('user_photo', userInfo.picture);
+
+    const separator = appRedirect.includes('?') ? '&' : '?';
+    res.redirect(`${appRedirect}${separator}${params.toString()}`);
+  } catch (error) {
+    console.error('[Fuchs] Mobile OAuth callback error:', error);
+    res.redirect(`${appRedirect}?error=${encodeURIComponent(error.message || 'Auth fehlgeschlagen')}`);
+  }
+};
+
+/**
+ * Refresh access token for mobile app
+ * POST /api/mobile/auth/refresh
+ * Body: { refresh_token: string }
+ *
+ * Mobile app can't refresh tokens directly (needs client_secret for Web type).
+ * This endpoint handles the refresh server-side.
+ */
+const mobileRefreshToken = async (req, res) => {
+  try {
+    const { refresh_token } = req.body;
+    if (!refresh_token) {
+      return res.status(400).json({ error: 'refresh_token ist erforderlich' });
+    }
+
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+      return res.status(500).json({ error: 'Google OAuth nicht konfiguriert' });
+    }
+
+    const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
+    oauth2Client.setCredentials({ refresh_token });
+
+    const { credentials } = await oauth2Client.refreshAccessToken();
+
+    res.json({
+      access_token: credentials.access_token,
+      expires_in: credentials.expiry_date
+        ? Math.floor((credentials.expiry_date - Date.now()) / 1000)
+        : 3600,
+    });
+  } catch (error) {
+    console.error('[Fuchs] Token refresh error:', error);
+    res.status(401).json({ error: 'Token-Aktualisierung fehlgeschlagen' });
+  }
+};
+
 module.exports = {
   generateConnectToken,
   connectLandingPage,
@@ -723,5 +912,8 @@ module.exports = {
   uploadImage,
   getSyncData,
   getImage,
-  getInbox
+  getInbox,
+  mobileGoogleAuth,
+  mobileGoogleCallback,
+  mobileRefreshToken,
 };

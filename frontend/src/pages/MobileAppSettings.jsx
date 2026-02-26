@@ -11,6 +11,8 @@ function MobileAppSettings() {
   const [notification, setNotification] = useState(null);
   const [drivePaths, setDrivePaths] = useState([]);
   const [selectedDrivePathId, setSelectedDrivePathId] = useState(null);
+  const [networkAddresses, setNetworkAddresses] = useState([]);
+  const [selectedAddress, setSelectedAddress] = useState(null);
 
   useEffect(() => {
     loadDevices();
@@ -29,7 +31,7 @@ function MobileAppSettings() {
       const response = await fetch('/api/mobile/connect-token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ drivePathId: selectedDrivePathId })
+        body: JSON.stringify({ drivePathId: selectedDrivePathId, networkAddress: selectedAddress })
       });
       const data = await response.json();
 
@@ -42,6 +44,9 @@ function MobileAppSettings() {
       setQrData(data);
       if (data.drivePaths) {
         setDrivePaths(data.drivePaths);
+      }
+      if (data.networkAddresses) {
+        setNetworkAddresses(data.networkAddresses);
       }
     } catch (error) {
       setQrError('Fehler beim Erstellen des QR-Codes');
@@ -151,6 +156,28 @@ function MobileAppSettings() {
           </div>
         )}
 
+        {/* Network address selector (if multiple) */}
+        {networkAddresses.length > 1 && (
+          <div className="network-selector">
+            <label className="network-selector-label">
+              <Wifi size={16} />
+              Server-Adresse für die App
+            </label>
+            <div className="network-options">
+              {networkAddresses.map(addr => (
+                <button
+                  key={addr.address}
+                  className={`network-option ${selectedAddress === addr.address ? 'active' : ''}`}
+                  onClick={() => { setSelectedAddress(addr.address); setQrData(null); }}
+                >
+                  <div className="network-option-name">{addr.address}</div>
+                  <div className="network-option-detail">{addr.name}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="qr-section">
           {qrError && (
             <div className="qr-error" style={{
@@ -168,6 +195,7 @@ function MobileAppSettings() {
               <QRCodeSVG data={qrData.qrData} size={220} />
               <div className="qr-info">
                 <p className="qr-server">Drive-Ordner: <strong>{qrData.name}</strong></p>
+                <p className="qr-server">Server: <strong>{qrData.serverUrl}</strong></p>
                 <p className="qr-expires">
                   <FolderOpen size={14} />
                   QR-Code bleibt gültig bis die App neu verbunden wird
@@ -196,6 +224,38 @@ function MobileAppSettings() {
             </div>
           )}
         </div>
+
+        {/* Google Cloud Console redirect URI notice */}
+        {qrData && qrData.mobileCallbackUrl && (
+          <div className="info-box" style={{ marginTop: 16, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10, padding: 16 }}>
+            <p style={{ fontSize: 13, fontWeight: 600, color: '#f59e0b', marginBottom: 8 }}>
+              Wichtig: Google Cloud Console Einrichtung
+            </p>
+            <p style={{ fontSize: 13, color: '#94a3b8', marginBottom: 8, lineHeight: 1.5 }}>
+              Füge diese URL als <strong>Autorisierte Weiterleitungs-URI</strong> in der Google Cloud Console hinzu
+              (APIs & Dienste &rarr; Anmeldedaten &rarr; OAuth 2.0 Client-ID bearbeiten):
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <code style={{
+                background: '#16163a', border: '1px solid #2a2a4a', borderRadius: 6,
+                padding: '8px 12px', fontSize: 13, color: '#e2e8f0', fontFamily: 'monospace',
+                flex: 1, wordBreak: 'break-all',
+              }}>
+                {qrData.mobileCallbackUrl}
+              </code>
+              <button
+                className="btn btn-secondary"
+                style={{ flexShrink: 0, padding: '8px 12px' }}
+                onClick={() => {
+                  navigator.clipboard.writeText(qrData.mobileCallbackUrl);
+                  showNotification('Callback-URL kopiert');
+                }}
+              >
+                Kopieren
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Setup instructions */}
         {qrData && (

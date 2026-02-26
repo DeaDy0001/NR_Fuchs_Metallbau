@@ -22,6 +22,7 @@ export const storeTokens = async (accessToken, refreshToken, expiresIn) => {
 
 /**
  * Get a valid access token (refreshes automatically if expired)
+ * Uses the backend OAuth proxy for refresh since Web-type client IDs require client_secret.
  */
 export const getAccessToken = async () => {
   const token = await getSetting('googleAccessToken');
@@ -32,13 +33,34 @@ export const getAccessToken = async () => {
   // Check if expired (with 5 min buffer)
   if (expiry && Date.now() > parseInt(expiry) - 300000) {
     const refreshToken = await getSetting('googleRefreshToken');
+
+    // Try refreshing via backend proxy (preferred - has client_secret)
     if (refreshToken) {
+      const serverUrl = await getSetting('serverUrl');
+      if (serverUrl) {
+        try {
+          const response = await fetch(`${serverUrl}/api/mobile/auth/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: refreshToken }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            await storeTokens(data.access_token, refreshToken, data.expires_in);
+            return data.access_token;
+          }
+        } catch (e) {
+          console.log('[Fuchs] Backend token refresh failed (server unreachable?):', e.message);
+        }
+      }
+
+      // Fallback: try direct refresh (only works with non-Web client types)
       try {
         const result = await refreshAccessToken(refreshToken);
         return result.accessToken;
       } catch (e) {
-        console.error('[Fuchs] Token refresh failed:', e.message);
-        return null;
+        console.error('[Fuchs] Direct token refresh failed:', e.message);
       }
     }
     return null;
