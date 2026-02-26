@@ -310,13 +310,84 @@ const deleteFileFromDrive = async (fileId) => {
   }
 };
 
+/**
+ * List subfolders in a Google Drive folder (not recursive, folders only)
+ */
+const listFoldersInFolder = async (folderId) => {
+  try {
+    if (!await isAuthenticated()) {
+      throw new Error('Not authenticated');
+    }
+
+    const drive = await getDriveClient();
+    const response = await drive.files.list({
+      q: `'${folderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed=false`,
+      fields: 'files(id,name,modifiedTime)',
+      pageSize: 1000,
+      orderBy: 'name'
+    });
+
+    return response.data.files || [];
+  } catch (error) {
+    console.error('Error listing folders:', error.message);
+    throw error;
+  }
+};
+
+/**
+ * List all files (not just images) in a folder
+ */
+const listAllFilesInFolder = async (folderId) => {
+  try {
+    if (!await isAuthenticated()) {
+      throw new Error('Not authenticated');
+    }
+
+    const drive = await getDriveClient();
+    const response = await drive.files.list({
+      q: `'${folderId}' in parents and trashed=false`,
+      fields: 'files(id,name,mimeType,size,thumbnailLink,imageMediaMetadata)',
+      pageSize: 1000
+    });
+
+    return response.data.files || [];
+  } catch (error) {
+    console.error('Error listing all files:', error.message);
+    throw error;
+  }
+};
+
+/**
+ * Find a subfolder by name inside a parent folder
+ */
+const findSubfolder = async (parentFolderId, folderName) => {
+  try {
+    if (!await isAuthenticated()) return null;
+
+    const drive = await getDriveClient();
+    const response = await drive.files.list({
+      q: `'${parentFolderId}' in parents and name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed=false`,
+      fields: 'files(id,name)',
+      pageSize: 1
+    });
+
+    return response.data.files?.length > 0 ? response.data.files[0] : null;
+  } catch (error) {
+    console.error('Error finding subfolder:', error.message);
+    return null;
+  }
+};
+
 module.exports = {
   extractFolderId,
   listFilesInFolder,
   listFilesInFolderRecursive,
+  listFoldersInFolder,
+  listAllFilesInFolder,
+  findSubfolder,
   downloadFile,
   compressImage,
   generateThumbnail,
   deleteFileFromDrive,
-  deleteFile: deleteFileFromDrive // Alias for consistency
+  deleteFile: deleteFileFromDrive
 };

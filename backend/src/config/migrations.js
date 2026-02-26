@@ -481,6 +481,27 @@ const migrations = [
 
       console.log('✓ Migration add_pending_token_server_url completed');
     }
+  },
+  {
+    id: 20,
+    name: 'create_pending_mobile_projects',
+    up: () => {
+      console.log('Running migration: create_pending_mobile_projects');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS pending_mobile_projects (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          drive_folder_id TEXT NOT NULL UNIQUE,
+          folder_name TEXT NOT NULL,
+          image_count INTEGER DEFAULT 0,
+          status TEXT DEFAULT 'pending',
+          scanned_at TEXT DEFAULT (datetime('now')),
+          created_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+
+      console.log('✓ Migration create_pending_mobile_projects completed');
+    }
   }
 ];
 

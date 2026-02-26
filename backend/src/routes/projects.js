@@ -6,6 +6,14 @@ const projectsController = require('../controllers/projectsController');
 router.get('/settings', projectsController.getProjectSettings);
 router.post('/settings/path', projectsController.setProjectPath);
 
+// Pending mobile projects (must be before /:id routes!)
+router.get('/pending', projectsController.getPendingProjects);
+router.post('/pending/scan', projectsController.scanMobileProjects);
+router.get('/pending/:id/images', projectsController.getPendingProjectImages);
+router.post('/pending/:id/accept', projectsController.acceptPendingProject);
+router.post('/pending/:id/merge', projectsController.mergePendingProject);
+router.delete('/pending/:id', projectsController.deletePendingProject);
+
 // Projects routes
 router.get('/', projectsController.getProjects);
 router.get('/:id', projectsController.getProjectById);

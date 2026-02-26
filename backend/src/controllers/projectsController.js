@@ -1,6 +1,15 @@
 const db = require('../config/database');
 const fs = require('fs-extra');
 const path = require('path');
+const {
+  extractFolderId,
+  listFoldersInFolder,
+  listAllFilesInFolder,
+  findSubfolder,
+  downloadFile: downloadDriveFile,
+  generateThumbnail,
+} = require('../services/googleDriveService');
+const { isAuthenticated } = require('../services/authService');
 
 // Get project settings (configured path)
 const getProjectSettings = (req, res) => {
@@ -798,6 +807,309 @@ const writeProjectMetadata = async (project, projectFolderPath) => {
   }
 };
 
+// ============================================================
+// Pending Mobile Projects (from Google Drive NR_Fuchs_Meta/Projekte/)
+// ============================================================
+
+/**
+ * Find the NR_Fuchs_Meta/Projekte folder on Drive
+ * Uses drive_paths to find the root folder
+ */
+const findProjekteFolderOnDrive = async () => {
+  // Get first drive_path to find root folder
+  const drivePath = db.prepare('SELECT path FROM drive_paths LIMIT 1').get();
+  if (!drivePath) return null;
+
+  const rootFolderId = extractFolderId(drivePath.path);
+  if (!rootFolderId) return null;
+
+  // Look for NR_Fuchs_Meta folder in root's parent
+  // The drive_path points to a specific subfolder. We need the root.
+  // Check if there's a mobile_pending_tokens entry with root info
+  // Or try to find NR_Fuchs_Meta as sibling
+  // Actually, let's look in the root folder's parent for NR_Fuchs_Meta
+
+  // Try direct: the root folder itself might contain NR_Fuchs_Meta
+  let metaFolder = await findSubfolder(rootFolderId, 'NR_Fuchs_Meta');
+
+  if (!metaFolder) {
+    // If root IS the images folder, look for NR_Fuchs_Meta as sibling
+    // by using the parent. For now, also try rootFolderId directly.
+    // Check all drive_paths for different folder IDs
+    const allPaths = db.prepare('SELECT path FROM drive_paths').all();
+    for (const dp of allPaths) {
+      const fid = extractFolderId(dp.path);
+      if (fid) {
+        metaFolder = await findSubfolder(fid, 'NR_Fuchs_Meta');
+        if (metaFolder) break;
+      }
+    }
+  }
+
+  if (!metaFolder) return null;
+
+  // Find Projekte subfolder
+  const projekteFolder = await findSubfolder(metaFolder.id, 'Projekte');
+  return projekteFolder;
+};
+
+/**
+ * Scan Google Drive for new mobile projects
+ * GET /api/projects/pending/scan
+ */
+const scanMobileProjects = async (req, res) => {
+  try {
+    if (!await isAuthenticated()) {
+      return res.status(401).json({ error: 'Nicht mit Google angemeldet' });
+    }
+
+    const projekteFolder = await findProjekteFolderOnDrive();
+    if (!projekteFolder) {
+      return res.json({ scanned: 0, newProjects: 0, message: 'Kein Projekte-Ordner auf Drive gefunden' });
+    }
+
+    // List subfolders = mobile projects
+    const driveFolders = await listFoldersInFolder(projekteFolder.id);
+
+    // Get existing projects from DB
+    const existingProjects = db.prepare('SELECT folder_name FROM projects').all();
+    const existingNames = new Set(existingProjects.map(p => p.folder_name.toLowerCase()));
+
+    // Get already-pending projects
+    const pendingProjects = db.prepare("SELECT drive_folder_id FROM pending_mobile_projects WHERE status = 'pending'").all();
+    const pendingIds = new Set(pendingProjects.map(p => p.drive_folder_id));
+
+    let newCount = 0;
+
+    for (const folder of driveFolders) {
+      // Skip if already exists as project or already pending
+      if (existingNames.has(folder.name.toLowerCase())) continue;
+      if (pendingIds.has(folder.id)) {
+        // Update image count
+        try {
+          const files = await listAllFilesInFolder(folder.id);
+          const imageCount = files.filter(f => f.mimeType && f.mimeType.startsWith('image/')).length;
+          db.prepare("UPDATE pending_mobile_projects SET image_count = ?, scanned_at = datetime('now') WHERE drive_folder_id = ?")
+            .run(imageCount, folder.id);
+        } catch {}
+        continue;
+      }
+
+      // Count images in this folder
+      let imageCount = 0;
+      try {
+        const files = await listAllFilesInFolder(folder.id);
+        imageCount = files.filter(f => f.mimeType && f.mimeType.startsWith('image/')).length;
+      } catch {}
+
+      // Insert as pending
+      db.prepare(
+        "INSERT OR IGNORE INTO pending_mobile_projects (drive_folder_id, folder_name, image_count) VALUES (?, ?, ?)"
+      ).run(folder.id, folder.name, imageCount);
+
+      newCount++;
+    }
+
+    res.json({ scanned: driveFolders.length, newProjects: newCount });
+  } catch (error) {
+    console.error('Error scanning mobile projects:', error);
+    res.status(500).json({ error: 'Scan fehlgeschlagen: ' + error.message });
+  }
+};
+
+/**
+ * Get all pending mobile projects
+ * GET /api/projects/pending
+ */
+const getPendingProjects = (req, res) => {
+  try {
+    const pending = db.prepare(
+      "SELECT * FROM pending_mobile_projects WHERE status = 'pending' ORDER BY created_at DESC"
+    ).all();
+    res.json(pending);
+  } catch (error) {
+    console.error('Error getting pending projects:', error);
+    res.status(500).json({ error: 'Failed to get pending projects' });
+  }
+};
+
+/**
+ * Get images from a pending project on Drive
+ * GET /api/projects/pending/:id/images
+ */
+const getPendingProjectImages = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pending = db.prepare('SELECT * FROM pending_mobile_projects WHERE id = ?').get(id);
+    if (!pending) return res.status(404).json({ error: 'Pending project not found' });
+
+    const files = await listAllFilesInFolder(pending.drive_folder_id);
+    const images = files
+      .filter(f => f.mimeType && f.mimeType.startsWith('image/'))
+      .map(f => ({
+        id: f.id,
+        name: f.name,
+        mimeType: f.mimeType,
+        size: parseInt(f.size) || 0,
+        thumbnailLink: f.thumbnailLink,
+        width: f.imageMediaMetadata?.width || null,
+        height: f.imageMediaMetadata?.height || null,
+      }));
+
+    res.json(images);
+  } catch (error) {
+    console.error('Error getting pending project images:', error);
+    res.status(500).json({ error: 'Failed to get images' });
+  }
+};
+
+/**
+ * Accept a pending project → create local project + download images
+ * POST /api/projects/pending/:id/accept
+ */
+const acceptPendingProject = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pending = db.prepare('SELECT * FROM pending_mobile_projects WHERE id = ?').get(id);
+    if (!pending) return res.status(404).json({ error: 'Pending project not found' });
+
+    // Get project settings for local path
+    const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    if (!settings?.project_path) {
+      return res.status(400).json({ error: 'Projekt-Pfad nicht konfiguriert' });
+    }
+
+    // Create local project folder + Bilder subfolder
+    const projectFolder = path.join(settings.project_path, pending.folder_name);
+    const bilderFolder = path.join(projectFolder, 'Bilder');
+    await fs.ensureDir(bilderFolder);
+
+    // Create project in DB
+    const existing = db.prepare('SELECT id FROM projects WHERE folder_name = ?').get(pending.folder_name);
+    let projectId;
+    if (existing) {
+      projectId = existing.id;
+    } else {
+      const result = db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)')
+        .run(pending.folder_name, '#3b82f6', '');
+      projectId = result.lastInsertRowid;
+    }
+
+    // Download images from Drive to local Bilder folder
+    const files = await listAllFilesInFolder(pending.drive_folder_id);
+    const images = files.filter(f => f.mimeType && f.mimeType.startsWith('image/'));
+    let downloaded = 0;
+
+    for (const img of images) {
+      try {
+        const localPath = path.join(bilderFolder, img.name);
+        if (!await fs.pathExists(localPath)) {
+          await downloadDriveFile(img.id, localPath);
+          downloaded++;
+        }
+      } catch (e) {
+        console.error(`Failed to download ${img.name}:`, e.message);
+      }
+    }
+
+    // Write metadata
+    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+    await writeProjectMetadata(project, projectFolder);
+
+    // Mark as accepted
+    db.prepare("UPDATE pending_mobile_projects SET status = 'accepted' WHERE id = ?").run(id);
+
+    res.json({ success: true, projectId, downloaded, total: images.length });
+  } catch (error) {
+    console.error('Error accepting pending project:', error);
+    res.status(500).json({ error: 'Akzeptieren fehlgeschlagen: ' + error.message });
+  }
+};
+
+/**
+ * Merge a pending project into an existing project
+ * POST /api/projects/pending/:id/merge
+ * Body: { targetProjectId: number }
+ */
+const mergePendingProject = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { targetProjectId } = req.body;
+
+    if (!targetProjectId) {
+      return res.status(400).json({ error: 'Ziel-Projekt fehlt' });
+    }
+
+    const pending = db.prepare('SELECT * FROM pending_mobile_projects WHERE id = ?').get(id);
+    if (!pending) return res.status(404).json({ error: 'Pending project not found' });
+
+    const targetProject = db.prepare('SELECT * FROM projects WHERE id = ?').get(targetProjectId);
+    if (!targetProject) return res.status(404).json({ error: 'Ziel-Projekt nicht gefunden' });
+
+    // Get project settings for local path
+    const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    if (!settings?.project_path) {
+      return res.status(400).json({ error: 'Projekt-Pfad nicht konfiguriert' });
+    }
+
+    // Ensure target Bilder folder exists
+    const targetBilder = path.join(settings.project_path, targetProject.folder_name, 'Bilder');
+    await fs.ensureDir(targetBilder);
+
+    // Download images from Drive to target project's Bilder folder
+    const files = await listAllFilesInFolder(pending.drive_folder_id);
+    const images = files.filter(f => f.mimeType && f.mimeType.startsWith('image/'));
+    let downloaded = 0;
+
+    for (const img of images) {
+      try {
+        const localPath = path.join(targetBilder, img.name);
+        if (!await fs.pathExists(localPath)) {
+          await downloadDriveFile(img.id, localPath);
+          downloaded++;
+        }
+      } catch (e) {
+        console.error(`Failed to download ${img.name}:`, e.message);
+      }
+    }
+
+    // Mark as merged
+    db.prepare("UPDATE pending_mobile_projects SET status = 'merged' WHERE id = ?").run(id);
+
+    res.json({
+      success: true,
+      targetProject: targetProject.folder_name,
+      downloaded,
+      total: images.length,
+    });
+  } catch (error) {
+    console.error('Error merging pending project:', error);
+    res.status(500).json({ error: 'Merge fehlgeschlagen: ' + error.message });
+  }
+};
+
+/**
+ * Delete/reject a pending project
+ * DELETE /api/projects/pending/:id
+ */
+const deletePendingProject = (req, res) => {
+  try {
+    const { id } = req.params;
+    const { deleteFromDrive } = req.query;
+
+    const pending = db.prepare('SELECT * FROM pending_mobile_projects WHERE id = ?').get(id);
+    if (!pending) return res.status(404).json({ error: 'Pending project not found' });
+
+    // Mark as deleted (we don't actually delete from Drive by default)
+    db.prepare("UPDATE pending_mobile_projects SET status = 'deleted' WHERE id = ?").run(id);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting pending project:', error);
+    res.status(500).json({ error: 'Löschen fehlgeschlagen' });
+  }
+};
+
 module.exports = {
   getProjectSettings,
   setProjectPath,
@@ -809,5 +1121,12 @@ module.exports = {
   syncProjects,
   getProjectFiles,
   serveProjectFile,
-  renameProject
+  renameProject,
+  // Pending mobile projects
+  scanMobileProjects,
+  getPendingProjects,
+  getPendingProjectImages,
+  acceptPendingProject,
+  mergePendingProject,
+  deletePendingProject,
 };
