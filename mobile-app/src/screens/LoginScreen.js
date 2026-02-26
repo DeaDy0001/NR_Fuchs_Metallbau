@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
   Alert, AppState, Linking, Platform,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
@@ -27,6 +28,7 @@ export default function LoginScreen() {
   const [authLoading, setAuthLoading] = useState(false);
   const [userCode, setUserCode] = useState(null);
   const [verificationUrl, setVerificationUrl] = useState(null);
+  const [copied, setCopied] = useState(false);
 
   const deviceCodeRef = useRef(null);
   const pollTimerRef = useRef(null);
@@ -78,12 +80,7 @@ export default function LoginScreen() {
 
     try {
       // Step 1: Request device code from Google
-      // Device flow does not support the full 'drive' scope, use 'drive.file' instead
-      const deviceFlowScopes = config.google.scopes.map(s =>
-        s === 'https://www.googleapis.com/auth/drive'
-          ? 'https://www.googleapis.com/auth/drive.file'
-          : s
-      );
+      const deviceFlowScopes = config.google.scopes;
       console.log('[Fuchs] Starting device authorization flow with scopes:', deviceFlowScopes);
       const deviceRes = await fetch('https://oauth2.googleapis.com/device/code', {
         method: 'POST',
@@ -297,10 +294,28 @@ export default function LoginScreen() {
               Ein Browser-Fenster wurde geöffnet. Melde dich dort mit deinem Google-Konto an.
             </Text>
 
-            <View style={styles.codeBox}>
+            <TouchableOpacity
+              style={styles.codeBox}
+              activeOpacity={0.7}
+              onPress={async () => {
+                await Clipboard.setStringAsync(userCode);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              }}
+            >
               <Text style={styles.codeLabel}>Bestätigungscode:</Text>
-              <Text style={styles.codeText}>{userCode}</Text>
-            </View>
+              <Text selectable style={styles.codeText}>{userCode}</Text>
+              <View style={styles.copyRow}>
+                <Ionicons
+                  name={copied ? 'checkmark-circle' : 'copy-outline'}
+                  size={16}
+                  color={copied ? '#22c55e' : colors.textTertiary}
+                />
+                <Text style={[styles.copyHint, copied && { color: '#22c55e' }]}>
+                  {copied ? 'Kopiert!' : 'Tippen zum Kopieren'}
+                </Text>
+              </View>
+            </TouchableOpacity>
 
             <View style={styles.waitingRow}>
               <ActivityIndicator size="small" color={colors.accent} />
@@ -446,6 +461,16 @@ const styles = StyleSheet.create({
     color: colors.accent,
     letterSpacing: 4,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  copyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 8,
+  },
+  copyHint: {
+    fontSize: 12,
+    color: colors.textTertiary,
   },
   waitingRow: {
     flexDirection: 'row',
