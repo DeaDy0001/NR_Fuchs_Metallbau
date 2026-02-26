@@ -22,7 +22,9 @@
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
         "ACCESS_NETWORK_STATE",
-        "INTERNET"
+        "INTERNET",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
       ]
     },
     "scheme": "com.fuchsmetallbau.app",
@@ -39,6 +41,12 @@
           "photosPermission": "Erlaubt der App, auf deine Fotos zuzugreifen.",
           "savePhotosPermission": "Erlaubt der App, Fotos zu speichern.",
           "isAccessMediaLocationEnabled": true
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Erlaubt der App, deinen Standort für die Foto-Dokumentation zu verwenden."
         }
       ]
     ]

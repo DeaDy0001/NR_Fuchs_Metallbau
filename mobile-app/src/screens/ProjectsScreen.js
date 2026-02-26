@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, RefreshControl, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, RefreshControl, Alert, SectionList } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -65,6 +65,31 @@ export default function ProjectsScreen({ navigation }) {
     return matchesSearch && matchesTag;
   });
 
+  // Group projects: own first, then starred, then others
+  const getSections = () => {
+    const ownProjects = filteredProjects.filter(p => p.is_own);
+    const starredProjects = filteredProjects.filter(p => !p.is_own && p.is_starred);
+    const otherProjects = filteredProjects.filter(p => !p.is_own && !p.is_starred);
+
+    const sections = [];
+    if (ownProjects.length > 0) {
+      sections.push({ title: 'Meine Projekte', data: ownProjects });
+    }
+    if (starredProjects.length > 0) {
+      sections.push({ title: 'Markierte Projekte', data: starredProjects });
+    }
+    if (otherProjects.length > 0) {
+      sections.push({ title: sections.length > 0 ? 'Weitere Projekte' : 'Projekte', data: otherProjects });
+    }
+
+    // If no grouping applies (all is_own=0, is_starred=0), show flat list
+    if (sections.length === 0 && filteredProjects.length > 0) {
+      sections.push({ title: 'Projekte', data: filteredProjects });
+    }
+
+    return sections;
+  };
+
   const renderProject = ({ item }) => (
     <TouchableOpacity
       style={styles.projectCard}
@@ -76,7 +101,12 @@ export default function ProjectsScreen({ navigation }) {
     >
       <View style={[styles.colorBar, { backgroundColor: item.color || colors.accent }]} />
       <View style={styles.projectContent}>
-        <Text style={styles.projectName}>{item.folder_name}</Text>
+        <View style={styles.projectNameRow}>
+          <Text style={styles.projectName}>{item.folder_name}</Text>
+          {item.is_starred ? (
+            <Ionicons name="star" size={14} color={colors.warning} />
+          ) : null}
+        </View>
         <View style={styles.projectMeta}>
           <View style={styles.metaItem}>
             <Ionicons name="images-outline" size={14} color={colors.textTertiary} />
@@ -92,6 +122,12 @@ export default function ProjectsScreen({ navigation }) {
       </View>
       <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
     </TouchableOpacity>
+  );
+
+  const renderSectionHeader = ({ section: { title } }) => (
+    <View style={styles.sectionHeader}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+    </View>
   );
 
   return (
@@ -160,11 +196,12 @@ export default function ProjectsScreen({ navigation }) {
         </View>
       )}
 
-      {/* Project List */}
-      <FlatList
-        data={filteredProjects}
+      {/* Project List - grouped by sections */}
+      <SectionList
+        sections={getSections()}
         keyExtractor={p => String(p.id)}
         renderItem={renderProject}
+        renderSectionHeader={renderSectionHeader}
         contentContainerStyle={styles.list}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.accent} />
@@ -177,6 +214,7 @@ export default function ProjectsScreen({ navigation }) {
             </Text>
           </View>
         }
+        stickySectionHeadersEnabled={false}
       />
 
       {/* FAB - New Project */}
@@ -207,12 +245,18 @@ const styles = StyleSheet.create({
   },
   tagText: { fontSize: 13, color: colors.textSecondary, fontWeight: '500' },
   list: { padding: 16, paddingTop: 8 },
+  sectionHeader: { marginTop: 8, marginBottom: 8 },
+  sectionTitle: {
+    fontSize: 13, fontWeight: '700', textTransform: 'uppercase',
+    letterSpacing: 0.5, color: colors.textTertiary,
+  },
   projectCard: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: colors.cardBg,
     borderRadius: 12, marginBottom: 10, padding: 16, borderWidth: 1, borderColor: colors.border,
   },
   colorBar: { width: 4, height: 40, borderRadius: 2, marginRight: 14 },
   projectContent: { flex: 1 },
+  projectNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   projectName: { fontSize: 16, fontWeight: '600', color: colors.textPrimary },
   projectMeta: { flexDirection: 'row', gap: 12, marginTop: 4 },
   metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },

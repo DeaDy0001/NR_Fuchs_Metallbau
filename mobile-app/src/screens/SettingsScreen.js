@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, Switch } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, Switch, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { getSetting, setSetting } from '../services/database';
-import { getCacheSize, clearCache, cleanupCache } from '../services/syncService';
+import { getSetting, setSetting, getCachedProjects } from '../services/database';
+import { getCacheSize, clearCache, cleanupCache, downloadProjectImages } from '../services/syncService';
+import { fetchProjectImages } from '../services/api';
 import Slider from '../components/Slider';
 
 export default function SettingsScreen({ navigation }) {
@@ -24,6 +25,14 @@ export default function SettingsScreen({ navigation }) {
   const [autoDeleteOld, setAutoDeleteOld] = useState(false);
   const [autoDeleteDays, setAutoDeleteDays] = useState(60);
 
+  // GPS settings
+  const [gpsDefault, setGpsDefault] = useState(true);
+
+  // Bulk download
+  const [downloading, setDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState('');
+  const [downloadMaxDays, setDownloadMaxDays] = useState(60);
+
   useEffect(() => {
     loadSettings();
   }, []);
@@ -37,6 +46,8 @@ export default function SettingsScreen({ navigation }) {
     setLazyLoadImages((await getSetting('lazyLoadImages', 'true')) === 'true');
     setAutoDeleteOld((await getSetting('autoDeleteOld', 'false')) === 'true');
     setAutoDeleteDays(parseInt(await getSetting('autoDeleteDays', '60')));
+    setGpsDefault((await getSetting('gpsDefault', 'true')) === 'true');
+    setDownloadMaxDays(parseInt(await getSetting('downloadMaxDays', '60')));
 
     const size = await getCacheSize();
     setCacheSize(size);
@@ -73,6 +84,77 @@ export default function SettingsScreen({ navigation }) {
         },
       ]
     );
+  };
+
+  const handleBulkDownload = () => {
+    Alert.alert(
+      'Bilder herunterladen',
+      `Alle Projektbilder der letzten ${downloadMaxDays} Tage werden heruntergeladen.\n\nDies kann je nach Menge einige Zeit dauern.`,
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        { text: 'Herunterladen', onPress: startBulkDownload },
+      ]
+    );
+  };
+
+  const startBulkDownload = async () => {
+    setDownloading(true);
+    setDownloadProgress('Projekte laden...');
+
+    try {
+      const projects = await getCachedProjects();
+      let totalDownloaded = 0;
+      let totalImages = 0;
+
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - downloadMaxDays);
+
+      for (let i = 0; i < projects.length; i++) {
+        const project = projects[i];
+        if (!project.folder_id) continue;
+
+        setDownloadProgress(`Projekt ${i + 1}/${projects.length}: ${project.folder_name}`);
+
+        try {
+          const images = await fetchProjectImages(project.folder_id);
+
+          // Filter by date
+          const filteredImages = downloadMaxDays > 0
+            ? images.filter(img => new Date(img.modified_time) >= cutoffDate)
+            : images;
+
+          totalImages += filteredImages.length;
+
+          if (filteredImages.length > 0) {
+            const downloaded = await downloadProjectImages(
+              project.id,
+              filteredImages,
+              (done, total) => {
+                setDownloadProgress(
+                  `${project.folder_name}: ${done}/${total} Bilder\n(Projekt ${i + 1}/${projects.length})`
+                );
+              }
+            );
+            totalDownloaded += downloaded;
+          }
+        } catch (error) {
+          console.error(`Failed to download images for project ${project.folder_name}:`, error);
+        }
+      }
+
+      const size = await getCacheSize();
+      setCacheSize(size);
+
+      Alert.alert(
+        'Download abgeschlossen',
+        `${totalDownloaded} von ${totalImages} Bildern heruntergeladen.`
+      );
+    } catch (error) {
+      Alert.alert('Fehler', 'Download fehlgeschlagen: ' + error.message);
+    } finally {
+      setDownloading(false);
+      setDownloadProgress('');
+    }
   };
 
   const handleDisconnectDrive = () => {
@@ -143,6 +225,16 @@ export default function SettingsScreen({ navigation }) {
     { label: 'Nie', value: 0 },
   ];
 
+  const downloadDayOptions = [
+    { label: '7 Tage', value: 7 },
+    { label: '14 Tage', value: 14 },
+    { label: '30 Tage', value: 30 },
+    { label: '60 Tage', value: 60 },
+    { label: '90 Tage', value: 90 },
+    { label: '180 Tage', value: 180 },
+    { label: 'Alle', value: 0 },
+  ];
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* User */}
@@ -199,11 +291,65 @@ export default function SettingsScreen({ navigation }) {
             thumbColor="white"
           />
         </View>
+
+        <View style={styles.settingRow}>
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>GPS standardmäßig aktiv</Text>
+            <Text style={styles.settingDesc}>Standortdaten bei jedem Foto speichern</Text>
+          </View>
+          <Switch
+            value={gpsDefault}
+            onValueChange={async (v) => { setGpsDefault(v); await saveSetting('gpsDefault', v); }}
+            trackColor={{ false: colors.bgTertiary, true: colors.accent }}
+            thumbColor="white"
+          />
+        </View>
+      </View>
+
+      {/* Bilder herunterladen */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Bilder herunterladen</Text>
+
+        <View style={styles.settingBlock}>
+          <Text style={styles.settingLabel}>Zeitraum für Bilder-Download</Text>
+          <Text style={styles.settingDesc}>Nur Bilder herunterladen, die nicht älter sind als:</Text>
+          <View style={styles.optionGrid}>
+            {downloadDayOptions.map(opt => (
+              <TouchableOpacity
+                key={opt.value}
+                style={[styles.optionChip, downloadMaxDays === opt.value && styles.optionChipActive]}
+                onPress={async () => { setDownloadMaxDays(opt.value); await saveSetting('downloadMaxDays', opt.value); }}
+              >
+                <Text style={[styles.optionChipText, downloadMaxDays === opt.value && styles.optionChipTextActive]}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        <TouchableOpacity
+          style={[styles.downloadButton, downloading && styles.buttonDisabled]}
+          onPress={handleBulkDownload}
+          disabled={downloading}
+        >
+          {downloading ? (
+            <View style={styles.downloadingRow}>
+              <ActivityIndicator size="small" color={colors.accent} />
+              <Text style={styles.downloadingText}>{downloadProgress}</Text>
+            </View>
+          ) : (
+            <>
+              <Ionicons name="download-outline" size={20} color={colors.accent} />
+              <Text style={styles.downloadButtonText}>Alle Projektbilder herunterladen</Text>
+            </>
+          )}
+        </TouchableOpacity>
       </View>
 
       {/* Image Sync & Compression */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Bilder-Download</Text>
+        <Text style={styles.sectionTitle}>Bilder-Anzeige</Text>
 
         <View style={styles.settingRow}>
           <View style={styles.settingInfo}>
@@ -433,4 +579,15 @@ const styles = StyleSheet.create({
     borderColor: colors.error, marginTop: 4,
   },
   dangerButtonText: { color: colors.error, fontSize: 15, fontWeight: '500' },
+
+  // Download section
+  downloadButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, padding: 14, borderRadius: 10, borderWidth: 1,
+    borderColor: colors.accent, marginTop: 12,
+  },
+  downloadButtonText: { color: colors.accent, fontSize: 15, fontWeight: '500' },
+  buttonDisabled: { opacity: 0.6 },
+  downloadingRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  downloadingText: { color: colors.textSecondary, fontSize: 13, textAlign: 'center' },
 });

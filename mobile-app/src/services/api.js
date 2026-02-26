@@ -103,7 +103,7 @@ export const createProject = async (name) => {
 /**
  * Upload an image to Google Drive inbox
  */
-export const uploadImage = async (fileUri, fileName, mimeType, projectId = null, projectName = null) => {
+export const uploadImage = async (fileUri, fileName, mimeType, projectId = null, projectName = null, gpsData = null) => {
   const connection = await getActiveDriveConnection();
   if (!connection?.inbox_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
 
@@ -131,10 +131,21 @@ export const uploadImage = async (fileUri, fileName, mimeType, projectId = null,
     userEmail,
     projectId: projectId || null,
     projectName: projectName || null,
+    gps: gpsData || null,
     timestamp,
   };
 
   await createJsonFile(connection.inbox_folder_id, metaFileName, metadata);
+
+  // Also save as recent photo
+  try {
+    const { addRecentPhoto } = require('./database');
+    await addRecentPhoto(
+      fileUri, fileName, mimeType,
+      projectId, projectName,
+      gpsData ? JSON.stringify(gpsData) : null
+    );
+  } catch {}
 
   return { success: true, fileId: uploadedFile.id };
 };

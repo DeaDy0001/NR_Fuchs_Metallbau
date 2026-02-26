@@ -1,15 +1,19 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl, Image, Dimensions } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { getCachedProjects } from '../services/database';
+import { getRecentPhotos } from '../services/database';
 import { syncMetadata } from '../services/syncService';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const PHOTO_COLUMNS = 3;
+const PHOTO_SIZE = (SCREEN_WIDTH - 32 - (PHOTO_COLUMNS - 1) * 4) / PHOTO_COLUMNS;
 
 export default function HomeScreen({ navigation }) {
   const { userName, queueCount, activeConnection } = useApp();
-  const [recentProjects, setRecentProjects] = useState([]);
+  const [recentPhotos, setRecentPhotos] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
 
   useFocusEffect(
@@ -20,8 +24,8 @@ export default function HomeScreen({ navigation }) {
 
   const loadData = async () => {
     try {
-      const projects = await getCachedProjects();
-      setRecentProjects(projects.slice(0, 5));
+      const photos = await getRecentPhotos(18);
+      setRecentPhotos(photos);
     } catch (error) {
       console.error('Failed to load home data:', error);
     }
@@ -106,37 +110,39 @@ export default function HomeScreen({ navigation }) {
               </TouchableOpacity>
             </View>
 
-            {/* Recent Projects */}
-            {recentProjects.length > 0 && (
+            {/* Recent Photos */}
+            {recentPhotos.length > 0 && (
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionTitle}>Letzte Projekte</Text>
-                  <TouchableOpacity onPress={() => navigation.navigate('Projects')}>
-                    <Text style={styles.seeAllText}>Alle anzeigen</Text>
-                  </TouchableOpacity>
+                  <Text style={styles.sectionTitle}>Letzte Fotos</Text>
                 </View>
-                {recentProjects.map(project => (
-                  <TouchableOpacity
-                    key={project.id}
-                    style={styles.projectItem}
-                    onPress={() => navigation.navigate('ProjectDetail', {
-                      projectId: project.id,
-                      projectName: project.folder_name,
-                      projectFolderId: project.folder_id,
-                    })}
-                  >
-                    <View style={[styles.projectColor, { backgroundColor: project.color || colors.accent }]} />
-                    <View style={styles.projectInfo}>
-                      <Text style={styles.projectName}>{project.folder_name}</Text>
-                      <Text style={styles.projectMeta}>{project.image_count || 0} Bilder</Text>
+                <View style={styles.photoGrid}>
+                  {recentPhotos.map((photo, index) => (
+                    <View key={photo.id} style={styles.photoCard}>
+                      <Image
+                        source={{ uri: photo.thumbnail_uri || photo.file_uri }}
+                        style={styles.photoImage}
+                        resizeMode="cover"
+                      />
+                      {photo.project_name && (
+                        <View style={styles.photoProjectBadge}>
+                          <Text style={styles.photoProjectText} numberOfLines={1}>
+                            {photo.project_name}
+                          </Text>
+                        </View>
+                      )}
+                      {photo.gps_data && (
+                        <View style={styles.photoGpsBadge}>
+                          <Ionicons name="location" size={10} color={colors.success} />
+                        </View>
+                      )}
                     </View>
-                    <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-                  </TouchableOpacity>
-                ))}
+                  ))}
+                </View>
               </View>
             )}
 
-            {recentProjects.length === 0 && (
+            {recentPhotos.length === 0 && (
               <View style={styles.emptyState}>
                 <Ionicons name="images-outline" size={48} color={colors.textTertiary} />
                 <Text style={styles.emptyTitle}>Willkommen!</Text>
@@ -179,15 +185,27 @@ const styles = StyleSheet.create({
   section: { padding: 16, paddingTop: 8 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: colors.textPrimary },
-  seeAllText: { fontSize: 14, color: colors.accent },
-  projectItem: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: colors.cardBg,
-    borderRadius: 10, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: colors.border,
+
+  // Photo grid
+  photoGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 4,
   },
-  projectColor: { width: 4, height: 36, borderRadius: 2, marginRight: 12 },
-  projectInfo: { flex: 1 },
-  projectName: { fontSize: 15, fontWeight: '600', color: colors.textPrimary },
-  projectMeta: { fontSize: 13, color: colors.textTertiary, marginTop: 2 },
+  photoCard: {
+    width: PHOTO_SIZE, height: PHOTO_SIZE,
+    borderRadius: 8, overflow: 'hidden',
+    backgroundColor: colors.cardBg,
+  },
+  photoImage: { width: '100%', height: '100%' },
+  photoProjectBadge: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 6, paddingVertical: 3,
+  },
+  photoProjectText: { color: 'white', fontSize: 10, fontWeight: '500' },
+  photoGpsBadge: {
+    position: 'absolute', top: 4, right: 4,
+    backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 8, padding: 3,
+  },
+
   emptyState: { alignItems: 'center', justifyContent: 'center', padding: 48, gap: 12 },
   emptyTitle: { fontSize: 20, fontWeight: '600', color: colors.textPrimary },
   emptyText: { fontSize: 14, color: colors.textTertiary, textAlign: 'center', lineHeight: 20 },

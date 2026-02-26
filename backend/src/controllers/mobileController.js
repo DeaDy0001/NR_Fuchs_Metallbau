@@ -1165,9 +1165,12 @@ const initPcLogin = (req, res) => {
       expiresAt: Date.now() + MOBILE_LOGIN_EXPIRY_MS,
     });
 
-    // Build the PC login URL (localhost so it works without redirect URI registration)
+    // Build the PC login URL - use the request's host header so it works from any device
+    // If the app is accessed via IP (e.g. 192.168.1.x), the link will also use that IP
     const port = process.env.PORT || 3001;
-    const loginUrl = `http://localhost:${port}/api/mobile/auth/pc-login/${sessionId}`;
+    const host = req.headers.host || `localhost:${port}`;
+    const protocol = req.protocol || 'http';
+    const loginUrl = `${protocol}://${host}/api/mobile/auth/pc-login/${sessionId}`;
 
     res.json({ sessionId, loginUrl });
   } catch (error) {

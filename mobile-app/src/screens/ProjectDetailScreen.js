@@ -1,9 +1,13 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, Dimensions, RefreshControl, ActivityIndicator } from 'react-native';
+import {
+  View, Text, StyleSheet, FlatList, TouchableOpacity, Image,
+  Dimensions, RefreshControl, ActivityIndicator, Alert,
+} from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { fetchProjectImages, getImageUrl } from '../services/api';
+import { downloadProjectImages } from '../services/syncService';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const NUM_COLUMNS = 3;
@@ -15,6 +19,8 @@ export default function ProjectDetailScreen({ navigation, route }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [imageAuth, setImageAuth] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState('');
 
   useFocusEffect(
     useCallback(() => {
@@ -24,7 +30,6 @@ export default function ProjectDetailScreen({ navigation, route }) {
   );
 
   const loadImageAuth = async () => {
-    // Get auth headers for Drive image access
     try {
       const source = await getImageUrl('dummy');
       if (source) {
@@ -35,7 +40,6 @@ export default function ProjectDetailScreen({ navigation, route }) {
 
   const loadImages = async () => {
     try {
-      // Use folder_id from the project to list images
       const folderId = projectFolderId;
       if (!folderId) {
         console.log('[Fuchs] No folder_id for project', projectName);
@@ -56,6 +60,47 @@ export default function ProjectDetailScreen({ navigation, route }) {
     setRefreshing(true);
     await loadImages();
     setRefreshing(false);
+  };
+
+  const handleSyncImages = async () => {
+    if (images.length === 0) {
+      Alert.alert('Keine Bilder', 'Dieses Projekt hat noch keine Bilder zum Herunterladen.');
+      return;
+    }
+
+    Alert.alert(
+      'Bilder herunterladen',
+      `${images.length} ${images.length === 1 ? 'Bild' : 'Bilder'} aus "${projectName}" herunterladen?`,
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        { text: 'Herunterladen', onPress: startSync },
+      ]
+    );
+  };
+
+  const startSync = async () => {
+    setSyncing(true);
+    setSyncProgress('Starte Download...');
+
+    try {
+      const downloaded = await downloadProjectImages(
+        projectId,
+        images,
+        (done, total) => {
+          setSyncProgress(`${done} / ${total} Bilder`);
+        }
+      );
+
+      Alert.alert(
+        'Download abgeschlossen',
+        `${downloaded} von ${images.length} Bildern heruntergeladen.`
+      );
+    } catch (error) {
+      Alert.alert('Fehler', 'Download fehlgeschlagen: ' + error.message);
+    } finally {
+      setSyncing(false);
+      setSyncProgress('');
+    }
   };
 
   const renderImage = ({ item }) => (
@@ -108,6 +153,25 @@ export default function ProjectDetailScreen({ navigation, route }) {
             <Text style={styles.imageCount}>
               {images.length} {images.length === 1 ? 'Bild' : 'Bilder'}
             </Text>
+
+            {/* Sync button */}
+            <TouchableOpacity
+              style={[styles.syncButton, syncing && styles.syncButtonDisabled]}
+              onPress={handleSyncImages}
+              disabled={syncing}
+            >
+              {syncing ? (
+                <>
+                  <ActivityIndicator size="small" color={colors.accent} />
+                  <Text style={styles.syncButtonText}>{syncProgress}</Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="download-outline" size={18} color={colors.accent} />
+                  <Text style={styles.syncButtonText}>Bilder laden</Text>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
         }
         ListEmptyComponent={
@@ -132,8 +196,18 @@ export default function ProjectDetailScreen({ navigation, route }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bgPrimary },
   loadingContainer: { flex: 1, backgroundColor: colors.bgPrimary, alignItems: 'center', justifyContent: 'center' },
-  header: { paddingHorizontal: 16, paddingVertical: 12 },
+  header: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 12,
+  },
   imageCount: { color: colors.textSecondary, fontSize: 14 },
+  syncButton: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8,
+    borderWidth: 1, borderColor: colors.accent,
+  },
+  syncButtonDisabled: { opacity: 0.6 },
+  syncButtonText: { color: colors.accent, fontSize: 13, fontWeight: '500' },
   grid: { padding: 14 },
   imageCard: {
     width: IMAGE_SIZE, height: IMAGE_SIZE, margin: 2,

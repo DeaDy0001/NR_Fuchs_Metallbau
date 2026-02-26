@@ -48,6 +48,8 @@ const initTables = async () => {
       notes TEXT,
       tags TEXT DEFAULT '[]',
       image_count INTEGER DEFAULT 0,
+      is_own INTEGER DEFAULT 0,
+      is_starred INTEGER DEFAULT 0,
       updated_at TEXT,
       synced_at TEXT DEFAULT (datetime('now'))
     );
@@ -71,6 +73,18 @@ const initTables = async () => {
       name TEXT NOT NULL,
       color TEXT DEFAULT '#3b82f6',
       synced_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS recent_photos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      file_uri TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      mime_type TEXT,
+      project_id TEXT,
+      project_name TEXT,
+      gps_data TEXT,
+      thumbnail_uri TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS drive_connections (
@@ -107,8 +121,21 @@ export const setSetting = async (key, value) => {
 // Upload queue helpers
 // ============================================================
 
-export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = null, projectName = null, projectFolderId = null) => {
+export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = null, projectName = null, projectFolderId = null, gpsData = null) => {
   const db = await getDb();
+
+  // Also add to recent photos for the home screen
+  try {
+    await db.runAsync(
+      'INSERT INTO recent_photos (file_uri, file_name, mime_type, project_id, project_name, gps_data, thumbnail_uri) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [fileUri, fileName, mimeType, projectId, projectName, gpsData, fileUri]
+    );
+    // Keep only last 50 recent photos
+    await db.runAsync(
+      'DELETE FROM recent_photos WHERE id NOT IN (SELECT id FROM recent_photos ORDER BY created_at DESC LIMIT 50)'
+    );
+  } catch {}
+
   return await db.runAsync(
     'INSERT INTO upload_queue (file_uri, file_name, mime_type, project_id, project_name, project_folder_id) VALUES (?, ?, ?, ?, ?, ?)',
     [fileUri, fileName, mimeType, projectId, projectName, projectFolderId]
@@ -154,15 +181,18 @@ export const cacheProjects = async (projects) => {
   await db.runAsync('DELETE FROM cached_projects');
   for (const p of projects) {
     await db.runAsync(
-      'INSERT OR REPLACE INTO cached_projects (id, folder_name, folder_id, color, notes, tags, image_count, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [String(p.id), p.folder_name, p.folder_id || '', p.color, p.notes, p.tags || '[]', p.image_count || 0, p.updated_at]
+      'INSERT OR REPLACE INTO cached_projects (id, folder_name, folder_id, color, notes, tags, image_count, is_own, is_starred, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [String(p.id), p.folder_name, p.folder_id || '', p.color, p.notes, p.tags || '[]', p.image_count || 0, p.is_own ? 1 : 0, p.is_starred ? 1 : 0, p.updated_at]
     );
   }
 };
 
 export const getCachedProjects = async () => {
   const db = await getDb();
-  return await db.getAllAsync('SELECT * FROM cached_projects ORDER BY updated_at DESC');
+  // Own projects first, then starred, then the rest - all sorted by updated_at
+  return await db.getAllAsync(
+    'SELECT * FROM cached_projects ORDER BY is_own DESC, is_starred DESC, updated_at DESC'
+  );
 };
 
 export const cacheTags = async (tags) => {
@@ -223,4 +253,28 @@ export const updateDriveConnectionFolders = async (id, metaFolderId, inboxFolder
 export const removeDriveConnection = async (id) => {
   const db = await getDb();
   await db.runAsync('DELETE FROM drive_connections WHERE id = ?', [id]);
+};
+
+// ============================================================
+// Recent photos helpers
+// ============================================================
+
+export const addRecentPhoto = async (fileUri, fileName, mimeType, projectId = null, projectName = null, gpsData = null) => {
+  const db = await getDb();
+  await db.runAsync(
+    'INSERT INTO recent_photos (file_uri, file_name, mime_type, project_id, project_name, gps_data, thumbnail_uri) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [fileUri, fileName, mimeType, projectId, projectName, gpsData, fileUri]
+  );
+  // Keep only last 50
+  await db.runAsync(
+    'DELETE FROM recent_photos WHERE id NOT IN (SELECT id FROM recent_photos ORDER BY created_at DESC LIMIT 50)'
+  );
+};
+
+export const getRecentPhotos = async (limit = 20) => {
+  const db = await getDb();
+  return await db.getAllAsync(
+    'SELECT * FROM recent_photos ORDER BY created_at DESC LIMIT ?',
+    [limit]
+  );
 };
