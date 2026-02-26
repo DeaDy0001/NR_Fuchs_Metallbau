@@ -225,35 +225,38 @@ function MobileAppSettings() {
           )}
         </div>
 
-        {/* Google Cloud Console redirect URI notice */}
-        {qrData && qrData.mobileCallbackUrl && (
+        {/* Mobile OAuth setup notice */}
+        {qrData && !qrData.hasMobileClientId && (
           <div className="info-box" style={{ marginTop: 16, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10, padding: 16 }}>
             <p style={{ fontSize: 13, fontWeight: 600, color: '#f59e0b', marginBottom: 8 }}>
-              Wichtig: Google Cloud Console Einrichtung
+              Wichtig: Mobile OAuth einrichten
             </p>
             <p style={{ fontSize: 13, color: '#94a3b8', marginBottom: 8, lineHeight: 1.5 }}>
-              Füge diese URL als <strong>Autorisierte Weiterleitungs-URI</strong> in der Google Cloud Console hinzu
-              (APIs & Dienste &rarr; Anmeldedaten &rarr; OAuth 2.0 Client-ID bearbeiten):
+              Erstelle in der <strong>Google Cloud Console</strong> eine neue OAuth-Client-ID vom Typ <strong>&quot;Desktop-App&quot;</strong>
+              (APIs &amp; Dienste &rarr; Anmeldedaten &rarr; Anmeldedaten erstellen &rarr; OAuth-Client-ID &rarr; Anwendungstyp: Desktop-App).
             </p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <code style={{
-                background: '#16163a', border: '1px solid #2a2a4a', borderRadius: 6,
-                padding: '8px 12px', fontSize: 13, color: '#e2e8f0', fontFamily: 'monospace',
-                flex: 1, wordBreak: 'break-all',
-              }}>
-                {qrData.mobileCallbackUrl}
-              </code>
-              <button
-                className="btn btn-secondary"
-                style={{ flexShrink: 0, padding: '8px 12px' }}
-                onClick={() => {
-                  navigator.clipboard.writeText(qrData.mobileCallbackUrl);
-                  showNotification('Callback-URL kopiert');
-                }}
-              >
-                Kopieren
-              </button>
-            </div>
+            <p style={{ fontSize: 13, color: '#94a3b8', marginBottom: 8, lineHeight: 1.5 }}>
+              Trage die Client-ID und das Client-Secret in die <code style={{ background: '#16163a', padding: '2px 6px', borderRadius: 4, fontSize: 12 }}>.env</code> Datei ein:
+            </p>
+            <code style={{
+              display: 'block', background: '#16163a', border: '1px solid #2a2a4a', borderRadius: 6,
+              padding: '10px 12px', fontSize: 12, color: '#e2e8f0', fontFamily: 'monospace',
+              lineHeight: 1.6, whiteSpace: 'pre',
+            }}>
+{`GOOGLE_MOBILE_CLIENT_ID=...apps.googleusercontent.com
+GOOGLE_MOBILE_CLIENT_SECRET=...`}
+            </code>
+            <p style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>
+              Desktop-App Client-IDs erlauben benutzerdefinierte Redirect-URIs, die von der Handy-App benötigt werden. Funktioniert auf jedem Server ohne IP-Registrierung.
+            </p>
+          </div>
+        )}
+        {qrData && qrData.hasMobileClientId && (
+          <div className="info-box" style={{ marginTop: 16, background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 10, padding: 12 }}>
+            <p style={{ fontSize: 13, color: '#4ade80', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <CheckCircle size={16} />
+              Mobile OAuth konfiguriert (Desktop-App Client-ID)
+            </p>
           </div>
         )}
 

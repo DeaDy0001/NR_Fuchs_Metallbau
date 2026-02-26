@@ -37,7 +37,10 @@ router.post('/connect-token', mobile.generateConnectToken);
 // Landing page when QR code is scanned with phone camera
 router.get('/connect/:token', mobile.connectLandingPage);
 
-// Mobile OAuth proxy (called from phone's browser)
+// Mobile OAuth - auth code exchange (for Desktop app type client IDs)
+router.post('/auth/exchange', mobile.mobileExchangeCode);
+
+// Mobile OAuth proxy (fallback for Web application type client IDs)
 router.get('/auth/google', mobile.mobileGoogleAuth);
 router.get('/auth/callback', mobile.mobileGoogleCallback);
 router.post('/auth/refresh', mobile.mobileRefreshToken);

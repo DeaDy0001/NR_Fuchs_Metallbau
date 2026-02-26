@@ -41,10 +41,13 @@ const getNetworkAddresses = () => {
  */
 const generateConnectToken = (req, res) => {
   try {
-    const googleClientId = process.env.GOOGLE_CLIENT_ID;
+    // Use GOOGLE_MOBILE_CLIENT_ID (Desktop app type) for mobile OAuth
+    // Falls back to GOOGLE_CLIENT_ID (Web application type) if not set
+    const googleMobileClientId = process.env.GOOGLE_MOBILE_CLIENT_ID;
+    const googleClientId = googleMobileClientId || process.env.GOOGLE_CLIENT_ID;
     if (!googleClientId) {
       return res.status(400).json({
-        error: 'Google OAuth nicht konfiguriert. Bitte GOOGLE_CLIENT_ID in der .env Datei setzen.'
+        error: 'Google OAuth nicht konfiguriert. Bitte GOOGLE_CLIENT_ID oder GOOGLE_MOBILE_CLIENT_ID in der .env Datei setzen.'
       });
     }
 
@@ -91,14 +94,17 @@ const generateConnectToken = (req, res) => {
       serverUrl,
     };
 
+    const hasMobileClientId = !!googleMobileClientId;
+
     res.json({
       qrData: JSON.stringify(qrPayload),
       name: drivePath.name,
       rootFolderId,
       googleClientId,
       serverUrl,
+      hasMobileClientId,
       networkAddresses: networkAddresses.map(a => ({ name: a.name, address: a.address, url: `http://${a.address}:${serverPort}` })),
-      mobileCallbackUrl: `${serverUrl}/api/mobile/auth/callback`,
+      mobileCallbackUrl: hasMobileClientId ? null : `${serverUrl}/api/mobile/auth/callback`,
       drivePaths: drivePaths.map(dp => ({ id: dp.id, name: dp.name }))
     });
   } catch (error) {
@@ -899,6 +905,89 @@ const mobileRefreshToken = async (req, res) => {
   }
 };
 
+/**
+ * Exchange authorization code for tokens (for Desktop app type client IDs)
+ * POST /api/mobile/auth/exchange
+ * Body: { code, code_verifier, redirect_uri, client_id }
+ *
+ * The mobile app gets an auth code via expo-auth-session (using PKCE with custom scheme redirect).
+ * It sends the code here for exchange because the backend has the client_secret.
+ */
+const mobileExchangeCode = async (req, res) => {
+  try {
+    const { code, code_verifier, redirect_uri, client_id } = req.body;
+
+    if (!code) {
+      return res.status(400).json({ error: 'Authorization code ist erforderlich' });
+    }
+
+    // Determine which client credentials to use
+    const mobileClientId = process.env.GOOGLE_MOBILE_CLIENT_ID;
+    const mobileClientSecret = process.env.GOOGLE_MOBILE_CLIENT_SECRET;
+    const webClientId = process.env.GOOGLE_CLIENT_ID;
+    const webClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+    let useClientId = client_id || mobileClientId || webClientId;
+    let useClientSecret;
+
+    if (useClientId === mobileClientId) {
+      useClientSecret = mobileClientSecret;
+    } else if (useClientId === webClientId) {
+      useClientSecret = webClientSecret;
+    } else {
+      // Unknown client_id - try mobile secret first, then web
+      useClientSecret = mobileClientSecret || webClientSecret;
+    }
+
+    if (!useClientId || !useClientSecret) {
+      return res.status(500).json({ error: 'Google OAuth nicht konfiguriert' });
+    }
+
+    // Build token exchange request
+    const params = new URLSearchParams({
+      code,
+      client_id: useClientId,
+      client_secret: useClientSecret,
+      redirect_uri: redirect_uri || '',
+      grant_type: 'authorization_code',
+    });
+    if (code_verifier) params.set('code_verifier', code_verifier);
+
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params,
+    });
+
+    const tokenData = await tokenResponse.json();
+
+    if (!tokenResponse.ok) {
+      console.error('[Fuchs] Token exchange error:', tokenData);
+      return res.status(400).json({
+        error: tokenData.error_description || tokenData.error || 'Token-Austausch fehlgeschlagen'
+      });
+    }
+
+    // Fetch user info
+    const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    const userInfo = await userInfoResponse.json();
+
+    res.json({
+      access_token: tokenData.access_token,
+      refresh_token: tokenData.refresh_token || null,
+      expires_in: tokenData.expires_in || 3600,
+      user_name: userInfo.name || '',
+      user_email: userInfo.email || '',
+      user_photo: userInfo.picture || '',
+    });
+  } catch (error) {
+    console.error('[Fuchs] Code exchange error:', error);
+    res.status(500).json({ error: 'Fehler beim Token-Austausch: ' + error.message });
+  }
+};
+
 module.exports = {
   generateConnectToken,
   connectLandingPage,
@@ -916,4 +1005,5 @@ module.exports = {
   mobileGoogleAuth,
   mobileGoogleCallback,
   mobileRefreshToken,
+  mobileExchangeCode,
 };
