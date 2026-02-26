@@ -10,6 +10,20 @@ const UPLOADS_DIR = path.join(__dirname, '../../../uploads');
 const MOBILE_UPLOADS_DIR = path.join(UPLOADS_DIR, 'mobile');
 const THUMBNAILS_DIR = path.join(UPLOADS_DIR, 'thumbnails');
 
+// ============================================================
+// MOBILE PC-LOGIN SESSIONS (in-memory, auto-expire after 10min)
+// ============================================================
+const mobileLoginSessions = new Map();
+const MOBILE_LOGIN_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
+
+// Cleanup expired sessions every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of mobileLoginSessions) {
+    if (now > session.expiresAt) mobileLoginSessions.delete(id);
+  }
+}, 5 * 60 * 1000);
+
 // Ensure mobile uploads directory exists
 fs.ensureDirSync(MOBILE_UPLOADS_DIR);
 
@@ -1154,6 +1168,233 @@ const saveAdminCredentials = (req, res) => {
   }
 };
 
+// ============================================================
+// PC-LOGIN BRIDGE
+// Mobile app initiates, user completes OAuth on PC browser
+// ============================================================
+
+/**
+ * Initialize a PC-login session for the mobile app
+ * POST /api/mobile/auth/init-login
+ *
+ * The mobile app calls this when the Device Flow fails (e.g. wrong client type).
+ * Returns a session ID and a localhost URL the user opens on their PC.
+ */
+const initPcLogin = (req, res) => {
+  try {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+      return res.status(500).json({ error: 'Google OAuth nicht konfiguriert (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET fehlen).' });
+    }
+
+    const sessionId = crypto.randomBytes(24).toString('hex');
+
+    mobileLoginSessions.set(sessionId, {
+      status: 'pending',
+      tokens: null,
+      userInfo: null,
+      expiresAt: Date.now() + MOBILE_LOGIN_EXPIRY_MS,
+    });
+
+    // Build the PC login URL (localhost so it works without redirect URI registration)
+    const port = process.env.PORT || 3001;
+    const loginUrl = `http://localhost:${port}/api/mobile/auth/pc-login/${sessionId}`;
+
+    res.json({ sessionId, loginUrl });
+  } catch (error) {
+    console.error('[Fuchs] initPcLogin error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * PC-login page - opened in the desktop browser
+ * GET /api/mobile/auth/pc-login/:sessionId
+ *
+ * Redirects to Google OAuth with state=mobile_login:{sessionId}
+ * Uses the SAME redirect URI as the desktop OAuth (already registered in Google Cloud Console)
+ */
+const pcLoginPage = (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const session = mobileLoginSessions.get(sessionId);
+
+    if (!session || Date.now() > session.expiresAt) {
+      return res.status(410).send(`
+        <!DOCTYPE html><html><head><meta charset="utf-8"><title>Link abgelaufen</title>
+        <style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#1a1a2e;color:#fff}
+        .box{background:#16213e;padding:40px;border-radius:12px;text-align:center;max-width:400px}
+        h1{color:#e74c3c}</style></head>
+        <body><div class="box"><h1>Link abgelaufen</h1><p>Bitte starte den Login-Vorgang erneut in der Handy-App.</p></div></body></html>
+      `);
+    }
+
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback';
+
+    const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: [
+        'https://www.googleapis.com/auth/drive',
+        'https://www.googleapis.com/auth/userinfo.profile',
+        'https://www.googleapis.com/auth/userinfo.email',
+      ],
+      prompt: 'consent',
+      state: `mobile_login:${sessionId}`,
+    });
+
+    res.redirect(authUrl);
+  } catch (error) {
+    console.error('[Fuchs] pcLoginPage error:', error);
+    res.status(500).send('Fehler: ' + error.message);
+  }
+};
+
+/**
+ * Handle the OAuth callback for mobile PC-login
+ * Called from the auth callback route when state starts with "mobile_login:"
+ *
+ * @param {Request} req
+ * @param {Response} res
+ * @param {string} code - Authorization code from Google
+ * @param {string} sessionId - Mobile login session ID
+ */
+const handleMobilePcCallback = async (req, res, code, sessionId) => {
+  try {
+    const session = mobileLoginSessions.get(sessionId);
+    if (!session || Date.now() > session.expiresAt) {
+      return res.send(`
+        <!DOCTYPE html><html><head><meta charset="utf-8"><title>Session abgelaufen</title>
+        <style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#1a1a2e;color:#fff}
+        .box{background:#16213e;padding:40px;border-radius:12px;text-align:center;max-width:400px}
+        h1{color:#e74c3c}</style></head>
+        <body><div class="box"><h1>Session abgelaufen</h1><p>Bitte starte den Login erneut in der Handy-App.</p></div></body></html>
+      `);
+    }
+
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback';
+
+    const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+    const { tokens } = await oauth2Client.getToken(code);
+
+    // Fetch user info
+    const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
+    const userInfo = await userInfoResponse.json();
+
+    const expiresIn = tokens.expiry_date
+      ? Math.floor((tokens.expiry_date - Date.now()) / 1000)
+      : 3600;
+
+    // Store tokens in session for the mobile app to poll
+    session.status = 'complete';
+    session.tokens = {
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token || null,
+      expires_in: expiresIn,
+    };
+    session.userInfo = {
+      name: userInfo.name || '',
+      email: userInfo.email || '',
+      photo: userInfo.picture || '',
+    };
+
+    console.log(`[Fuchs] Mobile PC-login successful for ${userInfo.email || 'unknown'}`);
+
+    res.send(`
+      <!DOCTYPE html><html><head><meta charset="utf-8"><title>Anmeldung erfolgreich</title>
+      <style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#1a1a2e;color:#fff}
+      .box{background:#16213e;padding:40px;border-radius:12px;text-align:center;max-width:420px}
+      h1{color:#22c55e}.icon{font-size:64px;margin-bottom:16px}
+      p{color:#94a3b8;line-height:1.6}
+      button{background:#3b82f6;color:#fff;border:none;padding:12px 30px;border-radius:8px;cursor:pointer;font-size:16px;margin-top:16px}
+      button:hover{background:#2563eb}</style></head>
+      <body><div class="box">
+        <div class="icon">&#10004;</div>
+        <h1>Anmeldung erfolgreich!</h1>
+        <p>Du bist als <strong>${userInfo.email || userInfo.name || 'User'}</strong> angemeldet.</p>
+        <p>Geh zurueck zu deinem Handy &ndash; die App wird automatisch verbunden.</p>
+        <button onclick="window.close()">Fenster schliessen</button>
+      </div></body></html>
+    `);
+  } catch (error) {
+    console.error('[Fuchs] Mobile PC-login callback error:', error);
+    const session = mobileLoginSessions.get(sessionId);
+    if (session) {
+      session.status = 'error';
+      session.error = error.message;
+    }
+    res.send(`
+      <!DOCTYPE html><html><head><meta charset="utf-8"><title>Fehler</title>
+      <style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#1a1a2e;color:#fff}
+      .box{background:#16213e;padding:40px;border-radius:12px;text-align:center;max-width:420px}
+      h1{color:#e74c3c}p{color:#94a3b8;line-height:1.6}
+      .err{background:rgba(239,68,68,0.15);padding:12px;border-radius:8px;margin:16px 0;color:#fca5a5;word-break:break-word}</style></head>
+      <body><div class="box"><h1>Anmeldung fehlgeschlagen</h1><div class="err">${error.message}</div>
+      <p>Bitte versuche es erneut in der Handy-App.</p></div></body></html>
+    `);
+  }
+};
+
+/**
+ * Poll for PC-login result
+ * POST /api/mobile/auth/poll-login
+ * Body: { sessionId }
+ */
+const pollPcLogin = (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    if (!sessionId) {
+      return res.status(400).json({ error: 'sessionId fehlt' });
+    }
+
+    const session = mobileLoginSessions.get(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'session_expired', message: 'Login-Session nicht gefunden oder abgelaufen.' });
+    }
+
+    if (Date.now() > session.expiresAt) {
+      mobileLoginSessions.delete(sessionId);
+      return res.status(410).json({ error: 'session_expired', message: 'Login-Session abgelaufen.' });
+    }
+
+    if (session.status === 'complete' && session.tokens) {
+      // Return tokens and clean up
+      const result = {
+        status: 'complete',
+        access_token: session.tokens.access_token,
+        refresh_token: session.tokens.refresh_token,
+        expires_in: session.tokens.expires_in,
+        user_name: session.userInfo?.name || '',
+        user_email: session.userInfo?.email || '',
+        user_photo: session.userInfo?.photo || '',
+      };
+      mobileLoginSessions.delete(sessionId);
+      return res.json(result);
+    }
+
+    if (session.status === 'error') {
+      const error = session.error;
+      mobileLoginSessions.delete(sessionId);
+      return res.status(400).json({ error: 'login_failed', message: error });
+    }
+
+    // Still pending
+    res.json({ status: 'pending' });
+  } catch (error) {
+    console.error('[Fuchs] pollPcLogin error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 module.exports = {
   generateConnectToken,
   connectLandingPage,
@@ -1175,4 +1416,8 @@ module.exports = {
   mobileDeviceToken,
   getAdminCredentials,
   saveAdminCredentials,
+  initPcLogin,
+  pcLoginPage,
+  handleMobilePcCallback,
+  pollPcLogin,
 };

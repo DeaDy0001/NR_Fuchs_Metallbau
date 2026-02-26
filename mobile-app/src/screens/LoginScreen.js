@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  Alert, AppState, Linking, Platform,
+  Alert, AppState, Linking, Platform, ScrollView,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
@@ -12,13 +12,11 @@ import { getSetting } from '../services/database';
 import config from '../config';
 
 /**
- * LoginScreen - Google Sign-In using the Device Authorization Grant (RFC 8628).
+ * LoginScreen - Google Sign-In with automatic fallback:
  *
- * This flow works in Expo Go AND standalone builds without redirect URIs:
- * 1. App requests a device code from Google
- * 2. User opens browser to verify (code is pre-filled)
- * 3. App polls backend for token exchange (backend has client_secret)
- * 4. On success, stores tokens and proceeds
+ * 1. Try Device Authorization Flow (RFC 8628) - works if client is "TVs and Limited Input" type
+ * 2. If that fails, fall back to PC-Login Bridge - user signs in on the PC browser
+ *    (uses existing localhost redirect URI, no extra setup needed)
  */
 export default function LoginScreen() {
   const { onGoogleLogin, resetSetup } = useApp();
@@ -26,9 +24,16 @@ export default function LoginScreen() {
   const [serverUrl, setServerUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [authLoading, setAuthLoading] = useState(false);
+
+  // Device Flow state
   const [userCode, setUserCode] = useState(null);
   const [verificationUrl, setVerificationUrl] = useState(null);
   const [copied, setCopied] = useState(false);
+
+  // PC-Login Bridge state
+  const [pcLoginMode, setPcLoginMode] = useState(false);
+  const [pcLoginUrl, setPcLoginUrl] = useState(null);
+  const [pcSessionId, setPcSessionId] = useState(null);
 
   const deviceCodeRef = useRef(null);
   const pollTimerRef = useRef(null);
@@ -49,13 +54,18 @@ export default function LoginScreen() {
   // Poll immediately when app comes back to foreground
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active' && deviceCodeRef.current && !isPollingRef.current) {
-        console.log('[Fuchs] App foregrounded, resuming poll...');
-        pollForToken();
+      if (nextState === 'active' && !isPollingRef.current) {
+        if (deviceCodeRef.current) {
+          console.log('[Fuchs] App foregrounded, resuming device flow poll...');
+          pollForToken();
+        } else if (pcSessionId) {
+          console.log('[Fuchs] App foregrounded, resuming PC-login poll...');
+          pollPcLogin();
+        }
       }
     });
     return () => subscription?.remove();
-  }, [serverUrl, clientId]);
+  }, [serverUrl, clientId, pcSessionId]);
 
   const loadConfig = async () => {
     const id = await getSetting('googleClientId');
@@ -65,6 +75,33 @@ export default function LoginScreen() {
     setClientId(id);
     setServerUrl(url);
     setLoading(false);
+  };
+
+  // ---- Shared: handle successful token retrieval ----
+
+  const handleTokenSuccess = async (tokenData) => {
+    await storeTokens(tokenData.access_token, tokenData.refresh_token, tokenData.expires_in || 3600);
+
+    let userInfo;
+    if (tokenData.user_name || tokenData.user_email) {
+      userInfo = {
+        name: tokenData.user_name || '',
+        email: tokenData.user_email || '',
+        picture: tokenData.user_photo || '',
+      };
+    } else {
+      userInfo = await fetchUserInfo(tokenData.access_token);
+    }
+    await storeUserInfo(userInfo);
+
+    if (isMountedRef.current) {
+      setAuthLoading(false);
+      setUserCode(null);
+      setPcLoginMode(false);
+      setPcLoginUrl(null);
+      setPcSessionId(null);
+      onGoogleLogin(userInfo);
+    }
   };
 
   // ---- Device Authorization Flow ----
@@ -77,9 +114,9 @@ export default function LoginScreen() {
 
     setAuthLoading(true);
     setUserCode(null);
+    setPcLoginMode(false);
 
     try {
-      // Step 1: Request device code from Google
       const deviceFlowScopes = config.google.scopes;
       console.log('[Fuchs] Starting device authorization flow with scopes:', deviceFlowScopes);
       const deviceRes = await fetch('https://oauth2.googleapis.com/device/code', {
@@ -95,35 +132,28 @@ export default function LoginScreen() {
       console.log('[Fuchs] Device code response:', JSON.stringify(deviceData));
 
       if (!deviceRes.ok) {
-        if (deviceData.error === 'unauthorized_client') {
-          throw new Error(
-            'Dieser OAuth-Client unterstützt den Device-Flow nicht.\n\n' +
-            'Bitte erstelle in der Google Cloud Console einen neuen OAuth-Client vom Typ ' +
-            '"Fernseher und Geräte mit eingeschränkter Eingabe" (TVs and Limited Input Devices) ' +
-            'und trage die neue Client-ID im Admin-Bereich ein.'
-          );
+        // Device Flow not supported - fall back to PC-Login Bridge
+        if (deviceData.error === 'unauthorized_client' || deviceData.error === 'invalid_client') {
+          console.log('[Fuchs] Device flow not supported, falling back to PC-Login Bridge');
+          return startPcLogin();
         }
         throw new Error(deviceData.error_description || deviceData.error || 'Device-Code Anfrage fehlgeschlagen');
       }
 
       const { device_code, user_code, verification_url, expires_in, interval } = deviceData;
 
-      // Store for polling
       deviceCodeRef.current = device_code;
       pollIntervalRef.current = (interval || 5) * 1000;
       expiresAtRef.current = Date.now() + (expires_in * 1000);
 
-      // Step 2: Show code to user
       setUserCode(user_code);
       setVerificationUrl(verification_url);
 
-      // Step 3: Open browser with pre-filled code
       const verifyUrl = deviceData.verification_url_complete ||
         `${verification_url}?user_code=${user_code}`;
       console.log('[Fuchs] Opening verification URL:', verifyUrl);
       await Linking.openURL(verifyUrl);
 
-      // Step 4: Start polling for token
       pollForToken();
     } catch (error) {
       console.error('[Fuchs] Device flow error:', error);
@@ -142,7 +172,6 @@ export default function LoginScreen() {
 
     try {
       while (isMountedRef.current && deviceCodeRef.current && Date.now() < expiresAtRef.current) {
-        // Wait for the poll interval
         await new Promise(resolve => {
           pollTimerRef.current = setTimeout(resolve, pollIntervalRef.current);
         });
@@ -153,7 +182,6 @@ export default function LoginScreen() {
           let tokenData;
 
           if (serverUrl) {
-            // Exchange via backend (backend has client_secret)
             console.log('[Fuchs] Polling backend for device token...');
             const res = await fetch(`${serverUrl}/api/mobile/auth/device-token`, {
               method: 'POST',
@@ -165,7 +193,6 @@ export default function LoginScreen() {
             });
             tokenData = await res.json();
           } else {
-            // Direct exchange (may not work without client_secret)
             console.log('[Fuchs] Polling Google directly for device token...');
             const res = await fetch('https://oauth2.googleapis.com/token', {
               method: 'POST',
@@ -182,52 +209,24 @@ export default function LoginScreen() {
           console.log('[Fuchs] Poll response:', tokenData.error || 'success');
 
           if (tokenData.access_token) {
-            // Success! User completed auth in browser
             deviceCodeRef.current = null;
-            await storeTokens(tokenData.access_token, tokenData.refresh_token, tokenData.expires_in || 3600);
-
-            // Get user info
-            let userInfo;
-            if (tokenData.user_name || tokenData.user_email) {
-              userInfo = {
-                name: tokenData.user_name || '',
-                email: tokenData.user_email || '',
-                picture: tokenData.user_photo || '',
-              };
-            } else {
-              userInfo = await fetchUserInfo(tokenData.access_token);
-            }
-            await storeUserInfo(userInfo);
-
-            if (isMountedRef.current) {
-              setAuthLoading(false);
-              setUserCode(null);
-              onGoogleLogin(userInfo);
-            }
+            await handleTokenSuccess(tokenData);
             return;
           }
 
-          if (tokenData.error === 'authorization_pending') {
-            continue; // Still waiting for user
-          }
-
+          if (tokenData.error === 'authorization_pending') continue;
           if (tokenData.error === 'slow_down') {
-            pollIntervalRef.current += 5000; // Back off
+            pollIntervalRef.current += 5000;
             continue;
           }
-
           if (tokenData.error === 'expired_token') {
             throw new Error('Anmeldezeit abgelaufen. Bitte versuche es erneut.');
           }
-
           if (tokenData.error === 'access_denied') {
             throw new Error('Zugriff verweigert. Bitte erteile die erforderlichen Berechtigungen.');
           }
-
-          // Other error
           throw new Error(tokenData.error_description || tokenData.error || 'Authentifizierung fehlgeschlagen');
         } catch (pollError) {
-          // Network errors → just retry
           if (
             pollError.message?.includes('Network') ||
             pollError.message?.includes('fetch') ||
@@ -241,7 +240,6 @@ export default function LoginScreen() {
         }
       }
 
-      // Loop ended without success → expired
       if (isMountedRef.current && deviceCodeRef.current) {
         throw new Error('Anmeldezeit abgelaufen. Bitte versuche es erneut.');
       }
@@ -258,12 +256,131 @@ export default function LoginScreen() {
     }
   };
 
+  // ---- PC-Login Bridge (fallback when Device Flow not supported) ----
+
+  const startPcLogin = async () => {
+    if (!serverUrl) {
+      setAuthLoading(false);
+      Alert.alert(
+        'Server nicht erreichbar',
+        'Die PC-Anmeldung benötigt eine Verbindung zum Desktop-Server.\n\nBitte stelle sicher, dass die Desktop-Software läuft und scanne den QR-Code erneut.'
+      );
+      return;
+    }
+
+    try {
+      console.log('[Fuchs] Starting PC-Login Bridge...');
+      const res = await fetch(`${serverUrl}/api/mobile/auth/init-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Server-Fehler: ${res.status}`);
+      }
+
+      const { sessionId, loginUrl } = await res.json();
+      console.log('[Fuchs] PC-Login session created:', sessionId.substring(0, 8) + '...');
+
+      setPcLoginMode(true);
+      setPcLoginUrl(loginUrl);
+      setPcSessionId(sessionId);
+      setAuthLoading(false);
+
+      // Start polling for result
+      pollPcLoginLoop(sessionId);
+    } catch (error) {
+      console.error('[Fuchs] PC-Login init error:', error);
+      if (isMountedRef.current) {
+        setAuthLoading(false);
+        Alert.alert('Anmeldung fehlgeschlagen', error.message);
+      }
+    }
+  };
+
+  const pollPcLoginLoop = async (sessionId) => {
+    if (isPollingRef.current) return;
+    isPollingRef.current = true;
+
+    try {
+      const maxTime = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+      while (isMountedRef.current && sessionId && Date.now() < maxTime) {
+        await new Promise(resolve => {
+          pollTimerRef.current = setTimeout(resolve, 3000);
+        });
+
+        if (!isMountedRef.current) break;
+
+        try {
+          const res = await fetch(`${serverUrl}/api/mobile/auth/poll-login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId }),
+          });
+
+          const data = await res.json();
+
+          if (data.status === 'complete' && data.access_token) {
+            console.log('[Fuchs] PC-Login successful!');
+            await handleTokenSuccess(data);
+            return;
+          }
+
+          if (data.error === 'session_expired') {
+            throw new Error('Login-Session abgelaufen. Bitte versuche es erneut.');
+          }
+
+          if (data.error === 'login_failed') {
+            throw new Error(data.message || 'Anmeldung am PC fehlgeschlagen.');
+          }
+
+          // Still pending, continue polling
+        } catch (pollError) {
+          if (
+            pollError.message?.includes('Network') ||
+            pollError.message?.includes('fetch') ||
+            pollError.message?.includes('Failed to connect')
+          ) {
+            console.log('[Fuchs] Network error during PC-login poll, retrying...');
+            continue;
+          }
+          throw pollError;
+        }
+      }
+
+      if (isMountedRef.current) {
+        throw new Error('Anmeldezeit abgelaufen. Bitte versuche es erneut.');
+      }
+    } catch (error) {
+      console.error('[Fuchs] PC-Login poll error:', error);
+      if (isMountedRef.current) {
+        setPcLoginMode(false);
+        setPcLoginUrl(null);
+        setPcSessionId(null);
+        Alert.alert('Anmeldung fehlgeschlagen', error.message);
+      }
+    } finally {
+      isPollingRef.current = false;
+    }
+  };
+
+  const pollPcLogin = () => {
+    if (pcSessionId && !isPollingRef.current) {
+      pollPcLoginLoop(pcSessionId);
+    }
+  };
+
   const cancelAuth = () => {
     deviceCodeRef.current = null;
     if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     isPollingRef.current = false;
     setAuthLoading(false);
     setUserCode(null);
+    setPcLoginMode(false);
+    setPcLoginUrl(null);
+    setPcSessionId(null);
   };
 
   // ---- Render ----
@@ -277,7 +394,7 @@ export default function LoginScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.logoArea}>
         <View style={styles.iconCircle}>
           <Ionicons name="construct" size={48} color={colors.accent} />
@@ -287,7 +404,54 @@ export default function LoginScreen() {
       </View>
 
       <View style={styles.loginArea}>
-        {userCode ? (
+        {pcLoginMode && pcLoginUrl ? (
+          // PC-Login Bridge mode
+          <>
+            <Text style={styles.loginTitle}>Am PC anmelden</Text>
+            <Text style={styles.loginDesc}>
+              Öffne den folgenden Link im Browser auf deinem PC (wo die Fuchs-Software läuft):
+            </Text>
+
+            <TouchableOpacity
+              style={styles.codeBox}
+              activeOpacity={0.7}
+              onPress={async () => {
+                await Clipboard.setStringAsync(pcLoginUrl);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              }}
+            >
+              <Text style={styles.codeLabel}>Link für den PC-Browser:</Text>
+              <Text selectable style={styles.pcLinkText} numberOfLines={2}>{pcLoginUrl}</Text>
+              <View style={styles.copyRow}>
+                <Ionicons
+                  name={copied ? 'checkmark-circle' : 'copy-outline'}
+                  size={16}
+                  color={copied ? '#22c55e' : colors.textTertiary}
+                />
+                <Text style={[styles.copyHint, copied && { color: '#22c55e' }]}>
+                  {copied ? 'Kopiert!' : 'Tippen zum Kopieren'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            <View style={styles.waitingRow}>
+              <ActivityIndicator size="small" color={colors.accent} />
+              <Text style={styles.waitingText}>Warte auf Anmeldung am PC...</Text>
+            </View>
+
+            <View style={styles.stepsBox}>
+              <Text style={styles.stepText}>1. Öffne den Link oben im PC-Browser</Text>
+              <Text style={styles.stepText}>2. Melde dich mit Google an</Text>
+              <Text style={styles.stepText}>3. Die App verbindet sich automatisch</Text>
+            </View>
+
+            <TouchableOpacity style={styles.cancelButton} onPress={cancelAuth}>
+              <Text style={styles.cancelText}>Abbrechen</Text>
+            </TouchableOpacity>
+          </>
+        ) : userCode ? (
+          // Device Flow mode
           <>
             <Text style={styles.loginTitle}>Im Browser anmelden</Text>
             <Text style={styles.loginDesc}>
@@ -338,6 +502,7 @@ export default function LoginScreen() {
             </TouchableOpacity>
           </>
         ) : (
+          // Initial state - sign in button
           <>
             <Text style={styles.loginTitle}>Mit Google anmelden</Text>
             <Text style={styles.loginDesc}>
@@ -370,13 +535,13 @@ export default function LoginScreen() {
         <Ionicons name="qr-code-outline" size={16} color={colors.textTertiary} />
         <Text style={styles.rescanText}>QR-Code erneut scannen</Text>
       </TouchableOpacity>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    flexGrow: 1,
     backgroundColor: colors.bgPrimary,
     padding: 24,
     justifyContent: 'center',
@@ -462,6 +627,14 @@ const styles = StyleSheet.create({
     letterSpacing: 4,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
+  pcLinkText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.accent,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
   copyRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -482,6 +655,18 @@ const styles = StyleSheet.create({
   waitingText: {
     fontSize: 15,
     color: colors.textSecondary,
+  },
+  stepsBox: {
+    backgroundColor: 'rgba(59, 130, 246, 0.06)',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 16,
+    gap: 6,
+  },
+  stepText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    lineHeight: 18,
   },
   reopenButton: {
     flexDirection: 'row',

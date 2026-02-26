@@ -48,6 +48,11 @@ router.get('/auth/google', mobile.mobileGoogleAuth);
 router.get('/auth/callback', mobile.mobileGoogleCallback);
 router.post('/auth/refresh', mobile.mobileRefreshToken);
 
+// PC-Login Bridge (mobile app initiates, user completes OAuth on PC browser)
+router.post('/auth/init-login', mobile.initPcLogin);
+router.get('/auth/pc-login/:sessionId', mobile.pcLoginPage);
+router.post('/auth/poll-login', mobile.pollPcLogin);
+
 // Register device with token (called from app after QR scan)
 router.post('/register', mobile.registerDevice);
 
