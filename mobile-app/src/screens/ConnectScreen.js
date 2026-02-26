@@ -8,7 +8,7 @@ import { setSetting, getDriveConnections, addDriveConnection, setActiveDriveConn
 import { verifyConnection, findOrCreateFolder } from '../services/driveService';
 
 export default function ConnectScreen() {
-  const { isGoogleAuthed, onSetupComplete, onDriveConnect } = useApp();
+  const { isGoogleAuthed, onSetupComplete, onDriveConnect, logout, userEmail } = useApp();
   const [permission, requestPermission] = useCameraPermissions();
   const [connections, setConnections] = useState([]);
   const [showScanner, setShowScanner] = useState(false);
@@ -135,7 +135,14 @@ export default function ConnectScreen() {
         if (!folderName) {
           Alert.alert(
             'Zugriff verweigert',
-            'Der Drive-Ordner ist nicht für dein Google-Konto freigegeben.\n\nBitte den Administrator, den Ordner mit deinem Google-Konto zu teilen.'
+            `Der Drive-Ordner ist nicht für dein Google-Konto freigegeben.${userEmail ? `\n\nAngemeldet als: ${userEmail}` : ''}\n\nMögliche Lösungen:\n• Mit anderem Konto anmelden (unten "Konto wechseln")\n• Administrator bitten, den Ordner mit deinem Google-Konto zu teilen`,
+            [
+              { text: 'OK', style: 'cancel' },
+              {
+                text: 'Konto wechseln',
+                onPress: () => logout(),
+              },
+            ]
           );
           setScanned(false);
           setConnecting(false);
@@ -369,6 +376,30 @@ export default function ConnectScreen() {
         <Ionicons name="qr-code" size={20} color="white" />
         <Text style={styles.primaryButtonText}>QR-Code scannen</Text>
       </TouchableOpacity>
+
+      {userEmail ? (
+        <View style={styles.accountInfo}>
+          <Ionicons name="person-circle-outline" size={16} color={colors.textTertiary} />
+          <Text style={styles.accountEmail} numberOfLines={1}>{userEmail}</Text>
+        </View>
+      ) : null}
+
+      <TouchableOpacity
+        style={styles.switchAccountButton}
+        onPress={() => {
+          Alert.alert(
+            'Konto wechseln?',
+            'Du wirst abgemeldet und kannst dich mit einem anderen Google-Konto anmelden.',
+            [
+              { text: 'Abbrechen', style: 'cancel' },
+              { text: 'Abmelden', style: 'destructive', onPress: () => logout() },
+            ]
+          );
+        }}
+      >
+        <Ionicons name="swap-horizontal" size={16} color={colors.textTertiary} />
+        <Text style={styles.switchAccountText}>Konto wechseln</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -509,5 +540,26 @@ const styles = StyleSheet.create({
   linkText: {
     color: colors.accent,
     fontSize: 14,
+  },
+  accountInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 16,
+  },
+  accountEmail: {
+    fontSize: 13,
+    color: colors.textTertiary,
+  },
+  switchAccountButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 12,
+    padding: 8,
+  },
+  switchAccountText: {
+    fontSize: 13,
+    color: colors.textTertiary,
   },
 });
