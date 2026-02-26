@@ -210,22 +210,50 @@ const getProjectById = (req, res) => {
 };
 
 // Create a new project
-const createProject = (req, res) => {
+const createProject = async (req, res) => {
   try {
     const { folder_name, color, notes } = req.body;
 
-    if (!folder_name) {
-      return res.status(400).json({ error: 'Folder name is required' });
+    if (!folder_name || !folder_name.trim()) {
+      return res.status(400).json({ error: 'Projektname ist erforderlich' });
     }
 
+    const trimmedName = folder_name.trim();
+
+    // Validate folder name characters
+    const invalidChars = /[\\/:*?"<>|]/;
+    if (invalidChars.test(trimmedName)) {
+      return res.status(400).json({ error: 'Projektname enthält ungültige Zeichen (\\/:*?"<>|)' });
+    }
+
+    // Check for duplicate
+    const existing = db.prepare('SELECT id FROM projects WHERE folder_name = ?').get(trimmedName);
+    if (existing) {
+      return res.status(400).json({ error: 'Ein Projekt mit diesem Namen existiert bereits' });
+    }
+
+    // Create project in DB
     const stmt = db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)');
-    const result = stmt.run(folder_name, color || '#3b82f6', notes || '');
-    
+    const result = stmt.run(trimmedName, color || '#3b82f6', notes || '');
+
+    // Create folder on filesystem if project path is configured
+    const setting = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    if (setting?.project_path) {
+      const projectFolderPath = path.join(setting.project_path, trimmedName);
+      const bilderPath = path.join(projectFolderPath, 'Bilder');
+      await fs.ensureDir(bilderPath);
+      console.log(`📁 Created project folder: ${projectFolderPath}`);
+    }
+
     const newProject = db.prepare('SELECT * FROM projects WHERE id = ?').get(result.lastInsertRowid);
-    res.json(newProject);
+    const project = {
+      ...newProject,
+      tags: newProject.tags ? JSON.parse(newProject.tags) : []
+    };
+    res.json(project);
   } catch (error) {
     console.error('Error creating project:', error);
-    res.status(500).json({ error: 'Failed to create project' });
+    res.status(500).json({ error: 'Fehler beim Erstellen des Projekts' });
   }
 };
 

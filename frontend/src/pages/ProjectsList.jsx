@@ -35,6 +35,12 @@ function ProjectsList() {
   const [activeTab, setActiveTab] = useState('images'); // Active tab in project modal
   const [loadingFiles, setLoadingFiles] = useState(false);
 
+  // New project creation state
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectColor, setNewProjectColor] = useState('#3b82f6');
+  const [creating, setCreating] = useState(false);
+
   // Image viewer state (for full-screen viewing of project images)
   const [selectedImage, setSelectedImage] = useState(null);
   const [editingName, setEditingName] = useState('');
@@ -106,6 +112,37 @@ function ProjectsList() {
       alert('Fehler bei der Synchronisierung');
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleCreateProject = async () => {
+    if (!newProjectName.trim()) return;
+
+    setCreating(true);
+    try {
+      const response = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folder_name: newProjectName.trim(),
+          color: newProjectColor
+        })
+      });
+
+      if (response.ok) {
+        setShowCreateModal(false);
+        setNewProjectName('');
+        setNewProjectColor('#3b82f6');
+        loadProjects();
+      } else {
+        const error = await response.json();
+        alert(error.error || 'Fehler beim Erstellen des Projekts');
+      }
+    } catch (error) {
+      console.error('Error creating project:', error);
+      alert('Fehler beim Erstellen des Projekts');
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -618,6 +655,14 @@ function ProjectsList() {
           />
         </div>
         <div className="filter-buttons">
+          <button
+            className="btn btn-primary"
+            onClick={() => setShowCreateModal(true)}
+            title="Neues Projekt erstellen"
+          >
+            <Plus size={18} />
+            Neues Projekt
+          </button>
           <button
             className="btn btn-secondary"
             onClick={handleSync}
@@ -1151,6 +1196,68 @@ function ProjectsList() {
             }
           }}
         />
+      )}
+
+      {/* Create Project Modal */}
+      {showCreateModal && (
+        <div className="modal-overlay" onClick={() => setShowCreateModal(false)}>
+          <div className="create-project-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Neues Projekt erstellen</h2>
+              <button className="icon-btn" onClick={() => setShowCreateModal(false)}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label>Projektname (Ordnername)</label>
+                <input
+                  type="text"
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleCreateProject()}
+                  placeholder="z.B. Müller Balkongeländer"
+                  className="text-input"
+                  autoFocus
+                />
+              </div>
+              <div className="form-group">
+                <label>Farbe</label>
+                <div className="color-presets">
+                  {colorPresets.map(color => (
+                    <button
+                      key={color}
+                      className={`color-dot ${newProjectColor === color ? 'active' : ''}`}
+                      style={{ backgroundColor: color }}
+                      onClick={() => setNewProjectColor(color)}
+                    />
+                  ))}
+                  <input
+                    type="color"
+                    value={newProjectColor}
+                    onChange={(e) => setNewProjectColor(e.target.value)}
+                    className="color-input"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setShowCreateModal(false)}
+              >
+                Abbrechen
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleCreateProject}
+                disabled={!newProjectName.trim() || creating}
+              >
+                {creating ? 'Erstelle...' : 'Projekt erstellen'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
