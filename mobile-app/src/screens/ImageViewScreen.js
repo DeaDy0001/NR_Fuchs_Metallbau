@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, Image, Dimensions, TouchableOpacity,
-  ActivityIndicator, FlatList, ScrollView,
+  ActivityIndicator, FlatList, Animated, PanResponder,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -11,16 +11,44 @@ import { getImageUrl } from '../services/api';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const IMAGE_HEIGHT = SCREEN_HEIGHT - 110;
 
-// Single zoomable image using ScrollView (no external libraries needed)
+// Calculate distance between two touch points
+function getDistance(touches) {
+  const dx = touches[0].pageX - touches[1].pageX;
+  const dy = touches[0].pageY - touches[1].pageY;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+// Single zoomable image using PanResponder + Animated (works on Android & iOS)
 function ZoomableImage({ imageId, isActive }) {
   const [imageUri, setImageUri] = useState(null);
   const [imageHeaders, setImageHeaders] = useState(null);
   const [loading, setLoading] = useState(true);
-  const scrollRef = useRef(null);
+
+  // Zoom & pan state
+  const scaleVal = useRef(new Animated.Value(1)).current;
+  const translateXVal = useRef(new Animated.Value(0)).current;
+  const translateYVal = useRef(new Animated.Value(0)).current;
+
+  const currentScale = useRef(1);
+  const currentTranslateX = useRef(0);
+  const currentTranslateY = useRef(0);
+  const initialPinchDistance = useRef(0);
+  const pinchStartScale = useRef(1);
+  const lastTapTime = useRef(0);
+  const isPinching = useRef(false);
+  const panStartX = useRef(0);
+  const panStartY = useRef(0);
 
   useEffect(() => {
     if (isActive && !imageUri) {
       loadImage();
+    }
+  }, [isActive]);
+
+  // Reset zoom when becoming inactive
+  useEffect(() => {
+    if (isActive) {
+      resetZoom(false);
     }
   }, [isActive]);
 
@@ -41,23 +69,130 @@ function ZoomableImage({ imageId, isActive }) {
     }
   };
 
-  // Double tap to toggle zoom
-  const lastTap = useRef(0);
-  const handleTap = () => {
-    const now = Date.now();
-    if (now - lastTap.current < 300) {
-      // Double tap - toggle zoom
-      if (scrollRef.current) {
-        scrollRef.current.scrollResponderZoomTo({
-          x: 0, y: 0,
-          width: SCREEN_WIDTH,
-          height: IMAGE_HEIGHT,
-          animated: true,
-        });
-      }
+  const resetZoom = (animate = true) => {
+    currentScale.current = 1;
+    currentTranslateX.current = 0;
+    currentTranslateY.current = 0;
+    if (animate) {
+      Animated.parallel([
+        Animated.timing(scaleVal, { toValue: 1, duration: 200, useNativeDriver: true }),
+        Animated.timing(translateXVal, { toValue: 0, duration: 200, useNativeDriver: true }),
+        Animated.timing(translateYVal, { toValue: 0, duration: 200, useNativeDriver: true }),
+      ]).start();
+    } else {
+      scaleVal.setValue(1);
+      translateXVal.setValue(0);
+      translateYVal.setValue(0);
     }
-    lastTap.current = now;
   };
+
+  const zoomTo = (targetScale, focalX, focalY) => {
+    currentScale.current = targetScale;
+    const offsetX = -(focalX - SCREEN_WIDTH / 2) * (targetScale - 1) / targetScale;
+    const offsetY = -(focalY - IMAGE_HEIGHT / 2) * (targetScale - 1) / targetScale;
+    currentTranslateX.current = offsetX;
+    currentTranslateY.current = offsetY;
+    Animated.parallel([
+      Animated.timing(scaleVal, { toValue: targetScale, duration: 200, useNativeDriver: true }),
+      Animated.timing(translateXVal, { toValue: offsetX, duration: 200, useNativeDriver: true }),
+      Animated.timing(translateYVal, { toValue: offsetY, duration: 200, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        // Only claim the gesture if zoomed in (for panning) or if 2 fingers (for pinching)
+        return currentScale.current > 1 || Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2;
+      },
+
+      onPanResponderGrant: (evt) => {
+        const touches = evt.nativeEvent.touches;
+        if (touches.length === 2) {
+          isPinching.current = true;
+          initialPinchDistance.current = getDistance(touches);
+          pinchStartScale.current = currentScale.current;
+        } else {
+          isPinching.current = false;
+          panStartX.current = currentTranslateX.current;
+          panStartY.current = currentTranslateY.current;
+        }
+      },
+
+      onPanResponderMove: (evt, gestureState) => {
+        const touches = evt.nativeEvent.touches;
+
+        if (touches.length === 2) {
+          // Pinch zoom
+          if (!isPinching.current) {
+            isPinching.current = true;
+            initialPinchDistance.current = getDistance(touches);
+            pinchStartScale.current = currentScale.current;
+            return;
+          }
+
+          const currentDistance = getDistance(touches);
+          const pinchRatio = currentDistance / initialPinchDistance.current;
+          const newScale = Math.max(1, Math.min(pinchStartScale.current * pinchRatio, 6));
+
+          currentScale.current = newScale;
+          scaleVal.setValue(newScale);
+        } else if (currentScale.current > 1 && !isPinching.current) {
+          // Pan when zoomed in
+          const newX = panStartX.current + gestureState.dx;
+          const newY = panStartY.current + gestureState.dy;
+
+          currentTranslateX.current = newX;
+          currentTranslateY.current = newY;
+          translateXVal.setValue(newX);
+          translateYVal.setValue(newY);
+        }
+      },
+
+      onPanResponderRelease: (evt) => {
+        isPinching.current = false;
+
+        // Snap back to 1 if barely zoomed
+        if (currentScale.current < 1.15) {
+          resetZoom(true);
+          return;
+        }
+
+        // Double tap detection
+        const now = Date.now();
+        const touches = evt.nativeEvent.changedTouches;
+        if (touches.length === 1 && Math.abs(evt.nativeEvent.locationX) < SCREEN_WIDTH) {
+          if (now - lastTapTime.current < 300) {
+            // Double tap
+            if (currentScale.current > 1.5) {
+              resetZoom(true);
+            } else {
+              zoomTo(3, touches[0].pageX, touches[0].pageY);
+            }
+            lastTapTime.current = 0;
+            return;
+          }
+          lastTapTime.current = now;
+        }
+
+        // Clamp translation so image doesn't fly off screen
+        const maxTransX = (SCREEN_WIDTH * (currentScale.current - 1)) / 2;
+        const maxTransY = (IMAGE_HEIGHT * (currentScale.current - 1)) / 2;
+        let clampedX = Math.max(-maxTransX, Math.min(maxTransX, currentTranslateX.current));
+        let clampedY = Math.max(-maxTransY, Math.min(maxTransY, currentTranslateY.current));
+
+        if (clampedX !== currentTranslateX.current || clampedY !== currentTranslateY.current) {
+          currentTranslateX.current = clampedX;
+          currentTranslateY.current = clampedY;
+          Animated.parallel([
+            Animated.timing(translateXVal, { toValue: clampedX, duration: 150, useNativeDriver: true }),
+            Animated.timing(translateYVal, { toValue: clampedY, duration: 150, useNativeDriver: true }),
+          ]).start();
+        }
+      },
+    })
+  ).current;
 
   if (loading) {
     return (
@@ -78,33 +213,31 @@ function ZoomableImage({ imageId, isActive }) {
   }
 
   return (
-    <ScrollView
-      ref={scrollRef}
-      style={styles.imagePageScroll}
-      contentContainerStyle={styles.scrollContent}
-      maximumZoomScale={6}
-      minimumZoomScale={1}
-      showsHorizontalScrollIndicator={false}
-      showsVerticalScrollIndicator={false}
-      bouncesZoom={true}
-      centerContent={true}
-      onTouchEnd={handleTap}
-    >
-      <Image
+    <View style={styles.imagePage} {...panResponder.panHandlers}>
+      <Animated.Image
         source={
           imageHeaders
             ? { uri: imageUri, headers: imageHeaders }
             : { uri: imageUri }
         }
-        style={styles.image}
+        style={[
+          styles.image,
+          {
+            transform: [
+              { translateX: translateXVal },
+              { translateY: translateYVal },
+              { scale: scaleVal },
+            ],
+          },
+        ]}
         resizeMode="contain"
       />
-    </ScrollView>
+    </View>
   );
 }
 
 export default function ImageViewScreen({ route, navigation }) {
-  const { imageId, imageName, projectName, localUri, images, initialIndex } = route.params;
+  const { imageId, imageName, projectName, images, initialIndex } = route.params;
   const [currentIndex, setCurrentIndex] = useState(initialIndex || 0);
 
   // Single image mode (no images array)
@@ -183,9 +316,8 @@ const styles = StyleSheet.create({
   imagePage: {
     width: SCREEN_WIDTH, height: IMAGE_HEIGHT,
     justifyContent: 'center', alignItems: 'center', gap: 12,
+    overflow: 'hidden',
   },
-  imagePageScroll: { width: SCREEN_WIDTH, height: IMAGE_HEIGHT },
-  scrollContent: { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
   image: { width: SCREEN_WIDTH, height: IMAGE_HEIGHT },
   loadingText: { color: colors.textTertiary, fontSize: 14 },
 });

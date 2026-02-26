@@ -53,7 +53,7 @@ function DriveImages() {
   const [photoDateTo, setPhotoDateTo] = useState(''); // Fotoaufnahme End-Datum
   const [uploadDateFrom, setUploadDateFrom] = useState(''); // Hochlade Start-Datum
   const [uploadDateTo, setUploadDateTo] = useState(''); // Hochlade End-Datum
-  const [showOnlyUnassigned, setShowOnlyUnassigned] = useState(true); // Nur Bilder ohne Projekt
+  const [showOnlyUnassigned, setShowOnlyUnassigned] = useState(false); // Nur Bilder ohne Projekt
   const [showAllImages, setShowAllImages] = useState(false); // Alle Bilder (mit und ohne Projekte)
   const [showOnlyWithProjects, setShowOnlyWithProjects] = useState(false); // Nur Bilder mit Projekten
   const [selectedSubfolders, setSelectedSubfolders] = useState([]); // Ausgewählte Ordner-Badges
@@ -686,8 +686,15 @@ function DriveImages() {
     setShowDeleteDialog(true);
   };
 
-  // Assign image to project
+  // Assign image to project (optimistic UI update)
   const handleAssignToProject = async (projectId) => {
+    // Optimistic: update UI immediately
+    const project = projects.find(p => p.id === projectId);
+    const prevProjects = selectedImage.projects ? [...selectedImage.projects] : [];
+    if (project && !prevProjects.some(p => p.id === projectId)) {
+      setSelectedImage({ ...selectedImage, projects: [...prevProjects, project] });
+    }
+
     try {
       const response = await fetch('/api/drive/images/assign-to-project', {
         method: 'POST',
@@ -699,30 +706,29 @@ function DriveImages() {
       });
 
       if (response.ok) {
-        const result = await response.json();
-        // Update selectedImage to reflect the new assignment
-        const updatedProjects = selectedImage.projects ? [...selectedImage.projects] : [];
-        const project = projects.find(p => p.id === projectId);
-        if (project && !updatedProjects.some(p => p.id === projectId)) {
-          updatedProjects.push(project);
-          setSelectedImage({ ...selectedImage, projects: updatedProjects });
-        }
-        // Reload images to get updated project assignments
-        loadImages();
-        console.log(`✅ Bild zu "${result.projectName}" hinzugefügt`);
+        // Reload images in background to sync list
+        loadImages(true);
       } else {
+        // Revert on error
+        setSelectedImage(prev => ({ ...prev, projects: prevProjects }));
         const error = await response.json();
         alert(`Fehler: ${error.error || 'Unbekannter Fehler'}`);
       }
     } catch (error) {
+      // Revert on error
+      setSelectedImage(prev => ({ ...prev, projects: prevProjects }));
       console.error('Error assigning image to project:', error);
       alert(`Fehler beim Zuweisen: ${error.message}`);
     }
   };
 
-  // Unassign image from project
+  // Unassign image from project (optimistic UI update)
   const handleUnassignFromProject = async (projectId, e) => {
     e.stopPropagation(); // Prevent triggering the assign handler
+    // Optimistic: update UI immediately
+    const prevProjects = selectedImage.projects ? [...selectedImage.projects] : [];
+    setSelectedImage(prev => ({ ...prev, projects: prev.projects?.filter(p => p.id !== projectId) || [] }));
+
     try {
       const response = await fetch('/api/drive/images/unassign-from-project', {
         method: 'POST',
@@ -734,18 +740,17 @@ function DriveImages() {
       });
 
       if (response.ok) {
-        const result = await response.json();
-        // Update selectedImage to reflect the removal
-        const updatedProjects = selectedImage.projects?.filter(p => p.id !== projectId) || [];
-        setSelectedImage({ ...selectedImage, projects: updatedProjects });
-        // Reload images to get updated project assignments
-        loadImages();
-        console.log(`✅ Bild von "${result.projectName}" entfernt`);
+        // Reload images in background to sync list
+        loadImages(true);
       } else {
+        // Revert on error
+        setSelectedImage(prev => ({ ...prev, projects: prevProjects }));
         const error = await response.json();
         alert(`Fehler: ${error.error || 'Unbekannter Fehler'}`);
       }
     } catch (error) {
+      // Revert on error
+      setSelectedImage(prev => ({ ...prev, projects: prevProjects }));
       console.error('Error unassigning image from project:', error);
       alert(`Fehler beim Entfernen: ${error.message}`);
     }
