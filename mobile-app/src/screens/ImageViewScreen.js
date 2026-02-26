@@ -1,33 +1,22 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, Image, Dimensions, TouchableOpacity,
-  ActivityIndicator, FlatList,
+  ActivityIndicator, FlatList, ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import {
-  GestureDetector, Gesture, GestureHandlerRootView,
-} from 'react-native-gesture-handler';
-import Animated, {
-  useSharedValue, useAnimatedStyle, withTiming, runOnJS,
-} from 'react-native-reanimated';
 import { colors } from '../theme/colors';
 import { downloadFullImage } from '../services/syncService';
 import { getImageUrl } from '../services/api';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const IMAGE_HEIGHT = SCREEN_HEIGHT - 110;
 
-// Single zoomable image component
-function ZoomableImage({ imageId, imageName, isActive }) {
+// Single zoomable image using ScrollView (no external libraries needed)
+function ZoomableImage({ imageId, isActive }) {
   const [imageUri, setImageUri] = useState(null);
   const [imageHeaders, setImageHeaders] = useState(null);
   const [loading, setLoading] = useState(true);
-
-  const scale = useSharedValue(1);
-  const savedScale = useSharedValue(1);
-  const translateX = useSharedValue(0);
-  const translateY = useSharedValue(0);
-  const savedTranslateX = useSharedValue(0);
-  const savedTranslateY = useSharedValue(0);
+  const scrollRef = useRef(null);
 
   useEffect(() => {
     if (isActive && !imageUri) {
@@ -52,102 +41,29 @@ function ZoomableImage({ imageId, imageName, isActive }) {
     }
   };
 
-  const resetZoom = () => {
-    scale.value = withTiming(1);
-    translateX.value = withTiming(0);
-    translateY.value = withTiming(0);
-    savedScale.value = 1;
-    savedTranslateX.value = 0;
-    savedTranslateY.value = 0;
-  };
-
-  // Pinch gesture for zoom
-  const pinchGesture = Gesture.Pinch()
-    .onUpdate((e) => {
-      scale.value = Math.max(1, Math.min(savedScale.value * e.scale, 8));
-    })
-    .onEnd(() => {
-      savedScale.value = scale.value;
-      if (scale.value < 1.1) {
-        scale.value = withTiming(1);
-        translateX.value = withTiming(0);
-        translateY.value = withTiming(0);
-        savedScale.value = 1;
-        savedTranslateX.value = 0;
-        savedTranslateY.value = 0;
+  // Double tap to toggle zoom
+  const lastTap = useRef(0);
+  const handleTap = () => {
+    const now = Date.now();
+    if (now - lastTap.current < 300) {
+      // Double tap - toggle zoom
+      if (scrollRef.current) {
+        scrollRef.current.scrollResponderZoomTo({
+          x: 0, y: 0,
+          width: SCREEN_WIDTH,
+          height: IMAGE_HEIGHT,
+          animated: true,
+        });
       }
-    });
-
-  // Pan gesture for moving when zoomed
-  const panGesture = Gesture.Pan()
-    .minPointers(1)
-    .maxPointers(2)
-    .onUpdate((e) => {
-      if (scale.value > 1) {
-        translateX.value = savedTranslateX.value + e.translationX;
-        translateY.value = savedTranslateY.value + e.translationY;
-      }
-    })
-    .onEnd(() => {
-      savedTranslateX.value = translateX.value;
-      savedTranslateY.value = translateY.value;
-    });
-
-  // Double tap to zoom in/out
-  const doubleTapGesture = Gesture.Tap()
-    .numberOfTaps(2)
-    .onEnd((e) => {
-      if (scale.value > 1.5) {
-        // Zoom out
-        scale.value = withTiming(1);
-        translateX.value = withTiming(0);
-        translateY.value = withTiming(0);
-        savedScale.value = 1;
-        savedTranslateX.value = 0;
-        savedTranslateY.value = 0;
-      } else {
-        // Zoom in to 3x at tap position
-        const targetScale = 3;
-        scale.value = withTiming(targetScale);
-        savedScale.value = targetScale;
-        // Center on tap point
-        const focalX = e.x - SCREEN_WIDTH / 2;
-        const focalY = e.y - SCREEN_HEIGHT / 2;
-        translateX.value = withTiming(-focalX * (targetScale - 1) / targetScale);
-        translateY.value = withTiming(-focalY * (targetScale - 1) / targetScale);
-        savedTranslateX.value = -focalX * (targetScale - 1) / targetScale;
-        savedTranslateY.value = -focalY * (targetScale - 1) / targetScale;
-      }
-    });
-
-  const composedGesture = Gesture.Simultaneous(
-    pinchGesture,
-    panGesture,
-    doubleTapGesture,
-  );
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: translateX.value },
-      { translateY: translateY.value },
-      { scale: scale.value },
-    ],
-  }));
-
-  // Reset zoom when swiping to this image
-  useEffect(() => {
-    if (isActive) {
-      resetZoom();
     }
-  }, [isActive]);
+    lastTap.current = now;
+  };
 
   if (loading) {
     return (
       <View style={styles.imagePage}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.accent} />
-          <Text style={styles.loadingText}>Bild wird geladen...</Text>
-        </View>
+        <ActivityIndicator size="large" color={colors.accent} />
+        <Text style={styles.loadingText}>Bild wird geladen...</Text>
       </View>
     );
   }
@@ -155,45 +71,48 @@ function ZoomableImage({ imageId, imageName, isActive }) {
   if (!imageUri) {
     return (
       <View style={styles.imagePage}>
-        <View style={styles.loadingContainer}>
-          <Ionicons name="image-outline" size={64} color={colors.textTertiary} />
-          <Text style={styles.loadingText}>Bild konnte nicht geladen werden</Text>
-        </View>
+        <Ionicons name="image-outline" size={64} color={colors.textTertiary} />
+        <Text style={styles.loadingText}>Bild konnte nicht geladen werden</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.imagePage}>
-      <GestureDetector gesture={composedGesture}>
-        <Animated.View style={[styles.imageContainer, animatedStyle]}>
-          <Image
-            source={
-              imageHeaders
-                ? { uri: imageUri, headers: imageHeaders }
-                : { uri: imageUri }
-            }
-            style={styles.image}
-            resizeMode="contain"
-          />
-        </Animated.View>
-      </GestureDetector>
-    </View>
+    <ScrollView
+      ref={scrollRef}
+      style={styles.imagePageScroll}
+      contentContainerStyle={styles.scrollContent}
+      maximumZoomScale={6}
+      minimumZoomScale={1}
+      showsHorizontalScrollIndicator={false}
+      showsVerticalScrollIndicator={false}
+      bouncesZoom={true}
+      centerContent={true}
+      onTouchEnd={handleTap}
+    >
+      <Image
+        source={
+          imageHeaders
+            ? { uri: imageUri, headers: imageHeaders }
+            : { uri: imageUri }
+        }
+        style={styles.image}
+        resizeMode="contain"
+      />
+    </ScrollView>
   );
 }
 
 export default function ImageViewScreen({ route, navigation }) {
   const { imageId, imageName, projectName, localUri, images, initialIndex } = route.params;
   const [currentIndex, setCurrentIndex] = useState(initialIndex || 0);
-  const flatListRef = useRef(null);
 
   // Single image mode (no images array)
   const imageList = images || [{ id: imageId, name: imageName }];
-
   const currentImage = imageList[currentIndex] || imageList[0];
 
   const onViewableItemsChanged = useCallback(({ viewableItems }) => {
-    if (viewableItems.length > 0) {
+    if (viewableItems.length > 0 && viewableItems[0].index != null) {
       setCurrentIndex(viewableItems[0].index);
     }
   }, []);
@@ -207,7 +126,7 @@ export default function ImageViewScreen({ route, navigation }) {
   }), []);
 
   return (
-    <GestureHandlerRootView style={styles.container}>
+    <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.headerBtn} onPress={() => navigation.goBack()}>
@@ -225,12 +144,10 @@ export default function ImageViewScreen({ route, navigation }) {
       {imageList.length === 1 ? (
         <ZoomableImage
           imageId={imageList[0].id}
-          imageName={imageList[0].name}
           isActive={true}
         />
       ) : (
         <FlatList
-          ref={flatListRef}
           data={imageList}
           horizontal
           pagingEnabled
@@ -243,13 +160,12 @@ export default function ImageViewScreen({ route, navigation }) {
           renderItem={({ item, index }) => (
             <ZoomableImage
               imageId={item.id}
-              imageName={item.name}
-              isActive={index === currentIndex}
+              isActive={Math.abs(index - currentIndex) <= 1}
             />
           )}
         />
       )}
-    </GestureHandlerRootView>
+    </View>
   );
 }
 
@@ -264,9 +180,12 @@ const styles = StyleSheet.create({
   headerInfo: { flex: 1 },
   headerTitle: { color: 'white', fontSize: 16, fontWeight: '600' },
   headerSubtitle: { color: colors.textTertiary, fontSize: 13, marginTop: 2 },
-  imagePage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT - 100, justifyContent: 'center', alignItems: 'center' },
-  imageContainer: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT - 100, justifyContent: 'center', alignItems: 'center' },
-  image: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT - 100 },
-  loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  imagePage: {
+    width: SCREEN_WIDTH, height: IMAGE_HEIGHT,
+    justifyContent: 'center', alignItems: 'center', gap: 12,
+  },
+  imagePageScroll: { width: SCREEN_WIDTH, height: IMAGE_HEIGHT },
+  scrollContent: { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
+  image: { width: SCREEN_WIDTH, height: IMAGE_HEIGHT },
   loadingText: { color: colors.textTertiary, fontSize: 14 },
 });
