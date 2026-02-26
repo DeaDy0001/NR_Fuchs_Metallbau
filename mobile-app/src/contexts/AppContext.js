@@ -4,6 +4,24 @@ import { isAuthenticated, clearAuth, getAccessToken } from '../services/googleAu
 import { checkFolderAccess, findOrCreateFolder } from '../services/driveService';
 import { startQueueProcessing, stopQueueProcessing, addUploadListener } from '../services/uploadQueue';
 
+const ensureDriveFolders = async (connection) => {
+  if (!connection.meta_folder_id || !connection.inbox_folder_id) {
+    const metaFolder = await findOrCreateFolder(connection.root_folder_id, 'NR_Fuchs_Meta');
+    const inboxFolder = await findOrCreateFolder(metaFolder.id, 'inbox');
+    // Also ensure Projekte folder exists
+    await findOrCreateFolder(metaFolder.id, 'Projekte');
+    await updateDriveConnectionFolders(connection.id, metaFolder.id, inboxFolder.id);
+    connection.meta_folder_id = metaFolder.id;
+    connection.inbox_folder_id = inboxFolder.id;
+  } else {
+    // Ensure Projekte folder exists even if meta/inbox already set
+    try {
+      await findOrCreateFolder(connection.meta_folder_id, 'Projekte');
+    } catch {}
+  }
+  return connection;
+};
+
 const AppContext = createContext(null);
 
 export const useApp = () => useContext(AppContext);
@@ -84,14 +102,7 @@ export const AppProvider = ({ children }) => {
           try {
             const accessible = await checkFolderAccess(connection.root_folder_id);
             if (accessible) {
-              // Ensure NR_Fuchs_Meta and inbox folders exist
-              if (!connection.meta_folder_id || !connection.inbox_folder_id) {
-                const metaFolder = await findOrCreateFolder(connection.root_folder_id, 'NR_Fuchs_Meta');
-                const inboxFolder = await findOrCreateFolder(metaFolder.id, 'inbox');
-                await updateDriveConnectionFolders(connection.id, metaFolder.id, inboxFolder.id);
-                connection.meta_folder_id = metaFolder.id;
-                connection.inbox_folder_id = inboxFolder.id;
-              }
+              await ensureDriveFolders(connection);
               setActiveConnection(connection);
               setIsConnected(true);
             } else {
@@ -135,14 +146,7 @@ export const AppProvider = ({ children }) => {
       try {
         const accessible = await checkFolderAccess(connection.root_folder_id);
         if (accessible) {
-          // Ensure NR_Fuchs_Meta and inbox folders exist
-          if (!connection.meta_folder_id || !connection.inbox_folder_id) {
-            const metaFolder = await findOrCreateFolder(connection.root_folder_id, 'NR_Fuchs_Meta');
-            const inboxFolder = await findOrCreateFolder(metaFolder.id, 'inbox');
-            await updateDriveConnectionFolders(connection.id, metaFolder.id, inboxFolder.id);
-            connection.meta_folder_id = metaFolder.id;
-            connection.inbox_folder_id = inboxFolder.id;
-          }
+          await ensureDriveFolders(connection);
           setActiveConnection(connection);
           setIsConnected(true);
         }

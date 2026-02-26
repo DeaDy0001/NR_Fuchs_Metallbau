@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert, Image,
-  ActivityIndicator, FlatList, Dimensions, Modal, ScrollView,
+  ActivityIndicator, FlatList, Dimensions, Modal, ScrollView, TextInput,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
@@ -10,7 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
 import { addToUploadQueue, getCachedProjects } from '../services/database';
-import { uploadImage } from '../services/api';
+import { uploadImage, createProject } from '../services/api';
 import { processUploadQueue } from '../services/uploadQueue';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -32,6 +32,8 @@ export default function CameraScreen({ navigation, route }) {
   const [projectFolderId, setProjectFolderId] = useState(route.params?.projectFolderId || null);
   const [showProjectPicker, setShowProjectPicker] = useState(false);
   const [projects, setProjects] = useState([]);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [creatingProject, setCreatingProject] = useState(false);
 
   // Preview gallery
   const [showPreviewGallery, setShowPreviewGallery] = useState(false);
@@ -47,6 +49,7 @@ export default function CameraScreen({ navigation, route }) {
 
   const openProjectPicker = () => {
     loadProjects();
+    setNewProjectName('');
     setShowProjectPicker(true);
   };
 
@@ -61,6 +64,26 @@ export default function CameraScreen({ navigation, route }) {
       setProjectFolderId(null);
     }
     setShowProjectPicker(false);
+  };
+
+  const handleCreateProject = async () => {
+    const name = newProjectName.trim();
+    if (!name) return;
+
+    setCreatingProject(true);
+    try {
+      const result = await createProject(name);
+      selectProject({
+        id: result.id,
+        folder_name: result.folder_name,
+        folder_id: result.folder_id,
+      });
+      setNewProjectName('');
+    } catch (error) {
+      Alert.alert('Fehler', 'Projekt konnte nicht erstellt werden: ' + error.message);
+    } finally {
+      setCreatingProject(false);
+    }
   };
 
   // ---- Project Picker Modal ----
@@ -78,6 +101,32 @@ export default function CameraScreen({ navigation, route }) {
             <TouchableOpacity onPress={() => setShowProjectPicker(false)}>
               <Ionicons name="close" size={24} color={colors.textPrimary} />
             </TouchableOpacity>
+          </View>
+
+          {/* Create new project */}
+          <View style={styles.newProjectRow}>
+            <TextInput
+              style={styles.newProjectInput}
+              placeholder="Neues Projekt erstellen..."
+              placeholderTextColor={colors.textTertiary}
+              value={newProjectName}
+              onChangeText={setNewProjectName}
+              onSubmitEditing={handleCreateProject}
+              returnKeyType="done"
+            />
+            {newProjectName.trim() ? (
+              <TouchableOpacity
+                style={styles.newProjectBtn}
+                onPress={handleCreateProject}
+                disabled={creatingProject}
+              >
+                {creatingProject ? (
+                  <ActivityIndicator size="small" color="white" />
+                ) : (
+                  <Ionicons name="add" size={22} color="white" />
+                )}
+              </TouchableOpacity>
+            ) : null}
           </View>
 
           <TouchableOpacity
@@ -603,7 +652,17 @@ const styles = StyleSheet.create({
   // Project picker modal
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
   modalContent: { backgroundColor: colors.bgPrimary, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70%', padding: 20 },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  newProjectRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  newProjectInput: {
+    flex: 1, backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.border,
+    borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10,
+    fontSize: 15, color: colors.textPrimary,
+  },
+  newProjectBtn: {
+    width: 42, height: 42, borderRadius: 10,
+    backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center',
+  },
   modalTitle: { fontSize: 20, fontWeight: '700', color: colors.textPrimary },
   projectPickerList: { maxHeight: 400 },
   projectPickerItem: {

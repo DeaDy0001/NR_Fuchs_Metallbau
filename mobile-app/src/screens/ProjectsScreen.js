@@ -56,10 +56,12 @@ export default function ProjectsScreen({ navigation }) {
       await createProject(newProjectName.trim());
       Alert.alert(
         'Projekt erstellt',
-        `"${newProjectName.trim()}" wurde als Anfrage an die Desktop-Software gesendet.`
+        `Ordner "${newProjectName.trim()}" wurde auf Google Drive erstellt.`
       );
       setNewProjectName('');
       setShowNewProject(false);
+      // Refresh list to show new project
+      await handleRefresh();
     } catch (error) {
       Alert.alert('Fehler', error.message);
     }

@@ -1,19 +1,17 @@
 /**
  * API Service - Google Drive basiert
  *
- * Ersetzt die alte server-basierte API.
- * Alle Daten kommen von/gehen zu Google Drive.
+ * Projekte = Ordner auf Google Drive unter NR_Fuchs_Meta/Projekte/
+ * Bilder mit Projekt → direkt in den Projektordner
+ * Bilder ohne Projekt → in NR_Fuchs_Meta/inbox/
  *
  * Drive-Ordnerstruktur:
  *   Root Folder (per QR-Code verknüpft)
  *   ├── NR_Fuchs_Meta/
- *   │   ├── projects.json    (Software schreibt, App liest)
- *   │   ├── tags.json        (Software schreibt, App liest)
- *   │   └── inbox/           (App schreibt hier rein)
- *   │       ├── upload_*.json
- *   │       └── new_project_*.json
- *   ├── ProjektOrdner1/      (Bilder)
- *   └── ProjektOrdner2/      (Bilder)
+ *   │   ├── Projekte/
+ *   │   │   ├── ProjektName1/   (Bilder)
+ *   │   │   └── ProjektName2/   (Bilder)
+ *   │   └── inbox/              (Bilder ohne Projekt)
  */
 
 import { getActiveDriveConnection, getSetting } from './database';
@@ -25,23 +23,66 @@ import {
   downloadFile,
   getImageSource,
   checkFolderAccess,
+  findOrCreateFolder,
+  findFolder,
 } from './driveService';
 
 // ============================================================
-// Projects
+// Projects - folder-based
 // ============================================================
 
 /**
- * Fetch projects from projects.json on Drive
+ * Get the Projekte folder ID (finds or creates it)
  */
-export const fetchProjects = async () => {
+const getProjekteFolderId = async () => {
   const connection = await getActiveDriveConnection();
   if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
 
-  const data = await readJsonFileByName(connection.meta_folder_id, 'projects.json');
-  if (!data) return [];
+  const folder = await findOrCreateFolder(connection.meta_folder_id, 'Projekte');
+  return folder.id;
+};
 
-  return data.projects || [];
+/**
+ * Fetch projects by scanning subfolders of NR_Fuchs_Meta/Projekte/
+ * Each subfolder = one project
+ */
+export const fetchProjects = async () => {
+  const projekteFolderId = await getProjekteFolderId();
+
+  // List all subfolders
+  const folders = await listFiles(projekteFolderId, {
+    mimeType: 'application/vnd.google-apps.folder',
+    fields: 'files(id,name,modifiedTime)',
+    orderBy: 'name',
+  });
+
+  // For each folder, count images
+  const projects = [];
+  for (const folder of folders) {
+    let imageCount = 0;
+    try {
+      const images = await listFiles(folder.id, {
+        fields: 'files(id)',
+        pageSize: 1000,
+      });
+      imageCount = images.filter(f => f.mimeType && f.mimeType.startsWith('image/')).length;
+    } catch {}
+
+    projects.push({
+      id: folder.id,
+      folder_name: folder.name,
+      folder_id: folder.id,
+      color: null,
+      notes: null,
+      tags: '[]',
+      image_count: imageCount,
+      is_own: 1,
+      is_starred: 0,
+      updated_at: folder.modifiedTime,
+    });
+  }
+
+  return projects;
 };
 
 /**
@@ -71,29 +112,31 @@ export const fetchProjectImages = async (projectFolderId) => {
 };
 
 /**
- * Create a new project request (writes to inbox)
+ * Create a new project (= create folder on Drive under Projekte/)
+ * Returns the new project object with folder info
  */
 export const createProject = async (name) => {
-  const connection = await getActiveDriveConnection();
-  if (!connection?.inbox_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
+  const projekteFolderId = await getProjekteFolderId();
 
-  const userName = await getSetting('userName', 'Unbekannt');
-  const userEmail = await getSetting('googleUserEmail', '');
+  // Check if folder already exists
+  const existing = await findFolder(projekteFolderId, name);
+  if (existing) {
+    return {
+      success: true,
+      id: existing.id,
+      folder_name: name,
+      folder_id: existing.id,
+    };
+  }
 
-  const timestamp = new Date().toISOString();
-  const id = Math.random().toString(36).substr(2, 8);
-  const fileName = `new_project_${timestamp.split('T')[0]}_${userName.replace(/\s+/g, '_')}_${id}.json`;
+  const folder = await findOrCreateFolder(projekteFolderId, name);
 
-  const data = {
-    type: 'new_project',
-    projectName: name,
-    userName,
-    userEmail,
-    timestamp,
+  return {
+    success: true,
+    id: folder.id,
+    folder_name: name,
+    folder_id: folder.id,
   };
-
-  await createJsonFile(connection.inbox_folder_id, fileName, data);
-  return { success: true, name };
 };
 
 // ============================================================
@@ -101,41 +144,44 @@ export const createProject = async (name) => {
 // ============================================================
 
 /**
- * Upload an image to Google Drive inbox
+ * Upload an image to Google Drive
+ * - With project: directly into the project folder
+ * - Without project: into inbox folder
  */
 export const uploadImage = async (fileUri, fileName, mimeType, projectId = null, projectName = null, gpsData = null) => {
   const connection = await getActiveDriveConnection();
-  if (!connection?.inbox_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
+  if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
 
-  const userName = await getSetting('userName', 'Unbekannt');
-  const userEmail = await getSetting('googleUserEmail', '');
+  let targetFolderId;
 
-  // Upload the actual image file to inbox
+  if (projectName) {
+    // Upload directly to project folder
+    try {
+      const projekteFolderId = await getProjekteFolderId();
+      const projectFolder = await findOrCreateFolder(projekteFolderId, projectName);
+      targetFolderId = projectFolder.id;
+    } catch {
+      // Fallback to inbox if project folder creation fails
+      if (!connection.inbox_folder_id) throw new Error('Kein Zielordner verfügbar');
+      targetFolderId = connection.inbox_folder_id;
+    }
+  } else {
+    // No project - upload to inbox
+    if (!connection.inbox_folder_id) {
+      const inboxFolder = await findOrCreateFolder(connection.meta_folder_id, 'inbox');
+      targetFolderId = inboxFolder.id;
+    } else {
+      targetFolderId = connection.inbox_folder_id;
+    }
+  }
+
+  // Upload the actual image file
   const uploadedFile = await uploadFile(
-    connection.inbox_folder_id,
+    targetFolderId,
     fileName,
     fileUri,
     mimeType || 'image/jpeg'
   );
-
-  // Create metadata JSON alongside the image
-  const timestamp = new Date().toISOString();
-  const id = Math.random().toString(36).substr(2, 8);
-  const metaFileName = `upload_${timestamp.split('T')[0]}_${userName.replace(/\s+/g, '_')}_${id}.json`;
-
-  const metadata = {
-    type: 'image_upload',
-    fileName,
-    driveFileId: uploadedFile.id,
-    userName,
-    userEmail,
-    projectId: projectId || null,
-    projectName: projectName || null,
-    gps: gpsData || null,
-    timestamp,
-  };
-
-  await createJsonFile(connection.inbox_folder_id, metaFileName, metadata);
 
   // Also save as recent photo
   try {
@@ -155,18 +201,25 @@ export const uploadImage = async (fileUri, fileName, mimeType, projectId = null,
 // ============================================================
 
 /**
- * Fetch sync data (projects + tags) from Drive
+ * Fetch sync data (projects from Drive folders, tags if available)
  */
 export const fetchSyncData = async () => {
   const connection = await getActiveDriveConnection();
   if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
 
-  const projects = await readJsonFileByName(connection.meta_folder_id, 'projects.json');
-  const tags = await readJsonFileByName(connection.meta_folder_id, 'tags.json');
+  // Scan project folders
+  const projects = await fetchProjects();
+
+  // Try to read tags.json (optional - may not exist)
+  let tags = [];
+  try {
+    const tagsData = await readJsonFileByName(connection.meta_folder_id, 'tags.json');
+    tags = tagsData?.tags || [];
+  } catch {}
 
   return {
-    projects: projects?.projects || [],
-    tags: tags?.tags || [],
+    projects,
+    tags,
     serverTime: new Date().toISOString(),
   };
 };
