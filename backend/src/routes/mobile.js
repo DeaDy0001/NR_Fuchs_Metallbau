@@ -55,6 +55,10 @@ router.delete('/devices/:deviceId', mobile.removeDevice);
 // Inbox (called from desktop)
 router.get('/inbox', mobile.getInbox);
 
+// Admin: mobile OAuth credentials management (called from desktop settings)
+router.get('/admin/credentials', mobile.getAdminCredentials);
+router.post('/admin/credentials', mobile.saveAdminCredentials);
+
 // APK download
 router.get('/app.apk', (req, res) => {
   const apkPath = path.join(__dirname, '../../../mobile-app/android/app.apk');

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Smartphone, QrCode, RefreshCw, Trash2, Download, CheckCircle, XCircle, Wifi, Clock, FolderOpen } from 'lucide-react';
+import { Smartphone, QrCode, RefreshCw, Trash2, Download, CheckCircle, XCircle, Wifi, Clock, FolderOpen, Lock, Save, Key } from 'lucide-react';
 import './MobileAppSettings.css';
 
 function MobileAppSettings() {
@@ -13,6 +13,14 @@ function MobileAppSettings() {
   const [selectedDrivePathId, setSelectedDrivePathId] = useState(null);
   const [networkAddresses, setNetworkAddresses] = useState([]);
   const [selectedAddress, setSelectedAddress] = useState(null);
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
+  const [adminAuthenticated, setAdminAuthenticated] = useState(false);
+  const [adminError, setAdminError] = useState('');
+  const [mobileClientId, setMobileClientId] = useState('');
+  const [mobileClientSecret, setMobileClientSecret] = useState('');
+  const [adminSaving, setAdminSaving] = useState(false);
+  const [credentialsLoaded, setCredentialsLoaded] = useState(false);
 
   useEffect(() => {
     loadDevices();
@@ -83,6 +91,66 @@ function MobileAppSettings() {
       loadDevices();
     } catch (error) {
       showNotification('Fehler beim Entfernen', 'error');
+    }
+  };
+
+  const handleAdminLogin = () => {
+    if (adminPassword === 'netrock!') {
+      setAdminAuthenticated(true);
+      setAdminError('');
+      loadMobileCredentials();
+    } else {
+      setAdminError('Falsches Passwort');
+    }
+  };
+
+  const loadMobileCredentials = async () => {
+    try {
+      const response = await fetch('/api/mobile/admin/credentials?password=netrock!');
+      if (response.ok) {
+        const data = await response.json();
+        setMobileClientId(data.mobileClientId || '');
+        setMobileClientSecret(data.mobileClientSecret || '');
+        setCredentialsLoaded(true);
+      }
+    } catch (error) {
+      console.error('Failed to load credentials:', error);
+    }
+  };
+
+  const handleSaveCredentials = async () => {
+    if (!mobileClientId.trim()) {
+      setAdminError('Client-ID ist erforderlich');
+      return;
+    }
+    if (!mobileClientSecret.trim()) {
+      setAdminError('Client-Secret ist erforderlich');
+      return;
+    }
+
+    setAdminSaving(true);
+    setAdminError('');
+    try {
+      const response = await fetch('/api/mobile/admin/credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          password: 'netrock!',
+          mobileClientId: mobileClientId.trim(),
+          mobileClientSecret: mobileClientSecret.trim(),
+        }),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        showNotification('Mobile OAuth Zugangsdaten gespeichert! Server muss neugestartet werden.');
+        setQrData(null); // Reset QR code so new client ID is used
+      } else {
+        setAdminError(data.error || 'Speichern fehlgeschlagen');
+      }
+    } catch (error) {
+      setAdminError('Fehler beim Speichern: ' + error.message);
+    } finally {
+      setAdminSaving(false);
     }
   };
 
@@ -381,6 +449,104 @@ GOOGLE_MOBILE_CLIENT_SECRET=...`}
           </div>
         </div>
       )}
+      {/* Admin Section */}
+      <div className="settings-section admin-section">
+        <div className="admin-section-header">
+          <h2>Admin</h2>
+          <button
+            className="admin-toggle-btn"
+            onClick={() => setShowAdmin(!showAdmin)}
+          >
+            <Lock size={16} />
+            {showAdmin ? 'Verbergen' : 'Anzeigen'}
+          </button>
+        </div>
+
+        {showAdmin && (
+          <>
+            {!adminAuthenticated ? (
+              <div className="admin-form">
+                <p className="section-description">
+                  Passwort eingeben, um die Mobile OAuth Zugangsdaten zu verwalten.
+                </p>
+                <div className="admin-input-group">
+                  <label>Admin-Passwort</label>
+                  <div className="admin-input-row">
+                    <Lock size={16} className="admin-input-icon" />
+                    <input
+                      type="password"
+                      placeholder="Passwort eingeben"
+                      value={adminPassword}
+                      onChange={(e) => { setAdminPassword(e.target.value); setAdminError(''); }}
+                      onKeyDown={(e) => e.key === 'Enter' && handleAdminLogin()}
+                    />
+                  </div>
+                </div>
+                {adminError && <p className="admin-error">{adminError}</p>}
+                <button
+                  className="btn btn-primary"
+                  onClick={handleAdminLogin}
+                  disabled={!adminPassword}
+                >
+                  <Lock size={16} />
+                  Anmelden
+                </button>
+              </div>
+            ) : (
+              <div className="admin-form">
+                <p className="section-description">
+                  Google OAuth Client-ID vom Typ <strong>&quot;Desktop-App&quot;</strong> für die Handy-App.
+                  Erstelle diese in der Google Cloud Console (APIs &amp; Dienste &rarr; Anmeldedaten &rarr; OAuth-Client-ID &rarr; Desktop-App).
+                </p>
+
+                <div className="admin-input-group">
+                  <label>Mobile Client-ID</label>
+                  <div className="admin-input-row">
+                    <Key size={16} className="admin-input-icon" />
+                    <input
+                      type="text"
+                      placeholder="...apps.googleusercontent.com"
+                      value={mobileClientId}
+                      onChange={(e) => setMobileClientId(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="admin-input-group">
+                  <label>Mobile Client-Secret</label>
+                  <div className="admin-input-row">
+                    <Lock size={16} className="admin-input-icon" />
+                    <input
+                      type="password"
+                      placeholder="Client-Secret eingeben"
+                      value={mobileClientSecret}
+                      onChange={(e) => setMobileClientSecret(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {adminError && <p className="admin-error">{adminError}</p>}
+
+                <button
+                  className="btn btn-primary"
+                  onClick={handleSaveCredentials}
+                  disabled={adminSaving || !mobileClientId.trim() || !mobileClientSecret.trim()}
+                >
+                  <Save size={16} />
+                  {adminSaving ? 'Wird gespeichert...' : 'Speichern'}
+                </button>
+
+                {credentialsLoaded && mobileClientId && mobileClientSecret && (
+                  <div className="admin-status-ok">
+                    <CheckCircle size={16} />
+                    Mobile OAuth Zugangsdaten konfiguriert
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

@@ -988,6 +988,85 @@ const mobileExchangeCode = async (req, res) => {
   }
 };
 
+/**
+ * Get mobile OAuth credentials (admin only)
+ * GET /api/mobile/admin/credentials?password=netrock!
+ */
+const getAdminCredentials = (req, res) => {
+  const { password } = req.query;
+  if (!password || password !== 'netrock!') {
+    return res.status(403).json({ error: 'Falsches Admin-Passwort' });
+  }
+
+  res.json({
+    mobileClientId: process.env.GOOGLE_MOBILE_CLIENT_ID || '',
+    mobileClientSecret: process.env.GOOGLE_MOBILE_CLIENT_SECRET ? '***configured***' : '',
+  });
+};
+
+/**
+ * Save mobile OAuth credentials to .env (admin only)
+ * POST /api/mobile/admin/credentials
+ * Body: { password, mobileClientId, mobileClientSecret }
+ */
+const saveAdminCredentials = (req, res) => {
+  try {
+    const { password, mobileClientId, mobileClientSecret } = req.body;
+
+    if (!password || password !== 'netrock!') {
+      return res.status(403).json({ error: 'Falsches Admin-Passwort' });
+    }
+
+    if (!mobileClientId || !mobileClientSecret) {
+      return res.status(400).json({ error: 'Client-ID und Client-Secret sind erforderlich' });
+    }
+
+    const envPath = path.join(__dirname, '../../../.env');
+
+    let envContent = '';
+    if (fs.existsSync(envPath)) {
+      envContent = fs.readFileSync(envPath, 'utf8');
+    }
+
+    const envLines = envContent.split('\n');
+
+    // Update or add GOOGLE_MOBILE_CLIENT_ID
+    const clientIdIndex = envLines.findIndex(line => line.startsWith('GOOGLE_MOBILE_CLIENT_ID='));
+    if (clientIdIndex !== -1) {
+      envLines[clientIdIndex] = `GOOGLE_MOBILE_CLIENT_ID=${mobileClientId}`;
+    } else {
+      const hasComment = envLines.some(line => line.includes('Mobile App OAuth'));
+      if (!hasComment) {
+        envLines.push('');
+        envLines.push('# Mobile App OAuth (Desktop app type for mobile Google Sign-In)');
+      }
+      envLines.push(`GOOGLE_MOBILE_CLIENT_ID=${mobileClientId}`);
+    }
+
+    // Update or add GOOGLE_MOBILE_CLIENT_SECRET
+    const secretIndex = envLines.findIndex(line => line.startsWith('GOOGLE_MOBILE_CLIENT_SECRET='));
+    if (secretIndex !== -1) {
+      envLines[secretIndex] = `GOOGLE_MOBILE_CLIENT_SECRET=${mobileClientSecret}`;
+    } else {
+      envLines.push(`GOOGLE_MOBILE_CLIENT_SECRET=${mobileClientSecret}`);
+    }
+
+    fs.writeFileSync(envPath, envLines.join('\n'));
+
+    // Update process.env so changes take effect immediately
+    process.env.GOOGLE_MOBILE_CLIENT_ID = mobileClientId;
+    process.env.GOOGLE_MOBILE_CLIENT_SECRET = mobileClientSecret;
+
+    res.json({
+      success: true,
+      message: 'Mobile OAuth Zugangsdaten gespeichert',
+    });
+  } catch (error) {
+    console.error('[Fuchs] Error saving admin credentials:', error);
+    res.status(500).json({ error: 'Fehler beim Speichern: ' + error.message });
+  }
+};
+
 module.exports = {
   generateConnectToken,
   connectLandingPage,
@@ -1006,4 +1085,6 @@ module.exports = {
   mobileGoogleCallback,
   mobileRefreshToken,
   mobileExchangeCode,
+  getAdminCredentials,
+  saveAdminCredentials,
 };
