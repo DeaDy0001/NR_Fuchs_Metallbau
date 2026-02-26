@@ -48,8 +48,8 @@ export default function LoginScreen() {
       redirectUri,
       scopes: config.google.scopes,
       responseType: ResponseType.Token,
+      usePKCE: false,
       extraParams: {
-        // Show account picker even if only one account
         prompt: 'select_account',
       },
     },
