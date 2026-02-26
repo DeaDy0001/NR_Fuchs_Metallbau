@@ -30,6 +30,7 @@ if not exist "node_modules\expo-auth-session" set "NEEDS_INSTALL=1"
 if not exist "node_modules\expo-web-browser" set "NEEDS_INSTALL=1"
 if not exist "node_modules\expo-crypto" set "NEEDS_INSTALL=1"
 if not exist "node_modules\expo-clipboard" set "NEEDS_INSTALL=1"
+if not exist "node_modules\expo-location" set "NEEDS_INSTALL=1"
 
 if "!NEEDS_INSTALL!"=="1" (
     echo  [..] Installiere Abhaengigkeiten...
