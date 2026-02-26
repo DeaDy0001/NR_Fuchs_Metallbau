@@ -43,8 +43,8 @@ export default function LoginScreen() {
   console.log('[Fuchs] LoginScreen - redirect URI:', redirectUri);
 
   const [request, response, promptAsync] = useAuthRequest(
-    clientId ? {
-      clientId,
+    {
+      clientId: clientId || 'loading',
       redirectUri,
       scopes: config.google.scopes,
       responseType: ResponseType.Token,
@@ -52,7 +52,7 @@ export default function LoginScreen() {
         // Show account picker even if only one account
         prompt: 'select_account',
       },
-    } : null,
+    },
     discovery
   );
 
