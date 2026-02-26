@@ -37,6 +37,78 @@ export default function CameraScreen({ navigation, route }) {
   const [showPreviewGallery, setShowPreviewGallery] = useState(false);
   const [selectedPreviewIndex, setSelectedPreviewIndex] = useState(0);
 
+  // Load projects for picker
+  const loadProjects = async () => {
+    try {
+      const p = await getCachedProjects();
+      setProjects(p);
+    } catch {}
+  };
+
+  const openProjectPicker = () => {
+    loadProjects();
+    setShowProjectPicker(true);
+  };
+
+  const selectProject = (project) => {
+    if (project) {
+      setProjectId(project.id);
+      setProjectName(project.folder_name);
+      setProjectFolderId(project.folder_id);
+    } else {
+      setProjectId(null);
+      setProjectName(null);
+      setProjectFolderId(null);
+    }
+    setShowProjectPicker(false);
+  };
+
+  // ---- Project Picker Modal ----
+  const renderProjectPicker = () => (
+    <Modal
+      visible={showProjectPicker}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={() => setShowProjectPicker(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Projekt zuordnen</Text>
+            <TouchableOpacity onPress={() => setShowProjectPicker(false)}>
+              <Ionicons name="close" size={24} color={colors.textPrimary} />
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.projectPickerItem, !projectId && styles.projectPickerItemActive]}
+            onPress={() => selectProject(null)}
+          >
+            <Ionicons name="close-circle-outline" size={20} color={colors.textTertiary} />
+            <Text style={styles.projectPickerText}>Kein Projekt</Text>
+          </TouchableOpacity>
+
+          <ScrollView style={styles.projectPickerList}>
+            {projects.map(p => (
+              <TouchableOpacity
+                key={p.id}
+                style={[
+                  styles.projectPickerItem,
+                  projectId === p.id && styles.projectPickerItemActive,
+                ]}
+                onPress={() => selectProject(p)}
+              >
+                <View style={[styles.projectPickerColor, { backgroundColor: p.color || colors.accent }]} />
+                <Text style={styles.projectPickerText}>{p.folder_name}</Text>
+                <Text style={styles.projectPickerMeta}>{p.image_count || 0} Bilder</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+
   // If opened with pickFromGallery, open gallery immediately
   useEffect(() => {
     if (route.params?.pickFromGallery) {
@@ -219,32 +291,6 @@ export default function CameraScreen({ navigation, route }) {
     }
   };
 
-  // Load projects for picker
-  const loadProjects = async () => {
-    try {
-      const p = await getCachedProjects();
-      setProjects(p);
-    } catch {}
-  };
-
-  const openProjectPicker = () => {
-    loadProjects();
-    setShowProjectPicker(true);
-  };
-
-  const selectProject = (project) => {
-    if (project) {
-      setProjectId(project.id);
-      setProjectName(project.folder_name);
-      setProjectFolderId(project.folder_id);
-    } else {
-      setProjectId(null);
-      setProjectName(null);
-      setProjectFolderId(null);
-    }
-    setShowProjectPicker(false);
-  };
-
   // ---- Preview Gallery (after capturing images) ----
   if (showPreviewGallery && capturedImages.length > 0) {
     const currentImage = capturedImages[selectedPreviewIndex] || capturedImages[0];
@@ -388,52 +434,6 @@ export default function CameraScreen({ navigation, route }) {
     );
   };
 
-  // ---- Project Picker Modal ----
-  const renderProjectPicker = () => (
-    <Modal
-      visible={showProjectPicker}
-      animationType="slide"
-      transparent={true}
-      onRequestClose={() => setShowProjectPicker(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Projekt zuordnen</Text>
-            <TouchableOpacity onPress={() => setShowProjectPicker(false)}>
-              <Ionicons name="close" size={24} color={colors.textPrimary} />
-            </TouchableOpacity>
-          </View>
-
-          <TouchableOpacity
-            style={[styles.projectPickerItem, !projectId && styles.projectPickerItemActive]}
-            onPress={() => selectProject(null)}
-          >
-            <Ionicons name="close-circle-outline" size={20} color={colors.textTertiary} />
-            <Text style={styles.projectPickerText}>Kein Projekt</Text>
-          </TouchableOpacity>
-
-          <ScrollView style={styles.projectPickerList}>
-            {projects.map(p => (
-              <TouchableOpacity
-                key={p.id}
-                style={[
-                  styles.projectPickerItem,
-                  projectId === p.id && styles.projectPickerItemActive,
-                ]}
-                onPress={() => selectProject(p)}
-              >
-                <View style={[styles.projectPickerColor, { backgroundColor: p.color || colors.accent }]} />
-                <Text style={styles.projectPickerText}>{p.folder_name}</Text>
-                <Text style={styles.projectPickerMeta}>{p.image_count || 0} Bilder</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-  );
-
   if (!permission) {
     return <View style={styles.container}><ActivityIndicator color={colors.accent} /></View>;
   }
@@ -457,7 +457,10 @@ export default function CameraScreen({ navigation, route }) {
         style={styles.camera}
         facing={facing}
         flash={flash}
-      >
+      />
+
+      {/* Overlay on top of camera */}
+      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
         {/* Top bar */}
         <View style={styles.topBar}>
           <TouchableOpacity style={styles.topButton} onPress={() => navigation.goBack()}>
@@ -526,7 +529,7 @@ export default function CameraScreen({ navigation, route }) {
             <Ionicons name="camera-reverse" size={28} color="white" />
           </TouchableOpacity>
         </View>
-      </CameraView>
+      </View>
 
       {/* Project Picker Modal */}
       {renderProjectPicker()}
