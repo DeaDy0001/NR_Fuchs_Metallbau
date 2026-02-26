@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, RefreshControl, Alert, SectionList } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,10 +17,16 @@ export default function ProjectsScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [showNewProject, setShowNewProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
+  const initialSyncDone = useRef(false);
 
   useFocusEffect(
     useCallback(() => {
       loadData();
+      // Auto-sync project list on first visit
+      if (!initialSyncDone.current) {
+        initialSyncDone.current = true;
+        handleRefresh();
+      }
     }, [])
   );
 

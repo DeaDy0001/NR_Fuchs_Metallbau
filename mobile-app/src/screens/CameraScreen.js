@@ -333,64 +333,51 @@ export default function CameraScreen({ navigation, route }) {
           </View>
         )}
 
-        {/* Info bar */}
-        <View style={styles.previewInfo}>
-          {projectName ? (
-            <TouchableOpacity style={styles.projectBadge} onPress={openProjectPicker}>
-              <Ionicons name="folder" size={14} color={colors.accent} />
-              <Text style={styles.projectBadgeText}>{projectName}</Text>
-              <Ionicons name="pencil" size={12} color={colors.textTertiary} />
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity style={styles.assignProjectButton} onPress={openProjectPicker}>
-              <Ionicons name="folder-outline" size={16} color={colors.accent} />
-              <Text style={styles.assignProjectText}>Projekt zuordnen</Text>
-            </TouchableOpacity>
-          )}
-          {currentImage.gps && (
-            <View style={styles.gpsBadge}>
-              <Ionicons name="location" size={12} color={colors.success} />
-              <Text style={styles.gpsText}>GPS</Text>
-            </View>
-          )}
-        </View>
+        {/* Action bar - single row with icons */}
+        <View style={styles.previewActionBar}>
+          {/* Discard */}
+          <TouchableOpacity style={styles.previewActionBtn} onPress={removeAllImages}>
+            <Ionicons name="trash-outline" size={24} color={colors.error} />
+            <Text style={[styles.previewActionLabel, { color: colors.error }]}>Verwerfen</Text>
+          </TouchableOpacity>
 
-        {/* Action buttons - positioned higher */}
-        <View style={styles.previewActions}>
-          <TouchableOpacity style={styles.discardButton} onPress={removeAllImages}>
-            <Ionicons name="trash" size={22} color={colors.error} />
-            <Text style={[styles.previewButtonText, { color: colors.error }]}>
-              {capturedImages.length > 1 ? 'Alle verwerfen' : 'Verwerfen'}
+          {/* Project */}
+          <TouchableOpacity style={styles.previewActionBtn} onPress={openProjectPicker}>
+            <Ionicons
+              name={projectName ? 'folder' : 'folder-outline'}
+              size={24}
+              color={projectName ? colors.accent : colors.textSecondary}
+            />
+            <Text style={[styles.previewActionLabel, projectName && { color: colors.accent }]} numberOfLines={1}>
+              {projectName || 'Projekt'}
             </Text>
           </TouchableOpacity>
 
+          {/* More photos */}
+          <TouchableOpacity style={styles.previewActionBtn} onPress={() => setShowPreviewGallery(false)}>
+            <Ionicons name="camera-outline" size={24} color={colors.textSecondary} />
+            <Text style={styles.previewActionLabel}>Weitere</Text>
+          </TouchableOpacity>
+
+          {/* Upload / Queue */}
           <TouchableOpacity
-            style={[styles.uploadButton, uploading && styles.buttonDisabled]}
+            style={[styles.previewActionBtnSend, uploading && styles.buttonDisabled]}
             onPress={handleUpload}
             disabled={uploading}
           >
             {uploading ? (
-              <ActivityIndicator color="white" />
+              <ActivityIndicator color="white" size="small" />
             ) : (
               <>
-                <Ionicons name="cloud-upload" size={22} color="white" />
-                <Text style={styles.uploadButtonText}>
-                  {isConnected ? 'Hochladen' : 'In Warteschlange'}
+                <Ionicons name={isConnected ? 'send' : 'time-outline'} size={24} color="white" />
+                <Text style={styles.previewActionLabelSend}>
+                  {isConnected ? 'Senden' : 'Queue'}
                   {capturedImages.length > 1 ? ` (${capturedImages.length})` : ''}
                 </Text>
               </>
             )}
           </TouchableOpacity>
         </View>
-
-        {/* Back to camera button */}
-        <TouchableOpacity
-          style={styles.backToCameraButton}
-          onPress={() => setShowPreviewGallery(false)}
-        >
-          <Ionicons name="camera" size={20} color={colors.accent} />
-          <Text style={styles.backToCameraText}>Weitere Fotos</Text>
-        </TouchableOpacity>
 
         {/* Project Picker Modal */}
         {renderProjectPicker()}
@@ -591,29 +578,22 @@ const styles = StyleSheet.create({
   thumbImage: { width: '100%', height: '100%' },
   thumbRemove: { position: 'absolute', top: -4, right: -4 },
 
-  // Preview info bar
-  previewInfo: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, backgroundColor: 'rgba(0,0,0,0.8)' },
-  projectBadge: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  projectBadgeText: { color: colors.accent, fontSize: 14, fontWeight: '500' },
-  assignProjectButton: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: colors.accent },
-  assignProjectText: { color: colors.accent, fontSize: 13, fontWeight: '500' },
-  gpsBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(34,197,94,0.15)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-  gpsText: { color: colors.success, fontSize: 11, fontWeight: '600' },
-
-  // Action buttons - raised higher with padding
-  previewActions: { flexDirection: 'row', paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8, gap: 12, backgroundColor: 'rgba(0,0,0,0.9)' },
-  discardButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: colors.error },
-  uploadButton: { flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 14, borderRadius: 12, backgroundColor: colors.accent },
-  buttonDisabled: { opacity: 0.6 },
-  previewButtonText: { fontSize: 14, fontWeight: '600' },
-  uploadButtonText: { color: 'white', fontSize: 14, fontWeight: '600' },
-
-  // Back to camera button
-  backToCameraButton: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    paddingVertical: 14, backgroundColor: 'rgba(0,0,0,0.9)',
+  // Action bar - single row of icon buttons
+  previewActionBar: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around',
+    paddingHorizontal: 12, paddingTop: 12, paddingBottom: 32,
+    backgroundColor: 'rgba(0,0,0,0.9)',
   },
-  backToCameraText: { color: colors.accent, fontSize: 14, fontWeight: '500' },
+  previewActionBtn: {
+    alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 12, gap: 4,
+  },
+  previewActionLabel: { fontSize: 11, color: colors.textSecondary, fontWeight: '500' },
+  previewActionBtnSend: {
+    alignItems: 'center', justifyContent: 'center', gap: 4,
+    paddingVertical: 10, paddingHorizontal: 20, borderRadius: 12, backgroundColor: colors.accent,
+  },
+  previewActionLabelSend: { fontSize: 11, color: 'white', fontWeight: '600' },
+  buttonDisabled: { opacity: 0.6 },
 
   // Permission
   permissionText: { color: colors.textPrimary, fontSize: 16 },

@@ -101,12 +101,17 @@ export default function HomeScreen({ navigation }) {
 
               <TouchableOpacity
                 style={styles.actionButton}
-                onPress={() => navigation.navigate('Projects')}
+                onPress={() => navigation.navigate('UploadQueue')}
               >
                 <View style={[styles.actionIcon, { backgroundColor: 'rgba(245, 158, 11, 0.15)' }]}>
-                  <Ionicons name="folder" size={28} color={colors.warning} />
+                  <Ionicons name="cloud-upload" size={28} color={colors.warning} />
+                  {queueCount > 0 && (
+                    <View style={styles.queueBadge}>
+                      <Text style={styles.queueBadgeText}>{queueCount > 99 ? '99+' : queueCount}</Text>
+                    </View>
+                  )}
                 </View>
-                <Text style={styles.actionLabel}>Projekte</Text>
+                <Text style={styles.actionLabel}>Warteschlange</Text>
               </TouchableOpacity>
             </View>
 
@@ -118,7 +123,15 @@ export default function HomeScreen({ navigation }) {
                 </View>
                 <View style={styles.photoGrid}>
                   {recentPhotos.map((photo, index) => (
-                    <View key={photo.id} style={styles.photoCard}>
+                    <TouchableOpacity
+                      key={photo.id}
+                      style={styles.photoCard}
+                      onPress={() => navigation.navigate('ImageView', {
+                        localUri: photo.thumbnail_uri || photo.file_uri,
+                        imageName: photo.file_name,
+                        projectName: photo.project_name,
+                      })}
+                    >
                       <Image
                         source={{ uri: photo.thumbnail_uri || photo.file_uri }}
                         style={styles.photoImage}
@@ -136,7 +149,7 @@ export default function HomeScreen({ navigation }) {
                           <Ionicons name="location" size={10} color={colors.success} />
                         </View>
                       )}
-                    </View>
+                    </TouchableOpacity>
                   ))}
                 </View>
               </View>
@@ -182,6 +195,13 @@ const styles = StyleSheet.create({
   actionButton: { flex: 1, alignItems: 'center', gap: 8 },
   actionIcon: { width: 64, height: 64, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   actionLabel: { fontSize: 13, color: colors.textSecondary, fontWeight: '500' },
+  queueBadge: {
+    position: 'absolute', top: -4, right: -4,
+    backgroundColor: colors.error, borderRadius: 10,
+    minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  queueBadgeText: { color: 'white', fontSize: 10, fontWeight: '700' },
   section: { padding: 16, paddingTop: 8 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: colors.textPrimary },

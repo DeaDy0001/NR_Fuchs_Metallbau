@@ -1,30 +1,34 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, Dimensions, TouchableOpacity, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  View, Text, StyleSheet, Image, Dimensions, TouchableOpacity,
+  ActivityIndicator, ScrollView,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { downloadFullImage } from '../services/syncService';
 import { getImageUrl } from '../services/api';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function ImageViewScreen({ route, navigation }) {
-  const { imageId, imageName, projectName } = route.params;
-  const [imageUri, setImageUri] = useState(null);
+  const { imageId, imageName, projectName, localUri } = route.params;
+  const [imageUri, setImageUri] = useState(localUri || null);
   const [imageHeaders, setImageHeaders] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!localUri);
+  const scrollRef = useRef(null);
 
   useEffect(() => {
-    loadImage();
+    if (!localUri) {
+      loadImage();
+    }
   }, []);
 
   const loadImage = async () => {
     try {
-      // Try to download and cache full resolution
       const localPath = await downloadFullImage(imageId);
       setImageUri(localPath);
     } catch (error) {
       console.error('Failed to download full image, using direct Drive URL:', error);
-      // Fallback: use Drive API directly
       try {
         const source = await getImageUrl(imageId);
         if (source) {
@@ -39,6 +43,18 @@ export default function ImageViewScreen({ route, navigation }) {
     }
   };
 
+  const handleDoubleTap = () => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollResponderZoomTo({
+        x: 0,
+        y: 0,
+        width: SCREEN_WIDTH,
+        height: SCREEN_HEIGHT,
+        animated: true,
+      });
+    }
+  };
+
   return (
     <View style={styles.container}>
       {/* Header */}
@@ -47,27 +63,39 @@ export default function ImageViewScreen({ route, navigation }) {
           <Ionicons name="arrow-back" size={24} color="white" />
         </TouchableOpacity>
         <View style={styles.headerInfo}>
-          <Text style={styles.headerTitle} numberOfLines={1}>{imageName}</Text>
+          <Text style={styles.headerTitle} numberOfLines={1}>{imageName || 'Bild'}</Text>
           {projectName && <Text style={styles.headerSubtitle}>{projectName}</Text>}
         </View>
       </View>
 
-      {/* Image */}
+      {/* Image with zoom */}
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={colors.accent} />
           <Text style={styles.loadingText}>Bild wird geladen...</Text>
         </View>
       ) : imageUri ? (
-        <Image
-          source={
-            imageHeaders
-              ? { uri: imageUri, headers: imageHeaders }
-              : { uri: imageUri }
-          }
-          style={styles.image}
-          resizeMode="contain"
-        />
+        <ScrollView
+          ref={scrollRef}
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          maximumZoomScale={5}
+          minimumZoomScale={1}
+          showsHorizontalScrollIndicator={false}
+          showsVerticalScrollIndicator={false}
+          bouncesZoom={true}
+          centerContent={true}
+        >
+          <Image
+            source={
+              imageHeaders
+                ? { uri: imageUri, headers: imageHeaders }
+                : { uri: imageUri }
+            }
+            style={styles.image}
+            resizeMode="contain"
+          />
+        </ScrollView>
       ) : (
         <View style={styles.loadingContainer}>
           <Ionicons name="image-outline" size={64} color={colors.textTertiary} />
@@ -83,7 +111,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingTop: 48, paddingHorizontal: 16, paddingBottom: 12,
-    backgroundColor: 'rgba(0,0,0,0.8)', gap: 12,
+    backgroundColor: 'rgba(0,0,0,0.8)', gap: 12, zIndex: 10,
   },
   headerBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   headerInfo: { flex: 1 },
@@ -91,5 +119,7 @@ const styles = StyleSheet.create({
   headerSubtitle: { color: colors.textTertiary, fontSize: 13, marginTop: 2 },
   loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   loadingText: { color: colors.textTertiary, fontSize: 14 },
-  image: { flex: 1, width: SCREEN_WIDTH },
+  scrollView: { flex: 1 },
+  scrollContent: { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
+  image: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT - 100 },
 });

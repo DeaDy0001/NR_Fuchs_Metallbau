@@ -97,6 +97,29 @@ const initTables = async () => {
       created_at TEXT DEFAULT (datetime('now'))
     );
   `);
+
+  // Migrate: add columns that may be missing from older DB versions
+  const migrations = [
+    { table: 'cached_projects', column: 'is_own', sql: 'ALTER TABLE cached_projects ADD COLUMN is_own INTEGER DEFAULT 0' },
+    { table: 'cached_projects', column: 'is_starred', sql: 'ALTER TABLE cached_projects ADD COLUMN is_starred INTEGER DEFAULT 0' },
+    { table: 'cached_projects', column: 'tags', sql: "ALTER TABLE cached_projects ADD COLUMN tags TEXT DEFAULT '[]'" },
+    { table: 'cached_projects', column: 'notes', sql: 'ALTER TABLE cached_projects ADD COLUMN notes TEXT' },
+  ];
+
+  for (const m of migrations) {
+    try {
+      const info = await db.getFirstAsync(
+        `SELECT COUNT(*) as cnt FROM pragma_table_info('${m.table}') WHERE name = ?`,
+        [m.column]
+      );
+      if (info?.cnt === 0) {
+        await db.execAsync(m.sql);
+        console.log(`[Fuchs] Migration: added ${m.column} to ${m.table}`);
+      }
+    } catch (e) {
+      // Column likely already exists
+    }
+  }
 };
 
 // ============================================================
