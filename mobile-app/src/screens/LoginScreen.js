@@ -20,7 +20,7 @@ import config from '../config';
  * 4. On success, stores tokens and proceeds
  */
 export default function LoginScreen() {
-  const { onGoogleLogin } = useApp();
+  const { onGoogleLogin, resetSetup } = useApp();
   const [clientId, setClientId] = useState(null);
   const [serverUrl, setServerUrl] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -344,6 +344,11 @@ export default function LoginScreen() {
       <Text style={styles.footerText}>
         Dein Google-Konto wird nur verwendet, um auf freigegebene Ordner zuzugreifen.
       </Text>
+
+      <TouchableOpacity style={styles.rescanButton} onPress={resetSetup}>
+        <Ionicons name="qr-code-outline" size={16} color={colors.textTertiary} />
+        <Text style={styles.rescanText}>QR-Code erneut scannen</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -472,5 +477,17 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textTertiary,
     textAlign: 'center',
+  },
+  rescanButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 20,
+    padding: 12,
+  },
+  rescanText: {
+    fontSize: 13,
+    color: colors.textTertiary,
   },
 });
