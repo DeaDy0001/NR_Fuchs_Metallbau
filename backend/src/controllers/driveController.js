@@ -2,7 +2,8 @@ const db = require('../config/database');
 const path = require('path');
 const fs = require('fs-extra');
 const { syncDrivePath, startAutoSync, stopAutoSync } = require('../services/driveSyncService');
-const { deleteFile, compressImage, generateThumbnail } = require('../services/googleDriveService');
+const { deleteFile, compressImage, generateThumbnail, moveFileOnDrive, getFileMetadata, findOrCreateSubfolder, findSubfolder, extractFolderId, createFolderOnDrive, listFoldersInFolder } = require('../services/googleDriveService');
+const { isAuthenticated } = require('../services/authService');
 
 // Get drive settings (all configured paths)
 const getDriveSettings = (req, res) => {
@@ -804,10 +805,52 @@ const assignImageToProject = async (req, res) => {
       ).run(imageId, projectId);
     }
 
+    // Move file on Google Drive if it has a drive_file_id
+    let driveMovedSuccess = false;
+    if (image.drive_file_id && await isAuthenticated()) {
+      try {
+        // Find or create NR_Fuchs_Meta/Projekte/<ProjectName> on Drive
+        const allPaths = db.prepare('SELECT path FROM drive_paths').all();
+        let metaFolder = null;
+        let rootFolderId = null;
+
+        for (const dp of allPaths) {
+          const fid = extractFolderId(dp.path);
+          if (!fid) continue;
+          rootFolderId = fid;
+          metaFolder = await findSubfolder(fid, 'NR_Fuchs_Meta');
+          if (metaFolder) break;
+        }
+
+        if (!metaFolder && rootFolderId) {
+          metaFolder = await createFolderOnDrive('NR_Fuchs_Meta', rootFolderId);
+        }
+
+        if (metaFolder) {
+          const projekteFolder = await findOrCreateSubfolder(metaFolder.id, 'Projekte');
+          const projectDriveFolder = await findOrCreateSubfolder(projekteFolder.id, project.folder_name);
+
+          // Get current file parents
+          const fileMeta = await getFileMetadata(image.drive_file_id);
+          if (fileMeta && fileMeta.parents && fileMeta.parents.length > 0) {
+            // Only move if not already in the project folder
+            if (!fileMeta.parents.includes(projectDriveFolder.id)) {
+              await moveFileOnDrive(image.drive_file_id, projectDriveFolder.id, fileMeta.parents[0]);
+              driveMovedSuccess = true;
+              console.log(`📦 Moved "${image.name}" to Drive folder: ${project.folder_name}`);
+            }
+          }
+        }
+      } catch (driveError) {
+        console.error('Drive move failed (local copy still succeeded):', driveError.message);
+      }
+    }
+
     res.json({
       message: 'Image assigned to project successfully',
       projectName: project.folder_name,
-      destinationPath: destPath
+      destinationPath: destPath,
+      driveMovedSuccess,
     });
   } catch (error) {
     console.error('Error assigning image to project:', error);

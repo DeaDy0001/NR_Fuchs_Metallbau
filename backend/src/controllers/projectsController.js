@@ -8,8 +8,13 @@ const {
   findSubfolder,
   downloadFile: downloadDriveFile,
   generateThumbnail,
+  createFolderOnDrive,
+  moveFileOnDrive,
+  getFileMetadata,
+  findOrCreateSubfolder,
+  listFilesInFolder,
 } = require('../services/googleDriveService');
-const { isAuthenticated } = require('../services/authService');
+const { isAuthenticated, getDriveClient } = require('../services/authService');
 
 // Get project settings (configured path)
 const getProjectSettings = (req, res) => {
@@ -1110,6 +1115,150 @@ const deletePendingProject = (req, res) => {
   }
 };
 
+// ============================================================
+// Google Drive Project Sync (Desktop → Drive)
+// ============================================================
+
+/**
+ * Find or create the NR_Fuchs_Meta/Projekte folder structure on Drive
+ * @returns {{ metaFolder: Object, projekteFolder: Object }} Folder IDs
+ */
+const ensureProjekteFolderOnDrive = async () => {
+  // Get the root Drive folder from drive_paths
+  const allPaths = db.prepare('SELECT path FROM drive_paths').all();
+  if (allPaths.length === 0) throw new Error('Kein Google Drive Ordner konfiguriert');
+
+  // Find NR_Fuchs_Meta folder - check in each configured drive path
+  let metaFolder = null;
+  let rootFolderId = null;
+
+  for (const dp of allPaths) {
+    const fid = extractFolderId(dp.path);
+    if (!fid) continue;
+    rootFolderId = fid;
+    metaFolder = await findSubfolder(fid, 'NR_Fuchs_Meta');
+    if (metaFolder) break;
+  }
+
+  if (!metaFolder && rootFolderId) {
+    // Create NR_Fuchs_Meta folder
+    metaFolder = await createFolderOnDrive('NR_Fuchs_Meta', rootFolderId);
+  }
+
+  if (!metaFolder) throw new Error('Konnte NR_Fuchs_Meta Ordner nicht erstellen');
+
+  // Find or create Projekte subfolder
+  const projekteFolder = await findOrCreateSubfolder(metaFolder.id, 'Projekte');
+
+  return { metaFolder, projekteFolder };
+};
+
+/**
+ * Sync all projects to Google Drive
+ * POST /api/projects/sync-drive
+ *
+ * Creates Projekte/ folder structure on Drive.
+ * For each local project, creates a subfolder on Drive.
+ * Optionally moves assigned images from the main Drive folder to the project folder.
+ */
+const syncProjectsToDrive = async (req, res) => {
+  try {
+    if (!await isAuthenticated()) {
+      return res.status(401).json({ error: 'Nicht mit Google angemeldet' });
+    }
+
+    const { includePhotos = false } = req.body;
+
+    // Ensure folder structure exists
+    const { projekteFolder } = await ensureProjekteFolderOnDrive();
+    console.log(`📁 Projekte folder on Drive: ${projekteFolder.id}`);
+
+    // Get all local projects
+    const projects = db.prepare('SELECT * FROM projects').all();
+
+    // Get existing folders on Drive for deduplication
+    const existingDriveFolders = await listFoldersInFolder(projekteFolder.id);
+    const driveFolderMap = new Map(existingDriveFolders.map(f => [f.name.toLowerCase(), f]));
+
+    let createdFolders = 0;
+    let movedImages = 0;
+    let skippedImages = 0;
+    const errors = [];
+
+    for (const project of projects) {
+      try {
+        // Find or create project folder on Drive
+        let projectDriveFolder = driveFolderMap.get(project.folder_name.toLowerCase());
+        if (!projectDriveFolder) {
+          projectDriveFolder = await createFolderOnDrive(project.folder_name, projekteFolder.id);
+          createdFolders++;
+          console.log(`📁 Created Drive folder: ${project.folder_name}`);
+        }
+
+        // Move images if requested
+        if (includePhotos) {
+          // Get images assigned to this project that have a drive_file_id
+          const assignedImages = db.prepare(`
+            SELECT di.* FROM drive_images di
+            JOIN image_project_assignments ipa ON di.id = ipa.image_id
+            WHERE ipa.project_id = ? AND di.drive_file_id IS NOT NULL
+          `).all(project.id);
+
+          // Get files already in the project folder on Drive
+          const existingFiles = await listAllFilesInFolder(projectDriveFolder.id);
+          const existingFileNames = new Set(existingFiles.map(f => f.name.toLowerCase()));
+
+          for (const img of assignedImages) {
+            try {
+              // Skip if file already exists in project folder by name
+              if (existingFileNames.has(img.name.toLowerCase())) {
+                skippedImages++;
+                continue;
+              }
+
+              // Get current file parents to know where to move from
+              const fileMeta = await getFileMetadata(img.drive_file_id);
+              if (!fileMeta || !fileMeta.parents || fileMeta.parents.length === 0) {
+                skippedImages++;
+                continue;
+              }
+
+              // Check if already in the project folder
+              if (fileMeta.parents.includes(projectDriveFolder.id)) {
+                skippedImages++;
+                continue;
+              }
+
+              // Move file: remove from current parent, add to project folder
+              await moveFileOnDrive(img.drive_file_id, projectDriveFolder.id, fileMeta.parents[0]);
+              movedImages++;
+              console.log(`📦 Moved "${img.name}" → ${project.folder_name}/`);
+            } catch (imgError) {
+              console.error(`Error moving image ${img.name}:`, imgError.message);
+              errors.push(`${img.name}: ${imgError.message}`);
+            }
+          }
+        }
+      } catch (projError) {
+        console.error(`Error syncing project ${project.folder_name}:`, projError.message);
+        errors.push(`${project.folder_name}: ${projError.message}`);
+      }
+    }
+
+    res.json({
+      success: true,
+      totalProjects: projects.length,
+      createdFolders,
+      movedImages,
+      skippedImages,
+      errors: errors.length > 0 ? errors : undefined,
+    });
+  } catch (error) {
+    console.error('Error syncing projects to Drive:', error);
+    res.status(500).json({ error: 'Sync fehlgeschlagen: ' + error.message });
+  }
+};
+
 module.exports = {
   getProjectSettings,
   setProjectPath,
@@ -1129,4 +1278,6 @@ module.exports = {
   acceptPendingProject,
   mergePendingProject,
   deletePendingProject,
+  // Google Drive sync
+  syncProjectsToDrive,
 };
