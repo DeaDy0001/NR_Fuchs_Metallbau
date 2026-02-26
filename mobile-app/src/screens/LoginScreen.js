@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
-import * as Google from 'expo-auth-session/providers/google';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { useAuthRequest, makeRedirectUri, ResponseType } from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -10,10 +10,18 @@ import config from '../config';
 
 WebBrowser.maybeCompleteAuthSession();
 
+// Google OAuth endpoints
+const discovery = {
+  authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+  tokenEndpoint: 'https://oauth2.googleapis.com/token',
+  revocationEndpoint: 'https://oauth2.googleapis.com/revoke',
+};
+
 export default function LoginScreen() {
   const { onGoogleLogin } = useApp();
   const [clientId, setClientId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(false);
 
   useEffect(() => {
     loadClientId();
@@ -26,10 +34,27 @@ export default function LoginScreen() {
     setLoading(false);
   };
 
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    webClientId: clientId || undefined,
-    scopes: config.google.scopes,
+  // Use generic useAuthRequest instead of Google-specific provider
+  // to avoid platform-specific client ID requirements
+  const redirectUri = makeRedirectUri({
+    scheme: 'com.fuchsmetallbau.app',
   });
+
+  console.log('[Fuchs] LoginScreen - redirect URI:', redirectUri);
+
+  const [request, response, promptAsync] = useAuthRequest(
+    clientId ? {
+      clientId,
+      redirectUri,
+      scopes: config.google.scopes,
+      responseType: ResponseType.Token,
+      extraParams: {
+        // Show account picker even if only one account
+        prompt: 'select_account',
+      },
+    } : null,
+    discovery
+  );
 
   useEffect(() => {
     handleAuthResponse();
@@ -37,18 +62,15 @@ export default function LoginScreen() {
 
   const handleAuthResponse = async () => {
     if (response?.type === 'success') {
+      setAuthLoading(true);
       try {
-        const { authentication } = response;
-        if (authentication?.accessToken) {
-          // Store tokens
-          await storeTokens(
-            authentication.accessToken,
-            authentication.refreshToken,
-            authentication.expiresIn
-          );
+        const { access_token, expires_in } = response.params;
+        if (access_token) {
+          // Store tokens (no refresh token with implicit grant)
+          await storeTokens(access_token, null, parseInt(expires_in) || 3600);
 
           // Fetch and store user info
-          const userInfo = await fetchUserInfo(authentication.accessToken);
+          const userInfo = await fetchUserInfo(access_token);
           await storeUserInfo(userInfo);
 
           // Notify app context
@@ -56,7 +78,16 @@ export default function LoginScreen() {
         }
       } catch (error) {
         console.error('[Fuchs] Google Auth Error:', error);
+        Alert.alert('Anmeldung fehlgeschlagen', error.message);
+      } finally {
+        setAuthLoading(false);
       }
+    } else if (response?.type === 'error') {
+      console.error('[Fuchs] Auth error:', response.error);
+      Alert.alert(
+        'Anmeldung fehlgeschlagen',
+        response.error?.message || 'Ein Fehler ist aufgetreten. Bitte versuche es erneut.'
+      );
     }
   };
 
@@ -67,6 +98,8 @@ export default function LoginScreen() {
       </View>
     );
   }
+
+  const canSignIn = !!clientId && !!request && !authLoading;
 
   return (
     <View style={styles.container}>
@@ -85,11 +118,11 @@ export default function LoginScreen() {
         </Text>
 
         <TouchableOpacity
-          style={[styles.googleButton, !request && styles.buttonDisabled]}
+          style={[styles.googleButton, !canSignIn && styles.buttonDisabled]}
           onPress={() => promptAsync()}
-          disabled={!request}
+          disabled={!canSignIn}
         >
-          {!request ? (
+          {authLoading || !request ? (
             <ActivityIndicator color="white" />
           ) : (
             <>
