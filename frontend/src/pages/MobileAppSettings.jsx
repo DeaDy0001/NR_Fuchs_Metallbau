@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Smartphone, QrCode, RefreshCw, Trash2, Download, CheckCircle, XCircle, Wifi, Clock, FolderOpen, Lock, Save, Key } from 'lucide-react';
+import { Smartphone, QrCode, RefreshCw, Trash2, Download, CheckCircle, XCircle, Wifi, Clock, FolderOpen } from 'lucide-react';
 import './MobileAppSettings.css';
 
 function MobileAppSettings() {
@@ -13,14 +13,6 @@ function MobileAppSettings() {
   const [selectedDrivePathId, setSelectedDrivePathId] = useState(null);
   const [networkAddresses, setNetworkAddresses] = useState([]);
   const [selectedAddress, setSelectedAddress] = useState(null);
-  const [showAdmin, setShowAdmin] = useState(false);
-  const [adminPassword, setAdminPassword] = useState('');
-  const [adminAuthenticated, setAdminAuthenticated] = useState(false);
-  const [adminError, setAdminError] = useState('');
-  const [mobileClientId, setMobileClientId] = useState('');
-  const [mobileClientSecret, setMobileClientSecret] = useState('');
-  const [adminSaving, setAdminSaving] = useState(false);
-  const [credentialsLoaded, setCredentialsLoaded] = useState(false);
 
   useEffect(() => {
     loadDevices();
@@ -91,66 +83,6 @@ function MobileAppSettings() {
       loadDevices();
     } catch (error) {
       showNotification('Fehler beim Entfernen', 'error');
-    }
-  };
-
-  const handleAdminLogin = () => {
-    if (adminPassword === 'netrock!') {
-      setAdminAuthenticated(true);
-      setAdminError('');
-      loadMobileCredentials();
-    } else {
-      setAdminError('Falsches Passwort');
-    }
-  };
-
-  const loadMobileCredentials = async () => {
-    try {
-      const response = await fetch('/api/mobile/admin/credentials?password=netrock!');
-      if (response.ok) {
-        const data = await response.json();
-        setMobileClientId(data.mobileClientId || '');
-        setMobileClientSecret(data.mobileClientSecret || '');
-        setCredentialsLoaded(true);
-      }
-    } catch (error) {
-      console.error('Failed to load credentials:', error);
-    }
-  };
-
-  const handleSaveCredentials = async () => {
-    if (!mobileClientId.trim()) {
-      setAdminError('Client-ID ist erforderlich');
-      return;
-    }
-    if (!mobileClientSecret.trim()) {
-      setAdminError('Client-Secret ist erforderlich');
-      return;
-    }
-
-    setAdminSaving(true);
-    setAdminError('');
-    try {
-      const response = await fetch('/api/mobile/admin/credentials', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          password: 'netrock!',
-          mobileClientId: mobileClientId.trim(),
-          mobileClientSecret: mobileClientSecret.trim(),
-        }),
-      });
-      const data = await response.json();
-      if (response.ok) {
-        showNotification('Mobile OAuth Zugangsdaten gespeichert! Server muss neugestartet werden.');
-        setQrData(null); // Reset QR code so new client ID is used
-      } else {
-        setAdminError(data.error || 'Speichern fehlgeschlagen');
-      }
-    } catch (error) {
-      setAdminError('Fehler beim Speichern: ' + error.message);
-    } finally {
-      setAdminSaving(false);
     }
   };
 
@@ -293,41 +225,6 @@ function MobileAppSettings() {
           )}
         </div>
 
-        {/* Mobile OAuth setup notice */}
-        {qrData && !qrData.hasMobileClientId && (
-          <div className="info-box" style={{ marginTop: 16, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10, padding: 16 }}>
-            <p style={{ fontSize: 13, fontWeight: 600, color: '#f59e0b', marginBottom: 8 }}>
-              Wichtig: Mobile OAuth einrichten
-            </p>
-            <p style={{ fontSize: 13, color: '#94a3b8', marginBottom: 8, lineHeight: 1.5 }}>
-              Erstelle in der <strong>Google Cloud Console</strong> eine neue OAuth-Client-ID vom Typ <strong>&quot;Desktop-App&quot;</strong>
-              (APIs &amp; Dienste &rarr; Anmeldedaten &rarr; Anmeldedaten erstellen &rarr; OAuth-Client-ID &rarr; Anwendungstyp: Desktop-App).
-            </p>
-            <p style={{ fontSize: 13, color: '#94a3b8', marginBottom: 8, lineHeight: 1.5 }}>
-              Trage die Client-ID und das Client-Secret in die <code style={{ background: '#16163a', padding: '2px 6px', borderRadius: 4, fontSize: 12 }}>.env</code> Datei ein:
-            </p>
-            <code style={{
-              display: 'block', background: '#16163a', border: '1px solid #2a2a4a', borderRadius: 6,
-              padding: '10px 12px', fontSize: 12, color: '#e2e8f0', fontFamily: 'monospace',
-              lineHeight: 1.6, whiteSpace: 'pre',
-            }}>
-{`GOOGLE_MOBILE_CLIENT_ID=...apps.googleusercontent.com
-GOOGLE_MOBILE_CLIENT_SECRET=...`}
-            </code>
-            <p style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>
-              Desktop-App Client-IDs erlauben benutzerdefinierte Redirect-URIs, die von der Handy-App benötigt werden. Funktioniert auf jedem Server ohne IP-Registrierung.
-            </p>
-          </div>
-        )}
-        {qrData && qrData.hasMobileClientId && (
-          <div className="info-box" style={{ marginTop: 16, background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 10, padding: 12 }}>
-            <p style={{ fontSize: 13, color: '#4ade80', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <CheckCircle size={16} />
-              Mobile OAuth konfiguriert (Desktop-App Client-ID)
-            </p>
-          </div>
-        )}
-
         {/* Setup instructions */}
         {qrData && (
           <div className="info-box" style={{ marginTop: 16 }}>
@@ -449,104 +346,6 @@ GOOGLE_MOBILE_CLIENT_SECRET=...`}
           </div>
         </div>
       )}
-      {/* Admin Section */}
-      <div className="settings-section admin-section">
-        <div className="admin-section-header">
-          <h2>Admin</h2>
-          <button
-            className="admin-toggle-btn"
-            onClick={() => setShowAdmin(!showAdmin)}
-          >
-            <Lock size={16} />
-            {showAdmin ? 'Verbergen' : 'Anzeigen'}
-          </button>
-        </div>
-
-        {showAdmin && (
-          <>
-            {!adminAuthenticated ? (
-              <div className="admin-form">
-                <p className="section-description">
-                  Passwort eingeben, um die Mobile OAuth Zugangsdaten zu verwalten.
-                </p>
-                <div className="admin-input-group">
-                  <label>Admin-Passwort</label>
-                  <div className="admin-input-row">
-                    <Lock size={16} className="admin-input-icon" />
-                    <input
-                      type="password"
-                      placeholder="Passwort eingeben"
-                      value={adminPassword}
-                      onChange={(e) => { setAdminPassword(e.target.value); setAdminError(''); }}
-                      onKeyDown={(e) => e.key === 'Enter' && handleAdminLogin()}
-                    />
-                  </div>
-                </div>
-                {adminError && <p className="admin-error">{adminError}</p>}
-                <button
-                  className="btn btn-primary"
-                  onClick={handleAdminLogin}
-                  disabled={!adminPassword}
-                >
-                  <Lock size={16} />
-                  Anmelden
-                </button>
-              </div>
-            ) : (
-              <div className="admin-form">
-                <p className="section-description">
-                  Google OAuth Client-ID vom Typ <strong>&quot;Desktop-App&quot;</strong> für die Handy-App.
-                  Erstelle diese in der Google Cloud Console (APIs &amp; Dienste &rarr; Anmeldedaten &rarr; OAuth-Client-ID &rarr; Desktop-App).
-                </p>
-
-                <div className="admin-input-group">
-                  <label>Mobile Client-ID</label>
-                  <div className="admin-input-row">
-                    <Key size={16} className="admin-input-icon" />
-                    <input
-                      type="text"
-                      placeholder="...apps.googleusercontent.com"
-                      value={mobileClientId}
-                      onChange={(e) => setMobileClientId(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div className="admin-input-group">
-                  <label>Mobile Client-Secret</label>
-                  <div className="admin-input-row">
-                    <Lock size={16} className="admin-input-icon" />
-                    <input
-                      type="password"
-                      placeholder="Client-Secret eingeben"
-                      value={mobileClientSecret}
-                      onChange={(e) => setMobileClientSecret(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                {adminError && <p className="admin-error">{adminError}</p>}
-
-                <button
-                  className="btn btn-primary"
-                  onClick={handleSaveCredentials}
-                  disabled={adminSaving || !mobileClientId.trim() || !mobileClientSecret.trim()}
-                >
-                  <Save size={16} />
-                  {adminSaving ? 'Wird gespeichert...' : 'Speichern'}
-                </button>
-
-                {credentialsLoaded && mobileClientId && mobileClientSecret && (
-                  <div className="admin-status-ok">
-                    <CheckCircle size={16} />
-                    Mobile OAuth Zugangsdaten konfiguriert
-                  </div>
-                )}
-              </div>
-            )}
-          </>
-        )}
-      </div>
     </div>
   );
 }

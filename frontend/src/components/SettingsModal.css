@@ -102,6 +102,30 @@
   font-weight: 600;
 }
 
+/* Spacer pushes dev tab to bottom */
+.settings-modal-nav-spacer {
+  flex: 1;
+}
+
+.settings-modal-nav-bottom {
+  border-top: 1px solid var(--border-color);
+  padding-top: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.settings-modal-tab-dev {
+  opacity: 0.7;
+  font-size: 0.8125rem !important;
+}
+
+.settings-modal-tab-dev:hover {
+  opacity: 1;
+}
+
+.settings-modal-tab-dev.active {
+  opacity: 1;
+}
+
 /* Right content area */
 .settings-modal-content {
   flex: 1;
@@ -117,7 +141,8 @@
 .settings-modal-content .settings-page,
 .settings-modal-content .drive-settings-page,
 .settings-modal-content .projects-settings-page,
-.settings-modal-content .update-settings-page {
+.settings-modal-content .update-settings-page,
+.settings-modal-content .dev-settings-page {
   max-width: 100%;
 }
 

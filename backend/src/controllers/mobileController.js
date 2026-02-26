@@ -55,13 +55,11 @@ const getNetworkAddresses = () => {
  */
 const generateConnectToken = (req, res) => {
   try {
-    // Use GOOGLE_MOBILE_CLIENT_ID (Desktop app type) for mobile OAuth
-    // Falls back to GOOGLE_CLIENT_ID (Web application type) if not set
-    const googleMobileClientId = process.env.GOOGLE_MOBILE_CLIENT_ID;
-    const googleClientId = googleMobileClientId || process.env.GOOGLE_CLIENT_ID;
+    // Use unified GOOGLE_CLIENT_ID for both desktop and mobile
+    const googleClientId = process.env.GOOGLE_CLIENT_ID;
     if (!googleClientId) {
       return res.status(400).json({
-        error: 'Google OAuth nicht konfiguriert. Bitte GOOGLE_CLIENT_ID oder GOOGLE_MOBILE_CLIENT_ID in der .env Datei setzen.'
+        error: 'Google OAuth nicht konfiguriert. Bitte Google Credentials im Dev-Tab der Einstellungen konfigurieren.'
       });
     }
 
@@ -108,17 +106,13 @@ const generateConnectToken = (req, res) => {
       serverUrl,
     };
 
-    const hasMobileClientId = !!googleMobileClientId;
-
     res.json({
       qrData: JSON.stringify(qrPayload),
       name: drivePath.name,
       rootFolderId,
       googleClientId,
       serverUrl,
-      hasMobileClientId,
       networkAddresses: networkAddresses.map(a => ({ name: a.name, address: a.address, url: `http://${a.address}:${serverPort}` })),
-      mobileCallbackUrl: hasMobileClientId ? null : `${serverUrl}/api/mobile/auth/callback`,
       drivePaths: drivePaths.map(dp => ({ id: dp.id, name: dp.name }))
     });
   } catch (error) {
@@ -935,26 +929,12 @@ const mobileExchangeCode = async (req, res) => {
       return res.status(400).json({ error: 'Authorization code ist erforderlich' });
     }
 
-    // Determine which client credentials to use
-    const mobileClientId = process.env.GOOGLE_MOBILE_CLIENT_ID;
-    const mobileClientSecret = process.env.GOOGLE_MOBILE_CLIENT_SECRET;
-    const webClientId = process.env.GOOGLE_CLIENT_ID;
-    const webClientSecret = process.env.GOOGLE_CLIENT_SECRET;
-
-    let useClientId = client_id || mobileClientId || webClientId;
-    let useClientSecret;
-
-    if (useClientId === mobileClientId) {
-      useClientSecret = mobileClientSecret;
-    } else if (useClientId === webClientId) {
-      useClientSecret = webClientSecret;
-    } else {
-      // Unknown client_id - try mobile secret first, then web
-      useClientSecret = mobileClientSecret || webClientSecret;
-    }
+    // Use unified GOOGLE_CLIENT_ID credentials
+    const useClientId = client_id || process.env.GOOGLE_CLIENT_ID;
+    const useClientSecret = process.env.GOOGLE_CLIENT_SECRET;
 
     if (!useClientId || !useClientSecret) {
-      return res.status(500).json({ error: 'Google OAuth nicht konfiguriert' });
+      return res.status(500).json({ error: 'Google OAuth nicht konfiguriert. Bitte Credentials im Dev-Tab konfigurieren.' });
     }
 
     // Build token exchange request
@@ -1019,25 +999,12 @@ const mobileDeviceToken = async (req, res) => {
       return res.status(400).json({ error: 'device_code ist erforderlich' });
     }
 
-    // Determine client credentials
-    const mobileClientId = process.env.GOOGLE_MOBILE_CLIENT_ID;
-    const mobileClientSecret = process.env.GOOGLE_MOBILE_CLIENT_SECRET;
-    const webClientId = process.env.GOOGLE_CLIENT_ID;
-    const webClientSecret = process.env.GOOGLE_CLIENT_SECRET;
-
-    let useClientId = client_id || mobileClientId || webClientId;
-    let useClientSecret;
-
-    if (useClientId === mobileClientId) {
-      useClientSecret = mobileClientSecret;
-    } else if (useClientId === webClientId) {
-      useClientSecret = webClientSecret;
-    } else {
-      useClientSecret = mobileClientSecret || webClientSecret;
-    }
+    // Use unified GOOGLE_CLIENT_ID credentials
+    const useClientId = client_id || process.env.GOOGLE_CLIENT_ID;
+    const useClientSecret = process.env.GOOGLE_CLIENT_SECRET;
 
     if (!useClientId || !useClientSecret) {
-      return res.status(500).json({ error: 'Google OAuth nicht konfiguriert' });
+      return res.status(500).json({ error: 'Google OAuth nicht konfiguriert. Bitte Credentials im Dev-Tab konfigurieren.' });
     }
 
     // Exchange device code for tokens at Google
@@ -1095,13 +1062,13 @@ const mobileDeviceToken = async (req, res) => {
  */
 const getAdminCredentials = (req, res) => {
   const { password } = req.query;
-  if (!password || password !== 'netrock!') {
+  if (!password || password !== 'netrock!"§$%&') {
     return res.status(403).json({ error: 'Falsches Admin-Passwort' });
   }
 
   res.json({
-    mobileClientId: process.env.GOOGLE_MOBILE_CLIENT_ID || '',
-    mobileClientSecret: process.env.GOOGLE_MOBILE_CLIENT_SECRET ? '***configured***' : '',
+    clientId: process.env.GOOGLE_CLIENT_ID || '',
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET ? '***configured***' : '',
   });
 };
 
@@ -1114,7 +1081,7 @@ const saveAdminCredentials = (req, res) => {
   try {
     const { password, mobileClientId, mobileClientSecret } = req.body;
 
-    if (!password || password !== 'netrock!') {
+    if (!password || password !== 'netrock!"§$%&') {
       return res.status(403).json({ error: 'Falsches Admin-Passwort' });
     }
 
