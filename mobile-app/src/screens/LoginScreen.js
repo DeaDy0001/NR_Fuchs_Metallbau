@@ -132,9 +132,9 @@ export default function LoginScreen() {
       console.log('[Fuchs] Device code response:', JSON.stringify(deviceData));
 
       if (!deviceRes.ok) {
-        // Device Flow not supported - fall back to PC-Login Bridge
-        if (deviceData.error === 'unauthorized_client' || deviceData.error === 'invalid_client') {
-          console.log('[Fuchs] Device flow not supported, falling back to PC-Login Bridge');
+        // Device Flow not supported or scope invalid - fall back to PC-Login Bridge
+        if (deviceData.error === 'unauthorized_client' || deviceData.error === 'invalid_client' || deviceData.error === 'invalid_scope') {
+          console.log('[Fuchs] Device flow not supported (' + deviceData.error + '), falling back to PC-Login Bridge');
           return startPcLogin();
         }
         throw new Error(deviceData.error_description || deviceData.error || 'Device-Code Anfrage fehlgeschlagen');
