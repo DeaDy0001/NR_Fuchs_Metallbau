@@ -989,6 +989,93 @@ const mobileExchangeCode = async (req, res) => {
 };
 
 /**
+ * Exchange device code for tokens (Device Authorization Grant / RFC 8628)
+ * POST /api/mobile/auth/device-token
+ * Body: { device_code, client_id }
+ *
+ * The mobile app uses Google's device flow which doesn't need redirect URIs.
+ * The app polls this endpoint after the user opens the browser to authenticate.
+ * The backend adds the client_secret for the token exchange.
+ */
+const mobileDeviceToken = async (req, res) => {
+  try {
+    const { device_code, client_id } = req.body;
+
+    if (!device_code) {
+      return res.status(400).json({ error: 'device_code ist erforderlich' });
+    }
+
+    // Determine client credentials
+    const mobileClientId = process.env.GOOGLE_MOBILE_CLIENT_ID;
+    const mobileClientSecret = process.env.GOOGLE_MOBILE_CLIENT_SECRET;
+    const webClientId = process.env.GOOGLE_CLIENT_ID;
+    const webClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+    let useClientId = client_id || mobileClientId || webClientId;
+    let useClientSecret;
+
+    if (useClientId === mobileClientId) {
+      useClientSecret = mobileClientSecret;
+    } else if (useClientId === webClientId) {
+      useClientSecret = webClientSecret;
+    } else {
+      useClientSecret = mobileClientSecret || webClientSecret;
+    }
+
+    if (!useClientId || !useClientSecret) {
+      return res.status(500).json({ error: 'Google OAuth nicht konfiguriert' });
+    }
+
+    // Exchange device code for tokens at Google
+    const params = new URLSearchParams({
+      client_id: useClientId,
+      client_secret: useClientSecret,
+      device_code,
+      grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+    });
+
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params,
+    });
+
+    const tokenData = await tokenResponse.json();
+
+    // Pass through pending/slow_down status to the mobile app (not errors)
+    if (tokenData.error === 'authorization_pending' || tokenData.error === 'slow_down') {
+      return res.json({ error: tokenData.error });
+    }
+
+    if (!tokenResponse.ok || tokenData.error) {
+      console.error('[Fuchs] Device token exchange error:', tokenData);
+      return res.status(tokenResponse.ok ? 400 : tokenResponse.status).json({
+        error: tokenData.error || 'token_error',
+        error_description: tokenData.error_description || 'Token-Austausch fehlgeschlagen',
+      });
+    }
+
+    // Fetch user info
+    const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    const userInfo = await userInfoResponse.json();
+
+    res.json({
+      access_token: tokenData.access_token,
+      refresh_token: tokenData.refresh_token || null,
+      expires_in: tokenData.expires_in || 3600,
+      user_name: userInfo.name || '',
+      user_email: userInfo.email || '',
+      user_photo: userInfo.picture || '',
+    });
+  } catch (error) {
+    console.error('[Fuchs] Device token exchange error:', error);
+    res.status(500).json({ error: 'Fehler beim Token-Austausch: ' + error.message });
+  }
+};
+
+/**
  * Get mobile OAuth credentials (admin only)
  * GET /api/mobile/admin/credentials?password=netrock!
  */
@@ -1085,6 +1172,7 @@ module.exports = {
   mobileGoogleCallback,
   mobileRefreshToken,
   mobileExchangeCode,
+  mobileDeviceToken,
   getAdminCredentials,
   saveAdminCredentials,
 };

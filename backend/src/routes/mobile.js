@@ -40,6 +40,9 @@ router.get('/connect/:token', mobile.connectLandingPage);
 // Mobile OAuth - auth code exchange (for Desktop app type client IDs)
 router.post('/auth/exchange', mobile.mobileExchangeCode);
 
+// Mobile OAuth - device authorization flow token exchange
+router.post('/auth/device-token', mobile.mobileDeviceToken);
+
 // Mobile OAuth proxy (fallback for Web application type client IDs)
 router.get('/auth/google', mobile.mobileGoogleAuth);
 router.get('/auth/callback', mobile.mobileGoogleCallback);
