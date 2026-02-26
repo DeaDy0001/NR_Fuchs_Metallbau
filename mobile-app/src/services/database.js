@@ -19,6 +19,24 @@ export const getDb = async () => {
 };
 
 const initTables = async () => {
+  // Validate cache tables: drop and recreate if schema is wrong (e.g. id column type changed)
+  // These are cache-only tables, so no user data is lost
+  const cacheTables = ['cached_projects', 'cached_images', 'cached_tags'];
+  for (const table of cacheTables) {
+    try {
+      const idCol = await db.getFirstAsync(
+        `SELECT type FROM pragma_table_info('${table}') WHERE name = 'id'`
+      );
+      // If table exists but id column type is wrong, drop it so it gets recreated correctly
+      if (idCol && table === 'cached_projects' && idCol.type !== 'TEXT') {
+        console.log(`[Fuchs] Recreating ${table} (schema mismatch: id was ${idCol.type}, need TEXT)`);
+        await db.execAsync(`DROP TABLE IF EXISTS ${table}`);
+      }
+    } catch (e) {
+      // Table doesn't exist yet, that's fine
+    }
+  }
+
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
@@ -108,7 +126,7 @@ const initTables = async () => {
     { table: 'cached_projects', column: 'color', sql: 'ALTER TABLE cached_projects ADD COLUMN color TEXT' },
     { table: 'cached_projects', column: 'image_count', sql: 'ALTER TABLE cached_projects ADD COLUMN image_count INTEGER DEFAULT 0' },
     { table: 'cached_projects', column: 'updated_at', sql: 'ALTER TABLE cached_projects ADD COLUMN updated_at TEXT' },
-    { table: 'cached_projects', column: 'synced_at', sql: "ALTER TABLE cached_projects ADD COLUMN synced_at TEXT DEFAULT (datetime('now'))" },
+    { table: 'cached_projects', column: 'synced_at', sql: 'ALTER TABLE cached_projects ADD COLUMN synced_at TEXT' },
   ];
 
   for (const m of migrations) {
@@ -210,7 +228,7 @@ export const cacheProjects = async (projects) => {
   for (const p of projects) {
     await db.runAsync(
       'INSERT OR REPLACE INTO cached_projects (id, folder_name, folder_id, color, notes, tags, image_count, is_own, is_starred, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [String(p.id), p.folder_name, p.folder_id || '', p.color, p.notes, p.tags || '[]', p.image_count || 0, p.is_own ? 1 : 0, p.is_starred ? 1 : 0, p.updated_at]
+      [String(p.id), String(p.folder_name || ''), String(p.folder_id || ''), String(p.color || ''), String(p.notes || ''), String(p.tags || '[]'), Number(p.image_count) || 0, p.is_own ? 1 : 0, p.is_starred ? 1 : 0, String(p.updated_at || '')]
     );
   }
 };
