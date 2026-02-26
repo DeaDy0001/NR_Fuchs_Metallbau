@@ -100,10 +100,15 @@ const initTables = async () => {
 
   // Migrate: add columns that may be missing from older DB versions
   const migrations = [
+    { table: 'cached_projects', column: 'folder_id', sql: 'ALTER TABLE cached_projects ADD COLUMN folder_id TEXT' },
     { table: 'cached_projects', column: 'is_own', sql: 'ALTER TABLE cached_projects ADD COLUMN is_own INTEGER DEFAULT 0' },
     { table: 'cached_projects', column: 'is_starred', sql: 'ALTER TABLE cached_projects ADD COLUMN is_starred INTEGER DEFAULT 0' },
     { table: 'cached_projects', column: 'tags', sql: "ALTER TABLE cached_projects ADD COLUMN tags TEXT DEFAULT '[]'" },
     { table: 'cached_projects', column: 'notes', sql: 'ALTER TABLE cached_projects ADD COLUMN notes TEXT' },
+    { table: 'cached_projects', column: 'color', sql: 'ALTER TABLE cached_projects ADD COLUMN color TEXT' },
+    { table: 'cached_projects', column: 'image_count', sql: 'ALTER TABLE cached_projects ADD COLUMN image_count INTEGER DEFAULT 0' },
+    { table: 'cached_projects', column: 'updated_at', sql: 'ALTER TABLE cached_projects ADD COLUMN updated_at TEXT' },
+    { table: 'cached_projects', column: 'synced_at', sql: "ALTER TABLE cached_projects ADD COLUMN synced_at TEXT DEFAULT (datetime('now'))" },
   ];
 
   for (const m of migrations) {
