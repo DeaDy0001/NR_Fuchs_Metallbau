@@ -1108,7 +1108,7 @@ const saveAdminCredentials = (req, res) => {
       return res.status(400).json({ error: 'Client-ID und Client-Secret sind erforderlich' });
     }
 
-    const envPath = path.join(__dirname, '../../../.env');
+    const envPath = path.join(__dirname, '../../.env');
 
     let envContent = '';
     if (fs.existsSync(envPath)) {
