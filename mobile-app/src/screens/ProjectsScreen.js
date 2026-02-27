@@ -1,12 +1,12 @@
 import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput,
-  RefreshControl, Alert, SectionList, Modal,
+  RefreshControl, Alert, Modal,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
-import { getCachedProjects, getCachedTags } from '../services/database';
+import { getCachedProjects, getCachedTags, addPendingProject, getPendingProjects, clearConfirmedPendingProjects } from '../services/database';
 import { syncMetadata } from '../services/syncService';
 import { createProject } from '../services/api';
 import { useApp } from '../contexts/AppContext';
@@ -23,6 +23,7 @@ const SORT_OPTIONS = [
 export default function ProjectsScreen({ navigation }) {
   const { isConnected } = useApp();
   const [projects, setProjects] = useState([]);
+  const [pendingProjectsList, setPendingProjectsList] = useState([]);
   const [tags, setTags] = useState([]);
   const [search, setSearch] = useState('');
   const [selectedTag, setSelectedTag] = useState(null);
@@ -53,6 +54,10 @@ export default function ProjectsScreen({ navigation }) {
     const t = await getCachedTags();
     setProjects(p);
     setTags(t);
+    // Load pending projects and remove ones that have been confirmed
+    await clearConfirmedPendingProjects();
+    const pending = await getPendingProjects();
+    setPendingProjectsList(pending);
   };
 
   const handleRefresh = async () => {
@@ -86,16 +91,19 @@ export default function ProjectsScreen({ navigation }) {
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
 
+    const name = newProjectName.trim();
     try {
-      const result = await createProject(newProjectName.trim());
+      const result = await createProject(name);
       setNewProjectName('');
       setShowNewProject(false);
-      // Navigate directly into the new project
-      navigation.navigate('ProjectDetail', {
-        projectId: result.id,
-        projectName: result.folder_name,
-        projectFolderId: result.folder_id,
-      });
+      // Save as pending project (waiting for desktop confirmation)
+      await addPendingProject(name, result.folder_id);
+      // Reload data to show pending project
+      await loadData();
+      Alert.alert(
+        'Projekt erstellt',
+        `"${name}" wurde auf Google Drive erstellt und wartet auf Bestätigung in der Desktop-Software.`
+      );
     } catch (error) {
       Alert.alert('Fehler', error.message);
     }
@@ -151,6 +159,28 @@ export default function ProjectsScreen({ navigation }) {
       default: return 0;
     }
   });
+
+  // Filter pending projects by search
+  const filteredPending = pendingProjectsList.filter(p => {
+    if (!search) return true;
+    return p.folder_name.toLowerCase().includes(search.toLowerCase());
+  });
+
+  const renderPendingProject = ({ item }) => (
+    <View style={styles.pendingCard}>
+      <View style={[styles.colorBar, { backgroundColor: colors.warning }]} />
+      <View style={styles.projectContent}>
+        <View style={styles.projectNameRow}>
+          <Text style={styles.projectName} numberOfLines={1}>{item.folder_name}</Text>
+          <View style={styles.pendingBadge}>
+            <Ionicons name="time-outline" size={11} color={colors.warning} />
+            <Text style={styles.pendingBadgeText}>Unbestätigt</Text>
+          </View>
+        </View>
+        <Text style={styles.pendingHint}>Wartet auf Bestätigung in der Desktop-Software</Text>
+      </View>
+    </View>
+  );
 
   const renderProject = ({ item }) => {
     let projectTags = [];
@@ -254,6 +284,18 @@ export default function ProjectsScreen({ navigation }) {
               color={filterHasImages ? colors.accent : colors.textTertiary}
             />
           </TouchableOpacity>
+          {/* Sync Button */}
+          <TouchableOpacity
+            style={[styles.filterChip, syncing && styles.filterChipActive]}
+            onPress={handleRefresh}
+            disabled={syncing}
+          >
+            <Ionicons
+              name="sync-outline"
+              size={14}
+              color={syncing ? colors.accent : colors.textTertiary}
+            />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -322,12 +364,25 @@ export default function ProjectsScreen({ navigation }) {
           <RefreshControl refreshing={refreshing && !syncing} onRefresh={handleRefresh} tintColor={colors.accent} />
         }
         ListHeaderComponent={
-          sortedProjects.length > 0 ? (
-            <Text style={styles.resultCount}>{sortedProjects.length} Projekte</Text>
-          ) : null
+          <>
+            {/* Pending Projects Section */}
+            {filteredPending.length > 0 && (
+              <View style={styles.pendingSection}>
+                <Text style={styles.pendingSectionTitle}>Warte auf Bestätigung</Text>
+                {filteredPending.map(item => (
+                  <View key={`pending-${item.id}`}>
+                    {renderPendingProject({ item })}
+                  </View>
+                ))}
+              </View>
+            )}
+            {sortedProjects.length > 0 ? (
+              <Text style={styles.resultCount}>{sortedProjects.length} Projekte</Text>
+            ) : null}
+          </>
         }
         ListEmptyComponent={
-          !syncing ? (
+          !syncing && filteredPending.length === 0 ? (
             <View style={styles.empty}>
               <Ionicons name="folder-open-outline" size={48} color={colors.textTertiary} />
               <Text style={styles.emptyText}>
@@ -428,6 +483,27 @@ const styles = StyleSheet.create({
   // List
   list: { padding: 16, paddingTop: 4 },
   resultCount: { fontSize: 12, color: colors.textTertiary, marginBottom: 8 },
+
+  // Pending section
+  pendingSection: {
+    marginBottom: 16,
+  },
+  pendingSectionTitle: {
+    fontSize: 13, fontWeight: '600', color: colors.warning,
+    marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5,
+  },
+  pendingCard: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: colors.cardBg,
+    borderRadius: 12, marginBottom: 10, padding: 16, borderWidth: 1,
+    borderColor: colors.warning + '40',
+  },
+  pendingBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+    backgroundColor: colors.warning + '20',
+  },
+  pendingBadgeText: { fontSize: 11, color: colors.warning, fontWeight: '600' },
+  pendingHint: { fontSize: 12, color: colors.textTertiary, marginTop: 4 },
 
   // Project card
   projectCard: {

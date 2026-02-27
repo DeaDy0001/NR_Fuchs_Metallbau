@@ -114,6 +114,13 @@ const initTables = async () => {
       is_active INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS pending_projects (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      folder_name TEXT NOT NULL,
+      folder_id TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
   `);
 
   // Migrate: add columns that may be missing from older DB versions
@@ -338,4 +345,35 @@ export const getRecentPhotos = async (limit = 20) => {
     'SELECT * FROM recent_photos ORDER BY created_at DESC LIMIT ?',
     [limit]
   );
+};
+
+// ============================================================
+// Pending Projects (created on mobile, waiting for desktop confirmation)
+// ============================================================
+
+export const addPendingProject = async (folderName, folderId) => {
+  const db = await getDb();
+  await db.runAsync(
+    'INSERT OR REPLACE INTO pending_projects (folder_name, folder_id) VALUES (?, ?)',
+    [folderName, folderId]
+  );
+};
+
+export const getPendingProjects = async () => {
+  const db = await getDb();
+  return await db.getAllAsync('SELECT * FROM pending_projects ORDER BY created_at DESC');
+};
+
+export const removePendingProject = async (folderName) => {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM pending_projects WHERE folder_name = ?', [folderName]);
+};
+
+export const clearConfirmedPendingProjects = async () => {
+  const db = await getDb();
+  // Remove pending projects that now exist in cached_projects (= confirmed by desktop)
+  await db.runAsync(`
+    DELETE FROM pending_projects
+    WHERE LOWER(folder_name) IN (SELECT LOWER(folder_name) FROM cached_projects)
+  `);
 };

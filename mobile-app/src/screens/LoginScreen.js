@@ -288,6 +288,11 @@ export default function LoginScreen() {
       setPcSessionId(sessionId);
       setAuthLoading(false);
 
+      // Auto-open the login URL directly on the phone
+      // Since phone and server are on the same network, the login can happen on-device
+      console.log('[Fuchs] Auto-opening login URL on device:', loginUrl);
+      await Linking.openURL(loginUrl);
+
       // Start polling for result
       pollPcLoginLoop(sessionId);
     } catch (error) {
@@ -405,46 +410,31 @@ export default function LoginScreen() {
 
       <View style={styles.loginArea}>
         {pcLoginMode && pcLoginUrl ? (
-          // PC-Login Bridge mode
+          // PC-Login Bridge mode - browser was auto-opened on the phone
           <>
-            <Text style={styles.loginTitle}>Am PC anmelden</Text>
+            <Text style={styles.loginTitle}>Im Browser anmelden</Text>
             <Text style={styles.loginDesc}>
-              Öffne den folgenden Link im Browser auf deinem PC (wo die Fuchs-Software läuft):
+              Ein Browser-Fenster wurde geöffnet. Melde dich dort mit deinem Google-Konto an.
             </Text>
-
-            <TouchableOpacity
-              style={styles.codeBox}
-              activeOpacity={0.7}
-              onPress={async () => {
-                await Clipboard.setStringAsync(pcLoginUrl);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 2000);
-              }}
-            >
-              <Text style={styles.codeLabel}>Link für den PC-Browser:</Text>
-              <Text selectable style={styles.pcLinkText} numberOfLines={2}>{pcLoginUrl}</Text>
-              <View style={styles.copyRow}>
-                <Ionicons
-                  name={copied ? 'checkmark-circle' : 'copy-outline'}
-                  size={16}
-                  color={copied ? '#22c55e' : colors.textTertiary}
-                />
-                <Text style={[styles.copyHint, copied && { color: '#22c55e' }]}>
-                  {copied ? 'Kopiert!' : 'Tippen zum Kopieren'}
-                </Text>
-              </View>
-            </TouchableOpacity>
 
             <View style={styles.waitingRow}>
               <ActivityIndicator size="small" color={colors.accent} />
-              <Text style={styles.waitingText}>Warte auf Anmeldung am PC...</Text>
+              <Text style={styles.waitingText}>Warte auf Anmeldung...</Text>
             </View>
 
             <View style={styles.stepsBox}>
-              <Text style={styles.stepText}>1. Öffne den Link oben im PC-Browser</Text>
-              <Text style={styles.stepText}>2. Melde dich mit Google an</Text>
+              <Text style={styles.stepText}>1. Melde dich im Browser mit Google an</Text>
+              <Text style={styles.stepText}>2. Erteile die Berechtigungen</Text>
               <Text style={styles.stepText}>3. Die App verbindet sich automatisch</Text>
             </View>
+
+            <TouchableOpacity
+              style={styles.reopenButton}
+              onPress={() => Linking.openURL(pcLoginUrl)}
+            >
+              <Ionicons name="open-outline" size={18} color={colors.accent} />
+              <Text style={styles.reopenText}>Browser erneut öffnen</Text>
+            </TouchableOpacity>
 
             <TouchableOpacity style={styles.cancelButton} onPress={cancelAuth}>
               <Text style={styles.cancelText}>Abbrechen</Text>

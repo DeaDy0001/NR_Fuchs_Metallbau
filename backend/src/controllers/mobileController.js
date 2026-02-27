@@ -1158,19 +1158,22 @@ const initPcLogin = (req, res) => {
 
     const sessionId = crypto.randomBytes(24).toString('hex');
 
-    mobileLoginSessions.set(sessionId, {
-      status: 'pending',
-      tokens: null,
-      userInfo: null,
-      expiresAt: Date.now() + MOBILE_LOGIN_EXPIRY_MS,
-    });
-
-    // Build the PC login URL - use the request's host header so it works from any device
-    // If the app is accessed via IP (e.g. 192.168.1.x), the link will also use that IP
+    // Build the login URL using the request's host header so it works from any device
     const port = process.env.PORT || 3001;
     const host = req.headers.host || `localhost:${port}`;
     const protocol = req.protocol || 'http';
     const loginUrl = `${protocol}://${host}/api/mobile/auth/pc-login/${sessionId}`;
+
+    // Build redirect URI from request host (so callback works when opened from mobile)
+    const redirectUri = `${protocol}://${host}/api/auth/google/callback`;
+
+    mobileLoginSessions.set(sessionId, {
+      status: 'pending',
+      tokens: null,
+      userInfo: null,
+      redirectUri, // Store for use in callback
+      expiresAt: Date.now() + MOBILE_LOGIN_EXPIRY_MS,
+    });
 
     res.json({ sessionId, loginUrl });
   } catch (error) {
@@ -1203,7 +1206,10 @@ const pcLoginPage = (req, res) => {
 
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    const redirectUri = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback';
+
+    // Use the redirect URI stored in the session (built from the original request host)
+    // This ensures the callback URL matches the host the user is accessing from
+    const redirectUri = session.redirectUri || process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback';
 
     const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
 
@@ -1249,7 +1255,8 @@ const handleMobilePcCallback = async (req, res, code, sessionId) => {
 
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    const redirectUri = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback';
+    // Use the redirect URI from the session (matches what was used in the auth URL)
+    const redirectUri = session.redirectUri || process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback';
 
     const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
     const { tokens } = await oauth2Client.getToken(code);
