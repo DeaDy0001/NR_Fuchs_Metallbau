@@ -2,7 +2,7 @@ const db = require('../config/database');
 const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
-const { compressImage, generateThumbnail } = require('../services/googleDriveService');
+const { compressImage, generateThumbnail, findSubfolder, findOrCreateSubfolder, moveFileOnDrive, listFoldersInFolder, extractFolderId } = require('../services/googleDriveService');
 const { google } = require('googleapis');
 const os = require('os');
 
@@ -736,18 +736,114 @@ const getImage = async (req, res) => {
  * Get mobile inbox (uploads pending review in desktop)
  * GET /api/mobile/inbox
  */
-const getInbox = (req, res) => {
+const getInbox = async (req, res) => {
   try {
-    const uploads = db.prepare(`
-      SELECT mu.*, md.user_name as device_user, md.device_name
-      FROM mobile_uploads mu
-      JOIN mobile_devices md ON md.device_id = mu.device_id
-      ORDER BY mu.uploaded_at DESC
-    `).all();
-    res.json(uploads);
+    // 1. Get DB-based inbox items (legacy uploads)
+    let dbItems = [];
+    try {
+      dbItems = db.prepare(`
+        SELECT mu.*, md.user_name as device_user, md.device_name
+        FROM mobile_uploads mu
+        JOIN mobile_devices md ON md.device_id = mu.device_id
+        ORDER BY mu.uploaded_at DESC
+      `).all();
+    } catch (e) {
+      // Table might not exist or be empty
+    }
+
+    // 2. Scan Google Drive inbox/ folder for project subfolders
+    let driveInboxProjects = [];
+    try {
+      const drivePath = db.prepare('SELECT path FROM drive_paths LIMIT 1').get();
+      if (drivePath) {
+        let rootFolderId = drivePath.path;
+        const urlMatch = drivePath.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+        if (urlMatch) rootFolderId = urlMatch[1];
+
+        const metaFolder = await findSubfolder(rootFolderId, 'NR_Fuchs_Meta');
+        if (metaFolder) {
+          const inboxFolder = await findSubfolder(metaFolder.id, 'inbox');
+          if (inboxFolder) {
+            const folders = await listFoldersInFolder(inboxFolder.id);
+            driveInboxProjects = folders.map(f => ({
+              id: `drive_inbox_${f.id}`,
+              drive_folder_id: f.id,
+              inbox_folder_id: inboxFolder.id,
+              file_name: `project_${f.name}`,
+              original_name: f.name,
+              project_name: f.name,
+              status: 'new_project',
+              source: 'drive_inbox',
+              uploaded_at: f.modifiedTime || new Date().toISOString(),
+              device_user: 'Handy-App',
+              device_name: 'Google Drive',
+            }));
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error scanning Drive inbox:', e.message);
+    }
+
+    res.json([...driveInboxProjects, ...dbItems]);
   } catch (error) {
     console.error('Error getting inbox:', error);
     res.status(500).json({ error: 'Failed to get inbox' });
+  }
+};
+
+/**
+ * Confirm an inbox project - move folder from inbox/ to Projekte/ on Google Drive
+ * POST /api/mobile/inbox/confirm
+ * Body: { folderId, inboxFolderId, projectName }
+ */
+const confirmInboxProject = async (req, res) => {
+  try {
+    const { folderId, inboxFolderId, projectName } = req.body;
+
+    if (!folderId) {
+      return res.status(400).json({ error: 'folderId ist erforderlich' });
+    }
+
+    // Find or create Projekte/ folder
+    const drivePath = db.prepare('SELECT path FROM drive_paths LIMIT 1').get();
+    if (!drivePath) {
+      return res.status(400).json({ error: 'Kein Google Drive Ordner konfiguriert' });
+    }
+
+    let rootFolderId = drivePath.path;
+    const urlMatch = drivePath.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    if (urlMatch) rootFolderId = urlMatch[1];
+
+    const metaFolder = await findSubfolder(rootFolderId, 'NR_Fuchs_Meta');
+    if (!metaFolder) {
+      return res.status(400).json({ error: 'NR_Fuchs_Meta Ordner nicht gefunden' });
+    }
+
+    const projekteFolder = await findOrCreateSubfolder(metaFolder.id, 'Projekte');
+
+    // Move folder from inbox/ to Projekte/
+    const sourceParentId = inboxFolderId || (await findSubfolder(metaFolder.id, 'inbox'))?.id;
+    if (!sourceParentId) {
+      return res.status(400).json({ error: 'Inbox-Ordner nicht gefunden' });
+    }
+
+    await moveFileOnDrive(folderId, projekteFolder.id, sourceParentId);
+
+    // Update any related mobile_uploads entries
+    try {
+      db.prepare(`
+        UPDATE mobile_uploads SET status = 'processed'
+        WHERE project_name = ? AND status = 'new_project'
+      `).run(projectName || '');
+    } catch (e) {
+      // Non-critical
+    }
+
+    res.json({ success: true, message: `Projekt "${projectName}" wurde nach Projekte/ verschoben` });
+  } catch (error) {
+    console.error('Error confirming inbox project:', error);
+    res.status(500).json({ error: 'Projekt konnte nicht bestätigt werden: ' + error.message });
   }
 };
 
@@ -1540,6 +1636,7 @@ module.exports = {
   getSyncData,
   getImage,
   getInbox,
+  confirmInboxProject,
   mobileGoogleAuth,
   mobileGoogleCallback,
   mobileRefreshToken,

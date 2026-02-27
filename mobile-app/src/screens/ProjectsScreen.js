@@ -102,7 +102,7 @@ export default function ProjectsScreen({ navigation }) {
       await loadData();
       Alert.alert(
         'Projekt erstellt',
-        `"${name}" wurde auf Google Drive erstellt und wartet auf Bestätigung in der Desktop-Software.`
+        `"${name}" wurde im Inbox-Ordner erstellt und wartet auf Bestätigung in der Desktop-Software.`
       );
     } catch (error) {
       Alert.alert('Fehler', error.message);

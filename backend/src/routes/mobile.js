@@ -66,6 +66,7 @@ router.delete('/devices/:deviceId', mobile.removeDevice);
 
 // Inbox (called from desktop)
 router.get('/inbox', mobile.getInbox);
+router.post('/inbox/confirm', mobile.confirmInboxProject);
 
 // Admin: mobile OAuth credentials management (called from desktop settings)
 router.get('/admin/credentials', mobile.getAdminCredentials);

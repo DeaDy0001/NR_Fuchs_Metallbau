@@ -157,14 +157,29 @@ export const fetchProjectImages = async (projectFolderId) => {
 };
 
 /**
- * Create a new project (= create folder on Drive under Projekte/)
+ * Get the inbox folder ID (finds or creates it)
+ */
+const getInboxFolderId = async () => {
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
+
+  if (connection.inbox_folder_id) return connection.inbox_folder_id;
+
+  const folder = await findOrCreateFolder(connection.meta_folder_id, 'inbox');
+  return folder.id;
+};
+
+/**
+ * Create a new project (= create folder on Drive under inbox/)
+ * Projects from mobile go into the inbox first, so the desktop software
+ * can review and move them to Projekte/ (confirm/merge).
  * Returns the new project object with folder info
  */
 export const createProject = async (name) => {
-  const projekteFolderId = await getProjekteFolderId();
+  const inboxFolderId = await getInboxFolderId();
 
-  // Check if folder already exists
-  const existing = await findFolder(projekteFolderId, name);
+  // Check if folder already exists in inbox
+  const existing = await findFolder(inboxFolderId, name);
   if (existing) {
     return {
       success: true,
@@ -174,7 +189,7 @@ export const createProject = async (name) => {
     };
   }
 
-  const folder = await findOrCreateFolder(projekteFolderId, name);
+  const folder = await findOrCreateFolder(inboxFolderId, name);
 
   return {
     success: true,

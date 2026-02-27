@@ -9,7 +9,8 @@ import { syncMetadata } from '../services/syncService';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const PHOTO_COLUMNS = 3;
-const PHOTO_SIZE = (SCREEN_WIDTH - 32 - (PHOTO_COLUMNS - 1) * 4) / PHOTO_COLUMNS;
+const PHOTO_GAP = 3;
+const PHOTO_SIZE = Math.floor((SCREEN_WIDTH - 32 - (PHOTO_COLUMNS - 1) * PHOTO_GAP) / PHOTO_COLUMNS);
 
 export default function HomeScreen({ navigation }) {
   const { userName, queueCount, activeConnection } = useApp();
@@ -208,7 +209,7 @@ const styles = StyleSheet.create({
 
   // Photo grid
   photoGrid: {
-    flexDirection: 'row', flexWrap: 'wrap', gap: 4,
+    flexDirection: 'row', flexWrap: 'wrap', gap: PHOTO_GAP,
   },
   photoCard: {
     width: PHOTO_SIZE, height: PHOTO_SIZE,
