@@ -1168,6 +1168,7 @@ const initPcLogin = (req, res) => {
       status: 'pending',
       tokens: null,
       userInfo: null,
+      serverBaseUrl: `${protocol}://${host}`, // Store server URL for callback redirect
       expiresAt: Date.now() + MOBILE_LOGIN_EXPIRY_MS,
     });
 
@@ -1258,21 +1259,21 @@ const pcLoginPage = (req, res) => {
         <div class="icon">&#128274;</div>
         <h1>Google Anmeldung</h1>
         <p class="subtitle">Melde dich mit deinem Google-Konto an, um die App mit dem Server zu verbinden.</p>
-        <a id="loginBtn" class="btn btn-google" href="${authUrl.replace(/"/g, '&quot;')}">Mit Google anmelden</a>
-        <div class="waiting" id="waitingMsg" style="display:none">
+        <a id="loginBtn" class="btn btn-google" href="${authUrl.replace(/"/g, '&quot;')}" target="_blank" rel="noopener">Mit Google anmelden</a>
+        <div class="waiting" id="waitingMsg">
           <span class="spinner"></span> Warte auf Anmeldung...
         </div>
         <div class="status" id="successMsg">
           <h2 style="color:#22c55e;font-size:18px">&#10004; Anmeldung erfolgreich!</h2>
-          <p style="color:#94a3b8;margin-top:8px">Du kannst dieses Fenster schliessen und zur App zurückkehren.</p>
+          <p style="color:#94a3b8;margin-top:8px">Du kannst den Browser jetzt schliessen und zur App zurückkehren.</p>
         </div>
+        <p class="hint" id="hintMsg" style="color:#64748b;font-size:12px;margin-top:16px;line-height:1.5">
+          Nach der Google-Anmeldung kannst du den anderen Tab schliessen und hierher zurückkehren.
+          Diese Seite erkennt automatisch, wenn die Anmeldung abgeschlossen ist.
+        </p>
       </div>
       <script>
-        // Show waiting message after clicking login
-        document.getElementById('loginBtn').addEventListener('click', function() {
-          document.getElementById('waitingMsg').style.display = 'block';
-        });
-        // Poll for login completion (works whether auth happens in this browser or on PC)
+        // Poll for login completion
         var sessionId = '${sessionId}';
         var pollUrl = '${pollUrl}';
         function pollStatus() {
@@ -1286,6 +1287,7 @@ const pcLoginPage = (req, res) => {
             if (data.status === 'complete') {
               document.getElementById('loginBtn').style.display = 'none';
               document.getElementById('waitingMsg').style.display = 'none';
+              document.getElementById('hintMsg').style.display = 'none';
               document.getElementById('successMsg').classList.add('show');
             } else if (data.error) {
               // Session expired or failed
@@ -1295,7 +1297,7 @@ const pcLoginPage = (req, res) => {
           })
           .catch(function() { setTimeout(pollStatus, 5000); });
         }
-        // Start polling after a short delay
+        // Start polling immediately
         setTimeout(pollStatus, 2000);
       </script>
     </body></html>`);
@@ -1359,6 +1361,13 @@ const handleMobilePcCallback = async (req, res, code, sessionId) => {
 
     console.log(`[Fuchs] Mobile PC-login successful for ${userInfo.email || 'unknown'}`);
 
+    // Try to redirect to the server's network IP (stored in session from initPcLogin)
+    // so the success page loads correctly even on the phone
+    const serverBaseUrl = session.serverBaseUrl;
+    if (serverBaseUrl && !serverBaseUrl.includes('localhost')) {
+      return res.redirect(`${serverBaseUrl}/api/mobile/auth/login-done`);
+    }
+
     res.send(`
       <!DOCTYPE html><html><head><meta charset="utf-8"><title>Anmeldung erfolgreich</title>
       <style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#1a1a2e;color:#fff}
@@ -1371,7 +1380,7 @@ const handleMobilePcCallback = async (req, res, code, sessionId) => {
         <div class="icon">&#10004;</div>
         <h1>Anmeldung erfolgreich!</h1>
         <p>Du bist als <strong>${userInfo.email || userInfo.name || 'User'}</strong> angemeldet.</p>
-        <p>Geh zurueck zu deinem Handy &ndash; die App wird automatisch verbunden.</p>
+        <p>Du kannst dieses Fenster schliessen. Die App verbindet sich automatisch.</p>
         <button onclick="window.close()">Fenster schliessen</button>
       </div></body></html>
     `);
@@ -1475,6 +1484,33 @@ const getConnectInfo = (req, res) => {
   }
 };
 
+/**
+ * Success page after mobile login - served at the server's network IP
+ * so it loads correctly on the phone
+ * GET /api/mobile/auth/login-done
+ */
+const loginDonePage = (req, res) => {
+  res.send(`
+    <!DOCTYPE html><html><head><meta charset="utf-8"><title>Anmeldung erfolgreich</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+      display:flex;justify-content:center;align-items:center;min-height:100vh;
+      margin:0;background:#1a1a2e;color:#fff;padding:20px}
+    .box{background:#16213e;padding:40px;border-radius:16px;text-align:center;max-width:420px;width:100%}
+    h1{color:#22c55e;font-size:22px}.icon{font-size:64px;margin-bottom:16px}
+    p{color:#94a3b8;line-height:1.6;margin-top:12px}
+    button{background:#3b82f6;color:#fff;border:none;padding:14px 30px;border-radius:10px;
+      cursor:pointer;font-size:16px;font-weight:600;margin-top:20px;width:100%}
+    button:hover{background:#2563eb}</style></head>
+    <body><div class="box">
+      <div class="icon">&#10004;</div>
+      <h1>Anmeldung erfolgreich!</h1>
+      <p>Du kannst dieses Fenster jetzt schliessen und zur App zurückkehren.</p>
+      <button onclick="window.close()">Fenster schliessen</button>
+    </div></body></html>
+  `);
+};
+
 module.exports = {
   generateConnectToken,
   getConnectInfo,
@@ -1499,6 +1535,7 @@ module.exports = {
   saveAdminCredentials,
   initPcLogin,
   pcLoginPage,
+  loginDonePage,
   handleMobilePcCallback,
   pollPcLogin,
 };

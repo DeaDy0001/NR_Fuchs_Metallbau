@@ -55,6 +55,7 @@ router.post('/auth/refresh', mobile.mobileRefreshToken);
 router.post('/auth/init-login', mobile.initPcLogin);
 router.get('/auth/pc-login/:sessionId', mobile.pcLoginPage);
 router.post('/auth/poll-login', mobile.pollPcLogin);
+router.get('/auth/login-done', mobile.loginDonePage);
 
 // Register device with token (called from app after QR scan)
 router.post('/register', mobile.registerDevice);
