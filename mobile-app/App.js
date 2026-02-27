@@ -5,7 +5,7 @@ import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
-import { View, ActivityIndicator, Platform } from 'react-native';
+import { View, ActivityIndicator, Platform, ScrollView, TouchableOpacity, Text } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppProvider, useApp } from './src/contexts/AppContext';
 import { colors } from './src/theme/colors';
@@ -33,55 +33,128 @@ const screenOptions = {
   headerTitleStyle: { fontWeight: '600' },
 };
 
-function MainTabs() {
+// Tab config with action tabs (Camera, Gallery, Queue navigate to stack screens)
+const TAB_CONFIG = {
+  Home: { icon: 'home', iconOutline: 'home-outline', label: 'Start' },
+  Camera: { icon: 'camera', iconOutline: 'camera-outline', label: 'Foto', isAction: true },
+  Gallery: { icon: 'images', iconOutline: 'images-outline', label: 'Galerie', isAction: true },
+  Projects: { icon: 'folder', iconOutline: 'folder-outline', label: 'Projekte' },
+  Queue: { icon: 'cloud-upload', iconOutline: 'cloud-upload-outline', label: 'Upload', isAction: true },
+  Settings: { icon: 'settings', iconOutline: 'settings-outline', label: 'Einstellungen' },
+};
+
+function CustomTabBar({ state, descriptors, navigation }) {
   const { queueCount } = useApp();
   const insets = useSafeAreaInsets();
   const bottomPadding = Math.max(insets.bottom, 8);
 
   return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
-        tabBarStyle: {
-          backgroundColor: colors.bgSecondary,
-          borderTopColor: colors.border,
-          borderTopWidth: 1,
-          height: 60 + bottomPadding,
-          paddingBottom: bottomPadding,
+    <View style={{
+      backgroundColor: colors.bgSecondary,
+      borderTopColor: colors.border,
+      borderTopWidth: 1,
+      paddingBottom: bottomPadding,
+    }}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{
+          paddingHorizontal: 4,
           paddingTop: 8,
-        },
-        tabBarActiveTintColor: colors.accent,
-        tabBarInactiveTintColor: colors.textTertiary,
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '500' },
-        ...screenOptions,
-        tabBarIcon: ({ focused, color, size }) => {
-          let iconName;
-          switch (route.name) {
-            case 'Home': iconName = focused ? 'home' : 'home-outline'; break;
-            case 'Projects': iconName = focused ? 'folder' : 'folder-outline'; break;
-            case 'Settings': iconName = focused ? 'settings' : 'settings-outline'; break;
-          }
-          return <Ionicons name={iconName} size={22} color={color} />;
-        },
-      })}
+          paddingBottom: 4,
+          minWidth: '100%',
+          justifyContent: 'space-evenly',
+        }}
+      >
+        {state.routes.map((route, index) => {
+          const { options } = descriptors[route.key];
+          const config = TAB_CONFIG[route.name] || {};
+          const isFocused = state.index === index;
+          const color = isFocused ? colors.accent : colors.textTertiary;
+          const iconName = isFocused ? config.icon : config.iconOutline;
+          const showBadge = route.name === 'Queue' && queueCount > 0;
+
+          const onPress = () => {
+            if (config.isAction) {
+              // Action tabs navigate to stack screens instead of switching tabs
+              if (route.name === 'Camera') {
+                navigation.navigate('CameraStack');
+              } else if (route.name === 'Gallery') {
+                navigation.navigate('CameraStack', { pickFromGallery: true });
+              } else if (route.name === 'Queue') {
+                navigation.navigate('UploadQueue');
+              }
+              return;
+            }
+            const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
+            if (!isFocused && !event.defaultPrevented) {
+              navigation.navigate(route.name);
+            }
+          };
+
+          return (
+            <TouchableOpacity
+              key={route.key}
+              onPress={onPress}
+              style={{
+                alignItems: 'center',
+                paddingHorizontal: 12,
+                paddingVertical: 4,
+                minWidth: 56,
+              }}
+            >
+              <View style={{ position: 'relative' }}>
+                <Ionicons name={iconName} size={22} color={color} />
+                {showBadge && (
+                  <View style={{
+                    position: 'absolute', top: -4, right: -10,
+                    backgroundColor: colors.warning, borderRadius: 8,
+                    minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center',
+                    paddingHorizontal: 3,
+                  }}>
+                    <Text style={{ color: 'white', fontSize: 9, fontWeight: '700' }}>
+                      {queueCount > 99 ? '99+' : queueCount}
+                    </Text>
+                  </View>
+                )}
+              </View>
+              <Text style={{ fontSize: 10, fontWeight: '500', color, marginTop: 3 }}>
+                {config.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
+
+// Dummy components for action tabs (they navigate away, these are never really shown)
+function DummyScreen() { return <View style={{ flex: 1, backgroundColor: colors.bgPrimary }} />; }
+
+function MainTabs() {
+  return (
+    <Tab.Navigator
+      tabBar={(props) => <CustomTabBar {...props} />}
+      screenOptions={screenOptions}
     >
       <Tab.Screen
         name="Home"
         component={HomeScreen}
         options={{ title: 'Start', headerTitle: 'Fuchs Metallbau' }}
       />
+      <Tab.Screen name="Camera" component={DummyScreen} options={{ tabBarLabel: 'Foto' }} />
+      <Tab.Screen name="Gallery" component={DummyScreen} options={{ tabBarLabel: 'Galerie' }} />
       <Tab.Screen
         name="Projects"
         component={ProjectsScreen}
         options={{ title: 'Projekte' }}
       />
+      <Tab.Screen name="Queue" component={DummyScreen} options={{ tabBarLabel: 'Upload' }} />
       <Tab.Screen
         name="Settings"
         component={SettingsScreen}
-        options={{
-          title: 'Einstellungen',
-          tabBarBadge: queueCount > 0 ? queueCount : undefined,
-          tabBarBadgeStyle: { backgroundColor: colors.warning, fontSize: 10 },
-        }}
+        options={{ title: 'Einstellungen' }}
       />
     </Tab.Navigator>
   );
@@ -131,7 +204,7 @@ function AppNavigator() {
             options={{ headerShown: false }}
           />
           <Stack.Screen
-            name="Camera"
+            name="CameraStack"
             component={CameraScreen}
             options={{ headerShown: false, presentation: 'fullScreenModal' }}
           />

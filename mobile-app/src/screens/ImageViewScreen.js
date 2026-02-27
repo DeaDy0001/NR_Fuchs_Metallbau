@@ -19,10 +19,10 @@ function getDistance(touches) {
 }
 
 // Single zoomable image using PanResponder + Animated (works on Android & iOS)
-function ZoomableImage({ imageId, isActive }) {
-  const [imageUri, setImageUri] = useState(null);
+function ZoomableImage({ imageId, localUri, isActive }) {
+  const [imageUri, setImageUri] = useState(localUri || null);
   const [imageHeaders, setImageHeaders] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!localUri);
 
   // Zoom & pan state
   const scaleVal = useRef(new Animated.Value(1)).current;
@@ -40,7 +40,7 @@ function ZoomableImage({ imageId, isActive }) {
   const panStartY = useRef(0);
 
   useEffect(() => {
-    if (isActive && !imageUri) {
+    if (isActive && !imageUri && imageId) {
       loadImage();
     }
   }, [isActive]);
@@ -53,6 +53,7 @@ function ZoomableImage({ imageId, isActive }) {
   }, [isActive]);
 
   const loadImage = async () => {
+    if (!imageId) return;
     try {
       const localPath = await downloadFullImage(imageId);
       setImageUri(localPath);
@@ -237,11 +238,11 @@ function ZoomableImage({ imageId, isActive }) {
 }
 
 export default function ImageViewScreen({ route, navigation }) {
-  const { imageId, imageName, projectName, images, initialIndex } = route.params;
+  const { imageId, imageName, projectName, images, initialIndex, localUri } = route.params;
   const [currentIndex, setCurrentIndex] = useState(initialIndex || 0);
 
   // Single image mode (no images array)
-  const imageList = images || [{ id: imageId, name: imageName }];
+  const imageList = images || [{ id: imageId, name: imageName, localUri }];
   const currentImage = imageList[currentIndex] || imageList[0];
 
   const onViewableItemsChanged = useCallback(({ viewableItems }) => {
@@ -277,6 +278,7 @@ export default function ImageViewScreen({ route, navigation }) {
       {imageList.length === 1 ? (
         <ZoomableImage
           imageId={imageList[0].id}
+          localUri={imageList[0].localUri}
           isActive={true}
         />
       ) : (
@@ -285,7 +287,7 @@ export default function ImageViewScreen({ route, navigation }) {
           horizontal
           pagingEnabled
           showsHorizontalScrollIndicator={false}
-          keyExtractor={(item) => String(item.id)}
+          keyExtractor={(item) => String(item.id || item.localUri)}
           initialScrollIndex={initialIndex || 0}
           getItemLayout={getItemLayout}
           onViewableItemsChanged={onViewableItemsChanged}
@@ -293,6 +295,7 @@ export default function ImageViewScreen({ route, navigation }) {
           renderItem={({ item, index }) => (
             <ZoomableImage
               imageId={item.id}
+              localUri={item.localUri}
               isActive={Math.abs(index - currentIndex) <= 1}
             />
           )}

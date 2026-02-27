@@ -167,19 +167,33 @@ export default function ProjectsScreen({ navigation }) {
   });
 
   const renderPendingProject = ({ item }) => (
-    <View style={styles.pendingCard}>
-      <View style={[styles.colorBar, { backgroundColor: colors.warning }]} />
+    <TouchableOpacity
+      style={styles.pendingCard}
+      onPress={() => navigation.navigate('CameraStack', {
+        projectId: item.folder_id,
+        projectName: item.folder_name,
+        projectFolderId: item.folder_id,
+      })}
+    >
+      <View style={[styles.colorBar, { backgroundColor: colors.accent }]} />
       <View style={styles.projectContent}>
         <View style={styles.projectNameRow}>
           <Text style={styles.projectName} numberOfLines={1}>{item.folder_name}</Text>
           <View style={styles.pendingBadge}>
-            <Ionicons name="time-outline" size={11} color={colors.warning} />
+            <Ionicons name="time-outline" size={11} color={colors.accent} />
             <Text style={styles.pendingBadgeText}>Unbestätigt</Text>
           </View>
         </View>
-        <Text style={styles.pendingHint}>Wartet auf Bestätigung in der Desktop-Software</Text>
+        <View style={styles.pendingActions}>
+          <Text style={styles.pendingHint}>Wartet auf Bestätigung</Text>
+          <View style={styles.pendingUploadHint}>
+            <Ionicons name="camera-outline" size={12} color={colors.accent} />
+            <Text style={styles.pendingUploadText}>Fotos aufnehmen</Text>
+          </View>
+        </View>
       </View>
-    </View>
+      <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
+    </TouchableOpacity>
   );
 
   const renderProject = ({ item }) => {
@@ -489,21 +503,24 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   pendingSectionTitle: {
-    fontSize: 13, fontWeight: '600', color: colors.warning,
+    fontSize: 13, fontWeight: '600', color: colors.accent,
     marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5,
   },
   pendingCard: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: colors.cardBg,
     borderRadius: 12, marginBottom: 10, padding: 16, borderWidth: 1,
-    borderColor: colors.warning + '40',
+    borderColor: colors.accent + '40',
   },
   pendingBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-    backgroundColor: colors.warning + '20',
+    backgroundColor: colors.accent + '20',
   },
-  pendingBadgeText: { fontSize: 11, color: colors.warning, fontWeight: '600' },
-  pendingHint: { fontSize: 12, color: colors.textTertiary, marginTop: 4 },
+  pendingBadgeText: { fontSize: 11, color: colors.accent, fontWeight: '600' },
+  pendingActions: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
+  pendingHint: { fontSize: 12, color: colors.textTertiary },
+  pendingUploadHint: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  pendingUploadText: { fontSize: 12, color: colors.accent, fontWeight: '500' },
 
   // Project card
   projectCard: {

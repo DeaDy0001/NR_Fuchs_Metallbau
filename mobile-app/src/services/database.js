@@ -339,11 +339,11 @@ export const addRecentPhoto = async (fileUri, fileName, mimeType, projectId = nu
   );
 };
 
-export const getRecentPhotos = async (limit = 20) => {
+export const getRecentPhotos = async (limit = 20, offset = 0) => {
   const db = await getDb();
   return await db.getAllAsync(
-    'SELECT * FROM recent_photos ORDER BY created_at DESC LIMIT ?',
-    [limit]
+    'SELECT * FROM recent_photos ORDER BY created_at DESC LIMIT ? OFFSET ?',
+    [limit, offset]
   );
 };
 

@@ -2,7 +2,7 @@ const db = require('../config/database');
 const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
-const { compressImage, generateThumbnail, findSubfolder, findOrCreateSubfolder, moveFileOnDrive, listFoldersInFolder, extractFolderId } = require('../services/googleDriveService');
+const { compressImage, generateThumbnail, findSubfolder, findOrCreateSubfolder, moveFileOnDrive, listFoldersInFolder, listFilesInFolder, extractFolderId, deleteFileFromDrive } = require('../services/googleDriveService');
 const { google } = require('googleapis');
 const os = require('os');
 
@@ -765,18 +765,27 @@ const getInbox = async (req, res) => {
           const inboxFolder = await findSubfolder(metaFolder.id, 'inbox');
           if (inboxFolder) {
             const folders = await listFoldersInFolder(inboxFolder.id);
-            driveInboxProjects = folders.map(f => ({
-              id: `drive_inbox_${f.id}`,
-              drive_folder_id: f.id,
-              inbox_folder_id: inboxFolder.id,
-              file_name: `project_${f.name}`,
-              original_name: f.name,
-              project_name: f.name,
-              status: 'new_project',
-              source: 'drive_inbox',
-              uploaded_at: f.modifiedTime || new Date().toISOString(),
-              device_user: 'Handy-App',
-              device_name: 'Google Drive',
+            // Get image counts for each folder
+            driveInboxProjects = await Promise.all(folders.map(async (f) => {
+              let image_count = 0;
+              try {
+                const files = await listFilesInFolder(f.id);
+                image_count = files.length;
+              } catch {}
+              return {
+                id: `drive_inbox_${f.id}`,
+                drive_folder_id: f.id,
+                inbox_folder_id: inboxFolder.id,
+                file_name: `project_${f.name}`,
+                original_name: f.name,
+                project_name: f.name,
+                image_count,
+                status: 'new_project',
+                source: 'drive_inbox',
+                uploaded_at: f.modifiedTime || new Date().toISOString(),
+                device_user: 'Handy-App',
+                device_name: 'Google Drive',
+              };
             }));
           }
         }
@@ -844,6 +853,80 @@ const confirmInboxProject = async (req, res) => {
   } catch (error) {
     console.error('Error confirming inbox project:', error);
     res.status(500).json({ error: 'Projekt konnte nicht bestätigt werden: ' + error.message });
+  }
+};
+
+/**
+ * Get images from an inbox project folder
+ * GET /api/mobile/inbox/:folderId/images
+ */
+const getInboxImages = async (req, res) => {
+  try {
+    const { folderId } = req.params;
+    if (!folderId) {
+      return res.status(400).json({ error: 'folderId ist erforderlich' });
+    }
+    const files = await listFilesInFolder(folderId);
+    res.json(files);
+  } catch (error) {
+    console.error('Error getting inbox images:', error);
+    res.status(500).json({ error: 'Bilder konnten nicht geladen werden' });
+  }
+};
+
+/**
+ * Merge inbox project with existing project - move all files from inbox folder to target folder
+ * POST /api/mobile/inbox/merge
+ * Body: { sourceFolderId, targetFolderId, inboxFolderId, projectName }
+ */
+const mergeInboxProject = async (req, res) => {
+  try {
+    const { sourceFolderId, targetFolderId, inboxFolderId, projectName } = req.body;
+
+    if (!sourceFolderId || !targetFolderId) {
+      return res.status(400).json({ error: 'sourceFolderId und targetFolderId sind erforderlich' });
+    }
+
+    // List all files in the inbox project folder
+    const files = await listFilesInFolder(sourceFolderId);
+
+    // Move each file to the target project folder
+    let movedCount = 0;
+    for (const file of files) {
+      try {
+        await moveFileOnDrive(file.id, targetFolderId, sourceFolderId);
+        movedCount++;
+      } catch (e) {
+        console.error(`Error moving file ${file.name}:`, e.message);
+      }
+    }
+
+    // Try to delete the now-empty inbox folder
+    try {
+      await deleteFileFromDrive(sourceFolderId);
+    } catch (e) {
+      // Non-critical - folder might not be empty or not accessible
+      console.error('Could not delete empty inbox folder:', e.message);
+    }
+
+    // Update any related mobile_uploads entries
+    try {
+      db.prepare(`
+        UPDATE mobile_uploads SET status = 'processed'
+        WHERE project_name = ? AND status = 'new_project'
+      `).run(projectName || '');
+    } catch (e) {
+      // Non-critical
+    }
+
+    res.json({
+      success: true,
+      movedCount,
+      message: `${movedCount} Bilder wurden zusammengeführt`,
+    });
+  } catch (error) {
+    console.error('Error merging inbox project:', error);
+    res.status(500).json({ error: 'Zusammenführung fehlgeschlagen: ' + error.message });
   }
 };
 
@@ -1636,7 +1719,9 @@ module.exports = {
   getSyncData,
   getImage,
   getInbox,
+  getInboxImages,
   confirmInboxProject,
+  mergeInboxProject,
   mobileGoogleAuth,
   mobileGoogleCallback,
   mobileRefreshToken,

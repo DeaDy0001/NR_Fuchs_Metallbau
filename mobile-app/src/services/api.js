@@ -214,19 +214,16 @@ export const uploadImage = async (fileUri, fileName, mimeType, projectId = null,
 
   let targetFolderId;
 
-  if (projectName) {
-    // Upload directly to project folder
-    try {
-      const projekteFolderId = await getProjekteFolderId();
-      const projectFolder = await findOrCreateFolder(projekteFolderId, projectName);
-      targetFolderId = projectFolder.id;
-    } catch {
-      // Fallback to inbox if project folder creation fails
-      if (!connection.inbox_folder_id) throw new Error('Kein Zielordner verfügbar');
-      targetFolderId = connection.inbox_folder_id;
-    }
+  if (projectId) {
+    // projectId is the Drive folder ID - use it directly (inbox or Projekte)
+    targetFolderId = projectId;
+  } else if (projectName) {
+    // Fallback: find/create folder in inbox by name
+    const inboxFolderId = await getInboxFolderId();
+    const projectFolder = await findOrCreateFolder(inboxFolderId, projectName);
+    targetFolderId = projectFolder.id;
   } else {
-    // No project - upload to inbox
+    // No project - upload to inbox root
     if (!connection.inbox_folder_id) {
       const inboxFolder = await findOrCreateFolder(connection.meta_folder_id, 'inbox');
       targetFolderId = inboxFolder.id;

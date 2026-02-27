@@ -1906,4 +1906,75 @@
   .tag-color-presets {
     grid-template-columns: repeat(10, 1fr);
   }
+
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .search-box {
+    max-width: 100%;
+  }
+
+  .modal-sidebar {
+    width: 100%;
+    max-height: 40vh;
+    border-left: none;
+    border-top: 1px solid var(--border-color);
+  }
+}
+
+/* Large screens (1920px+) */
+@media (min-width: 1920px) {
+  .images-container.grid {
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 1.25rem;
+  }
+
+  .image-thumbnail {
+    height: 240px;
+  }
+
+  .tag-sidebar {
+    width: 300px;
+  }
+
+  .modal-sidebar {
+    width: 420px;
+  }
+
+  .modal-sidebar-upper {
+    padding: 2.5rem;
+  }
+}
+
+/* 4K screens (2560px+) */
+@media (min-width: 2560px) {
+  .images-container.grid {
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.5rem;
+  }
+
+  .image-thumbnail {
+    height: 300px;
+  }
+
+  .tag-sidebar {
+    width: 360px;
+  }
+
+  .modal-sidebar {
+    width: 500px;
+  }
 }

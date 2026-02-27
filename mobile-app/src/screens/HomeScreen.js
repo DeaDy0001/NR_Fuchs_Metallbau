@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl, Image, Dimensions } from 'react-native';
+import React, { useState, useCallback, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl, Image, Dimensions, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -11,11 +11,15 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const PHOTO_COLUMNS = 3;
 const PHOTO_GAP = 3;
 const PHOTO_SIZE = Math.floor((SCREEN_WIDTH - 32 - (PHOTO_COLUMNS - 1) * PHOTO_GAP) / PHOTO_COLUMNS);
+const PAGE_SIZE = 18;
 
 export default function HomeScreen({ navigation }) {
-  const { userName, queueCount, activeConnection } = useApp();
+  const { userName, activeConnection } = useApp();
   const [recentPhotos, setRecentPhotos] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const pageRef = useRef(1);
 
   useFocusEffect(
     useCallback(() => {
@@ -25,10 +29,31 @@ export default function HomeScreen({ navigation }) {
 
   const loadData = async () => {
     try {
-      const photos = await getRecentPhotos(18);
+      pageRef.current = 1;
+      const photos = await getRecentPhotos(PAGE_SIZE);
       setRecentPhotos(photos);
+      setHasMore(photos.length >= PAGE_SIZE);
     } catch (error) {
       console.error('Failed to load home data:', error);
+    }
+  };
+
+  const loadMore = async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const nextPage = pageRef.current + 1;
+      const offset = pageRef.current * PAGE_SIZE;
+      const photos = await getRecentPhotos(PAGE_SIZE, offset);
+      if (photos.length > 0) {
+        setRecentPhotos(prev => [...prev, ...photos]);
+        pageRef.current = nextPage;
+      }
+      setHasMore(photos.length >= PAGE_SIZE);
+    } catch (error) {
+      console.error('Failed to load more photos:', error);
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -65,65 +90,15 @@ export default function HomeScreen({ navigation }) {
               ) : null}
             </View>
 
-            {/* Upload Queue */}
-            {queueCount > 0 && (
-              <TouchableOpacity style={styles.queueBanner} onPress={() => navigation.navigate('UploadQueue')}>
-                <View style={styles.queueInfo}>
-                  <Ionicons name="cloud-upload" size={20} color={colors.warning} />
-                  <Text style={styles.queueText}>
-                    {queueCount} {queueCount === 1 ? 'Bild' : 'Bilder'} in der Warteschlange
-                  </Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-              </TouchableOpacity>
-            )}
-
-            {/* Quick Actions */}
-            <View style={styles.actions}>
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={() => navigation.navigate('Camera')}
-              >
-                <View style={[styles.actionIcon, { backgroundColor: 'rgba(59, 130, 246, 0.15)' }]}>
-                  <Ionicons name="camera" size={28} color={colors.accent} />
-                </View>
-                <Text style={styles.actionLabel}>Foto aufnehmen</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={() => navigation.navigate('Camera', { pickFromGallery: true })}
-              >
-                <View style={[styles.actionIcon, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
-                  <Ionicons name="images" size={28} color={colors.success} />
-                </View>
-                <Text style={styles.actionLabel}>Galerie</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={() => navigation.navigate('UploadQueue')}
-              >
-                <View style={[styles.actionIcon, { backgroundColor: 'rgba(245, 158, 11, 0.15)' }]}>
-                  <Ionicons name="cloud-upload" size={28} color={colors.warning} />
-                  {queueCount > 0 && (
-                    <View style={styles.queueBadge}>
-                      <Text style={styles.queueBadgeText}>{queueCount > 99 ? '99+' : queueCount}</Text>
-                    </View>
-                  )}
-                </View>
-                <Text style={styles.actionLabel}>Warteschlange</Text>
-              </TouchableOpacity>
-            </View>
-
             {/* Recent Photos */}
             {recentPhotos.length > 0 && (
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
                   <Text style={styles.sectionTitle}>Letzte Fotos</Text>
+                  <Text style={styles.photoCount}>{recentPhotos.length} Fotos</Text>
                 </View>
                 <View style={styles.photoGrid}>
-                  {recentPhotos.map((photo, index) => (
+                  {recentPhotos.map((photo) => (
                     <TouchableOpacity
                       key={photo.id}
                       style={styles.photoCard}
@@ -153,6 +128,24 @@ export default function HomeScreen({ navigation }) {
                     </TouchableOpacity>
                   ))}
                 </View>
+
+                {/* Load More */}
+                {hasMore && (
+                  <TouchableOpacity
+                    style={styles.loadMoreBtn}
+                    onPress={loadMore}
+                    disabled={loadingMore}
+                  >
+                    {loadingMore ? (
+                      <ActivityIndicator size="small" color={colors.accent} />
+                    ) : (
+                      <>
+                        <Ionicons name="chevron-down" size={18} color={colors.accent} />
+                        <Text style={styles.loadMoreText}>Mehr laden</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                )}
               </View>
             )}
 
@@ -184,28 +177,10 @@ const styles = StyleSheet.create({
   },
   statusText: { fontSize: 14, fontWeight: '600' },
   statusUser: { fontSize: 13, color: colors.textSecondary, marginLeft: 'auto' },
-  queueBanner: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: 'rgba(245, 158, 11, 0.1)', borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.2)', borderRadius: 10,
-    padding: 12, marginHorizontal: 16, marginBottom: 8,
-  },
-  queueInfo: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  queueText: { color: colors.warning, fontSize: 14, fontWeight: '500' },
-  actions: { flexDirection: 'row', padding: 16, gap: 12 },
-  actionButton: { flex: 1, alignItems: 'center', gap: 8 },
-  actionIcon: { width: 64, height: 64, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  actionLabel: { fontSize: 13, color: colors.textSecondary, fontWeight: '500' },
-  queueBadge: {
-    position: 'absolute', top: -4, right: -4,
-    backgroundColor: colors.error, borderRadius: 10,
-    minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 4,
-  },
-  queueBadgeText: { color: 'white', fontSize: 10, fontWeight: '700' },
   section: { padding: 16, paddingTop: 8 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: colors.textPrimary },
+  photoCount: { fontSize: 13, color: colors.textTertiary },
 
   // Photo grid
   photoGrid: {
@@ -226,6 +201,15 @@ const styles = StyleSheet.create({
     position: 'absolute', top: 4, right: 4,
     backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 8, padding: 3,
   },
+
+  // Load more
+  loadMoreBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, marginTop: 16, paddingVertical: 12,
+    backgroundColor: colors.cardBg, borderRadius: 10,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  loadMoreText: { fontSize: 14, color: colors.accent, fontWeight: '600' },
 
   emptyState: { alignItems: 'center', justifyContent: 'center', padding: 48, gap: 12 },
   emptyTitle: { fontSize: 20, fontWeight: '600', color: colors.textPrimary },

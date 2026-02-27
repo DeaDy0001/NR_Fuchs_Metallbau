@@ -53,12 +53,13 @@ export const processUploadQueue = async () => {
           continue;
         }
 
-        // Upload to Google Drive inbox via api.js
+        // Upload to Google Drive via api.js
+        // Use project_folder_id (Drive folder ID) as projectId for direct folder targeting
         await uploadImage(
           item.file_uri,
           item.file_name,
           item.mime_type,
-          item.project_id,
+          item.project_folder_id || item.project_id,
           item.project_name
         );
 
