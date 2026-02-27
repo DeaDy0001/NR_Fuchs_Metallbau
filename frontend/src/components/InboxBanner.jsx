@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Inbox, Check, GitMerge, Trash2, X, Search, Image, FolderOpen, Loader, ChevronDown, ChevronUp, Tag } from 'lucide-react';
 import './InboxBanner.css';
+import './PendingProjects.css';
 
 function InboxBanner() {
   const [inboxItems, setInboxItems] = useState([]);
