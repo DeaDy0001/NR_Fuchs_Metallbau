@@ -13,7 +13,7 @@ function InboxBanner() {
       const response = await fetch('/api/mobile/inbox');
       if (response.ok) {
         const data = await response.json();
-        setInboxItems(data.filter(i => i.status === 'new_project'));
+        setInboxItems(data);
       }
     } catch (error) {
       console.error('Error loading inbox:', error);
@@ -157,11 +157,17 @@ function InboxModal({ projects, onClose, onRefresh }) {
   };
 
   const handleDelete = async (item) => {
-    if (!window.confirm(`"${item.project_name}" wirklich ablehnen?`)) return;
+    if (!window.confirm(`"${item.project_name}" wirklich ablehnen und aus der Inbox löschen?`)) return;
     setProcessing(prev => ({ ...prev, [item.id]: 'deleting' }));
     try {
-      showNotification(`"${item.project_name}" abgelehnt`);
-      await onRefresh();
+      const response = await fetch(`/api/mobile/inbox/${item.drive_folder_id}`, { method: 'DELETE' });
+      if (response.ok) {
+        showNotification(`"${item.project_name}" abgelehnt`);
+        await onRefresh();
+      } else {
+        const data = await response.json();
+        showNotification(data.error || 'Fehler beim Löschen', 'error');
+      }
     } catch (e) {
       showNotification('Fehler: ' + e.message, 'error');
     } finally {

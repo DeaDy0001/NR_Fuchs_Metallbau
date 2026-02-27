@@ -738,20 +738,7 @@ const getImage = async (req, res) => {
  */
 const getInbox = async (req, res) => {
   try {
-    // 1. Get DB-based inbox items (legacy uploads)
-    let dbItems = [];
-    try {
-      dbItems = db.prepare(`
-        SELECT mu.*, md.user_name as device_user, md.device_name
-        FROM mobile_uploads mu
-        JOIN mobile_devices md ON md.device_id = mu.device_id
-        ORDER BY mu.uploaded_at DESC
-      `).all();
-    } catch (e) {
-      // Table might not exist or be empty
-    }
-
-    // 2. Scan Google Drive inbox/ folder for project subfolders
+    // Scan Google Drive inbox/ folder for project subfolders
     let driveInboxProjects = [];
     try {
       const drivePath = db.prepare('SELECT path FROM drive_paths LIMIT 1').get();
@@ -794,7 +781,7 @@ const getInbox = async (req, res) => {
       console.error('Error scanning Drive inbox:', e.message);
     }
 
-    res.json([...driveInboxProjects, ...dbItems]);
+    res.json(driveInboxProjects);
   } catch (error) {
     console.error('Error getting inbox:', error);
     res.status(500).json({ error: 'Failed to get inbox' });
@@ -927,6 +914,36 @@ const mergeInboxProject = async (req, res) => {
   } catch (error) {
     console.error('Error merging inbox project:', error);
     res.status(500).json({ error: 'Zusammenführung fehlgeschlagen: ' + error.message });
+  }
+};
+
+/**
+ * Delete/reject an inbox project - delete folder from inbox/ on Google Drive
+ * DELETE /api/mobile/inbox/:folderId
+ */
+const deleteInboxProject = async (req, res) => {
+  try {
+    const { folderId } = req.params;
+    if (!folderId) {
+      return res.status(400).json({ error: 'folderId ist erforderlich' });
+    }
+
+    await deleteFileFromDrive(folderId);
+
+    // Also clean up any related mobile_uploads entries
+    try {
+      db.prepare(`
+        UPDATE mobile_uploads SET status = 'processed'
+        WHERE status = 'new_project'
+      `).run();
+    } catch (e) {
+      // Non-critical
+    }
+
+    res.json({ success: true, message: 'Projekt aus Inbox gelöscht' });
+  } catch (error) {
+    console.error('Error deleting inbox project:', error);
+    res.status(500).json({ error: 'Löschen fehlgeschlagen: ' + error.message });
   }
 };
 
@@ -1722,6 +1739,7 @@ module.exports = {
   getInboxImages,
   confirmInboxProject,
   mergeInboxProject,
+  deleteInboxProject,
   mobileGoogleAuth,
   mobileGoogleCallback,
   mobileRefreshToken,
