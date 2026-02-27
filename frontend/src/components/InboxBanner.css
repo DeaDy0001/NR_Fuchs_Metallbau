@@ -1,0 +1,262 @@
+/* ========== Inbox Banner ========== */
+.inbox-banner {
+  background: linear-gradient(90deg, #3b82f6, #2563eb);
+  color: white;
+  padding: 10px 20px;
+  cursor: pointer;
+  transition: background 0.2s;
+  z-index: 100;
+  position: relative;
+}
+
+.inbox-banner:hover {
+  background: linear-gradient(90deg, #60a5fa, #3b82f6);
+}
+
+.inbox-banner-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* ========== Modal Overlay ========== */
+.inbox-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.inbox-modal {
+  background: #1a1a2e;
+  border: 1px solid #2a2a4a;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 700px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ========== Modal Header ========== */
+.inbox-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid #2a2a4a;
+}
+
+.inbox-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: #3b82f6;
+}
+
+.inbox-modal-title h2 {
+  margin: 0;
+  font-size: 18px;
+  color: #e2e8f0;
+}
+
+.inbox-modal-subtitle {
+  margin: 2px 0 0 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.inbox-modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.inbox-modal-close {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+}
+
+.inbox-modal-close:hover {
+  color: #e2e8f0;
+  background: #2a2a4a;
+}
+
+/* ========== Modal Body ========== */
+.inbox-modal-body {
+  overflow-y: auto;
+  padding: 16px;
+  flex: 1;
+}
+
+/* ========== Notification ========== */
+.inbox-notification {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.inbox-notification.success {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+}
+
+.inbox-notification.error {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+
+/* ========== Project Card ========== */
+.inbox-project-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: #12122a;
+  border: 1px solid #2a2a4a;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 10px;
+  transition: border-color 0.15s;
+}
+
+.inbox-project-card:hover {
+  border-color: #3b82f6;
+}
+
+.inbox-project-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: rgba(59, 130, 246, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #3b82f6;
+  flex-shrink: 0;
+}
+
+.inbox-project-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.inbox-project-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inbox-project-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.inbox-project-date {
+  color: #4b5563;
+}
+
+.inbox-project-date::before {
+  content: '·';
+  margin-right: 6px;
+}
+
+.inbox-project-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ========== Buttons ========== */
+.inbox-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+}
+
+.inbox-btn-confirm {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border-color: rgba(34, 197, 94, 0.3);
+}
+
+.inbox-btn-confirm:hover {
+  background: rgba(34, 197, 94, 0.25);
+}
+
+.inbox-btn-confirm-all {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border-color: rgba(34, 197, 94, 0.3);
+  padding: 6px 14px;
+  font-size: 12px;
+}
+
+.inbox-btn-confirm-all:hover {
+  background: rgba(34, 197, 94, 0.25);
+}
+
+.inbox-btn-reject {
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.2);
+  padding: 8px 10px;
+}
+
+.inbox-btn-reject:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+/* ========== Empty State ========== */
+.inbox-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px 20px;
+  color: #64748b;
+}
+
+/* ========== Spinner ========== */
+@keyframes inbox-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.inbox-banner .spinning,
+.inbox-modal .spinning {
+  animation: inbox-spin 1s linear infinite;
+}

@@ -89,30 +89,6 @@ function MobileAppSettings() {
     }
   };
 
-  const confirmProject = async (item) => {
-    if (!window.confirm(`Projekt "${item.project_name || item.original_name}" in den Projekte-Ordner verschieben?`)) return;
-    try {
-      const response = await fetch('/api/mobile/inbox/confirm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          folderId: item.drive_folder_id,
-          inboxFolderId: item.inbox_folder_id,
-          projectName: item.project_name || item.original_name,
-        })
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        showNotification(data.error || 'Fehler beim Bestätigen', 'error');
-        return;
-      }
-      showNotification(`Projekt "${item.project_name || item.original_name}" bestätigt`);
-      loadInbox();
-    } catch (error) {
-      showNotification('Fehler beim Bestätigen', 'error');
-    }
-  };
-
   const removeDevice = async (deviceId) => {
     if (!window.confirm('Gerät wirklich entfernen? Das Gerät muss erneut verbunden werden.')) return;
     try {
@@ -360,46 +336,17 @@ function MobileAppSettings() {
         </div>
       </div>
 
-      {/* Inbox */}
+      {/* Inbox hint */}
       {inbox.length > 0 && (
         <div className="settings-section">
           <div className="section-header-row">
             <div>
               <h2>Inbox</h2>
               <p className="section-description">
-                Neue Projekte von der Handy-App. Bestätige sie, um sie in den Projekte-Ordner zu verschieben.
+                Es gibt {inbox.length} neue {inbox.length === 1 ? 'Projekt' : 'Projekte'} von der Handy-App.
+                Klicke auf die blaue Leiste oben im Fenster, um sie zu bestätigen.
               </p>
             </div>
-            <button className="btn btn-secondary" onClick={loadInbox}>
-              <RefreshCw size={16} />
-              Aktualisieren
-            </button>
-          </div>
-          <div className="inbox-list">
-            {inbox.map(item => (
-              <div key={item.id} className="inbox-item">
-                <div className="inbox-icon">
-                  {item.status === 'new_project' ? <FolderOpen size={20} /> : <Smartphone size={20} />}
-                </div>
-                <div className="inbox-info">
-                  <div className="inbox-name">{item.project_name || item.original_name || item.file_name}</div>
-                  <div className="inbox-meta">
-                    von {item.device_user || item.user_name} &middot; {formatDate(item.uploaded_at)}
-                  </div>
-                </div>
-                {item.status === 'new_project' && item.drive_folder_id && (
-                  <button
-                    className="btn btn-primary"
-                    onClick={() => confirmProject(item)}
-                    title="Projekt bestätigen und in Projekte-Ordner verschieben"
-                    style={{ padding: '6px 14px', fontSize: 13, whiteSpace: 'nowrap' }}
-                  >
-                    <CheckCircle size={14} />
-                    Bestätigen
-                  </button>
-                )}
-              </div>
-            ))}
           </div>
         </div>
       )}
