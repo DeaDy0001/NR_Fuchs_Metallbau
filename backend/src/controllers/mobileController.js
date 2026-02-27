@@ -1164,6 +1164,20 @@ const initPcLogin = (req, res) => {
     const protocol = req.protocol || 'http';
     const loginUrl = `${protocol}://${host}/api/mobile/auth/pc-login/${sessionId}`;
 
+    // Also generate the direct Google OAuth URL for in-app WebView auth
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback';
+    const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: [
+        'https://www.googleapis.com/auth/drive',
+        'https://www.googleapis.com/auth/userinfo.profile',
+        'https://www.googleapis.com/auth/userinfo.email',
+      ],
+      prompt: 'consent',
+      state: `mobile_login:${sessionId}`,
+    });
+
     mobileLoginSessions.set(sessionId, {
       status: 'pending',
       tokens: null,
@@ -1172,7 +1186,7 @@ const initPcLogin = (req, res) => {
       expiresAt: Date.now() + MOBILE_LOGIN_EXPIRY_MS,
     });
 
-    res.json({ sessionId, loginUrl });
+    res.json({ sessionId, loginUrl, authUrl, redirectUri });
   } catch (error) {
     console.error('[Fuchs] initPcLogin error:', error);
     res.status(500).json({ error: error.message });

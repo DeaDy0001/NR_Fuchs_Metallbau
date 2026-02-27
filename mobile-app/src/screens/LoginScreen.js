@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  Alert, AppState, Linking, Platform, ScrollView,
+  Alert, AppState, Linking, Platform, ScrollView, Modal, SafeAreaView,
 } from 'react-native';
+import { WebView } from 'react-native-webview';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -15,8 +16,8 @@ import config from '../config';
  * LoginScreen - Google Sign-In with automatic fallback:
  *
  * 1. Try Device Authorization Flow (RFC 8628) - works if client is "TVs and Limited Input" type
- * 2. If that fails, fall back to PC-Login Bridge - user signs in on the PC browser
- *    (uses existing localhost redirect URI, no extra setup needed)
+ * 2. If that fails, fall back to In-App WebView OAuth - opens Google sign-in in a WebView,
+ *    intercepts the localhost redirect, and exchanges the code via the server API
  */
 export default function LoginScreen() {
   const { onGoogleLogin, resetSetup } = useApp();
@@ -30,10 +31,8 @@ export default function LoginScreen() {
   const [verificationUrl, setVerificationUrl] = useState(null);
   const [copied, setCopied] = useState(false);
 
-  // PC-Login Bridge state
-  const [pcLoginMode, setPcLoginMode] = useState(false);
-  const [pcLoginUrl, setPcLoginUrl] = useState(null);
-  const [pcSessionId, setPcSessionId] = useState(null);
+  // WebView OAuth state
+  const [webViewAuth, setWebViewAuth] = useState(null); // { authUrl, redirectUri, sessionId }
 
   const deviceCodeRef = useRef(null);
   const pollTimerRef = useRef(null);
@@ -58,14 +57,11 @@ export default function LoginScreen() {
         if (deviceCodeRef.current) {
           console.log('[Fuchs] App foregrounded, resuming device flow poll...');
           pollForToken();
-        } else if (pcSessionId) {
-          console.log('[Fuchs] App foregrounded, resuming PC-login poll...');
-          pollPcLogin();
         }
       }
     });
     return () => subscription?.remove();
-  }, [serverUrl, clientId, pcSessionId]);
+  }, [serverUrl, clientId]);
 
   const loadConfig = async () => {
     const id = await getSetting('googleClientId');
@@ -97,9 +93,7 @@ export default function LoginScreen() {
     if (isMountedRef.current) {
       setAuthLoading(false);
       setUserCode(null);
-      setPcLoginMode(false);
-      setPcLoginUrl(null);
-      setPcSessionId(null);
+      setWebViewAuth(null);
       onGoogleLogin(userInfo);
     }
   };
@@ -114,7 +108,7 @@ export default function LoginScreen() {
 
     setAuthLoading(true);
     setUserCode(null);
-    setPcLoginMode(false);
+    setWebViewAuth(null);
 
     try {
       const deviceFlowScopes = config.google.scopes;
@@ -138,10 +132,9 @@ export default function LoginScreen() {
       console.log('[Fuchs] Device code response:', JSON.stringify(deviceData));
 
       if (!deviceRes.ok) {
-        // Device Flow not supported - fall back to PC-Login Bridge
-        // Catch all error types that indicate the device flow won't work
-        console.log('[Fuchs] Device flow failed (' + (deviceData.error || 'unknown') + '), falling back to PC-Login Bridge');
-        return startPcLogin();
+        // Device Flow not supported - fall back to In-App WebView OAuth
+        console.log('[Fuchs] Device flow failed (' + (deviceData.error || 'unknown') + '), falling back to WebView OAuth');
+        return startWebViewAuth();
       }
 
       const { device_code, user_code, verification_url, expires_in, interval } = deviceData;
@@ -260,20 +253,20 @@ export default function LoginScreen() {
     }
   };
 
-  // ---- PC-Login Bridge (fallback when Device Flow not supported) ----
+  // ---- In-App WebView OAuth (fallback when Device Flow not supported) ----
 
-  const startPcLogin = async () => {
+  const startWebViewAuth = async () => {
     if (!serverUrl) {
       setAuthLoading(false);
       Alert.alert(
         'Server nicht erreichbar',
-        'Die PC-Anmeldung benötigt eine Verbindung zum Desktop-Server.\n\nBitte stelle sicher, dass die Desktop-Software läuft und scanne den QR-Code erneut.'
+        'Die Anmeldung benötigt eine Verbindung zum Desktop-Server.\n\nBitte stelle sicher, dass die Desktop-Software läuft und scanne den QR-Code erneut.'
       );
       return;
     }
 
     try {
-      console.log('[Fuchs] Starting PC-Login Bridge...');
+      console.log('[Fuchs] Starting In-App WebView OAuth...');
       const res = await fetch(`${serverUrl}/api/mobile/auth/init-login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -284,23 +277,15 @@ export default function LoginScreen() {
         throw new Error(errData.error || `Server-Fehler: ${res.status}`);
       }
 
-      const { sessionId, loginUrl } = await res.json();
-      console.log('[Fuchs] PC-Login session created:', sessionId.substring(0, 8) + '...');
+      const { sessionId, authUrl, redirectUri } = await res.json();
+      console.log('[Fuchs] WebView OAuth session created:', sessionId.substring(0, 8) + '...');
+      console.log('[Fuchs] Auth URL:', authUrl.substring(0, 80) + '...');
+      console.log('[Fuchs] Redirect URI:', redirectUri);
 
-      setPcLoginMode(true);
-      setPcLoginUrl(loginUrl);
-      setPcSessionId(sessionId);
+      setWebViewAuth({ authUrl, redirectUri, sessionId });
       setAuthLoading(false);
-
-      // Auto-open the login URL directly on the phone
-      // Since phone and server are on the same network, the login can happen on-device
-      console.log('[Fuchs] Auto-opening login URL on device:', loginUrl);
-      await Linking.openURL(loginUrl);
-
-      // Start polling for result
-      pollPcLoginLoop(sessionId);
     } catch (error) {
-      console.error('[Fuchs] PC-Login init error:', error);
+      console.error('[Fuchs] WebView OAuth init error:', error);
       if (isMountedRef.current) {
         setAuthLoading(false);
         Alert.alert('Anmeldung fehlgeschlagen', error.message);
@@ -308,76 +293,68 @@ export default function LoginScreen() {
     }
   };
 
-  const pollPcLoginLoop = async (sessionId) => {
-    if (isPollingRef.current) return;
-    isPollingRef.current = true;
+  /**
+   * Intercept navigation in the WebView.
+   * When Google redirects to the localhost callback URL, we:
+   * 1. Extract the authorization code from the URL
+   * 2. POST it to the server for token exchange
+   * 3. Close the WebView and complete login
+   */
+  const handleWebViewNavigation = (request) => {
+    const { url } = request;
 
-    try {
-      const maxTime = Date.now() + 10 * 60 * 1000; // 10 minutes
+    // Check if this is the OAuth callback redirect (localhost URL)
+    if (webViewAuth && url.startsWith(webViewAuth.redirectUri)) {
+      console.log('[Fuchs] Intercepted OAuth callback URL');
 
-      while (isMountedRef.current && sessionId && Date.now() < maxTime) {
-        await new Promise(resolve => {
-          pollTimerRef.current = setTimeout(resolve, 3000);
-        });
+      // Extract query parameters
+      const urlObj = new URL(url);
+      const code = urlObj.searchParams.get('code');
+      const error = urlObj.searchParams.get('error');
 
-        if (!isMountedRef.current) break;
-
-        try {
-          const res = await fetch(`${serverUrl}/api/mobile/auth/poll-login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId }),
-          });
-
-          const data = await res.json();
-
-          if (data.status === 'complete' && data.access_token) {
-            console.log('[Fuchs] PC-Login successful!');
-            await handleTokenSuccess(data);
-            return;
-          }
-
-          if (data.error === 'session_expired') {
-            throw new Error('Login-Session abgelaufen. Bitte versuche es erneut.');
-          }
-
-          if (data.error === 'login_failed') {
-            throw new Error(data.message || 'Anmeldung am PC fehlgeschlagen.');
-          }
-
-          // Still pending, continue polling
-        } catch (pollError) {
-          if (
-            pollError.message?.includes('Network') ||
-            pollError.message?.includes('fetch') ||
-            pollError.message?.includes('Failed to connect')
-          ) {
-            console.log('[Fuchs] Network error during PC-login poll, retrying...');
-            continue;
-          }
-          throw pollError;
-        }
+      if (error) {
+        console.log('[Fuchs] OAuth error:', error);
+        setWebViewAuth(null);
+        Alert.alert('Anmeldung abgebrochen', 'Die Google-Anmeldung wurde abgebrochen.');
+        return false; // Prevent navigation
       }
 
-      if (isMountedRef.current) {
-        throw new Error('Anmeldezeit abgelaufen. Bitte versuche es erneut.');
+      if (code) {
+        console.log('[Fuchs] Got auth code, exchanging for tokens...');
+        exchangeCodeForTokens(code, webViewAuth.redirectUri);
       }
-    } catch (error) {
-      console.error('[Fuchs] PC-Login poll error:', error);
-      if (isMountedRef.current) {
-        setPcLoginMode(false);
-        setPcLoginUrl(null);
-        setPcSessionId(null);
-        Alert.alert('Anmeldung fehlgeschlagen', error.message);
-      }
-    } finally {
-      isPollingRef.current = false;
+
+      return false; // Prevent navigation to localhost (which would fail)
     }
+
+    return true; // Allow all other navigation (Google sign-in pages)
   };
 
-  const pollPcLogin = () => {
-    if (pcSessionId && !isPollingRef.current) {
-      pollPcLoginLoop(pcSessionId);
+  const exchangeCodeForTokens = async (code, redirectUri) => {
+    try {
+      setWebViewAuth(null); // Close WebView
+      setAuthLoading(true);
+
+      const res = await fetch(`${serverUrl}/api/mobile/auth/exchange`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, redirect_uri: redirectUri }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Token-Austausch fehlgeschlagen');
+      }
+
+      console.log('[Fuchs] WebView OAuth successful!');
+      await handleTokenSuccess(data);
+    } catch (error) {
+      console.error('[Fuchs] Token exchange error:', error);
+      if (isMountedRef.current) {
+        setAuthLoading(false);
+        Alert.alert('Anmeldung fehlgeschlagen', error.message);
+      }
     }
   };
 
@@ -387,9 +364,7 @@ export default function LoginScreen() {
     isPollingRef.current = false;
     setAuthLoading(false);
     setUserCode(null);
-    setPcLoginMode(false);
-    setPcLoginUrl(null);
-    setPcSessionId(null);
+    setWebViewAuth(null);
   };
 
   // ---- Render ----
@@ -403,133 +378,153 @@ export default function LoginScreen() {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.logoArea}>
-        <View style={styles.iconCircle}>
-          <Ionicons name="construct" size={48} color={colors.accent} />
+    <>
+      <ScrollView contentContainerStyle={styles.container}>
+        <View style={styles.logoArea}>
+          <View style={styles.iconCircle}>
+            <Ionicons name="construct" size={48} color={colors.accent} />
+          </View>
+          <Text style={styles.title}>Fuchs Metallbau</Text>
+          <Text style={styles.subtitle}>Projekt-Fotos & Dokumentation</Text>
         </View>
-        <Text style={styles.title}>Fuchs Metallbau</Text>
-        <Text style={styles.subtitle}>Projekt-Fotos & Dokumentation</Text>
-      </View>
 
-      <View style={styles.loginArea}>
-        {pcLoginMode && pcLoginUrl ? (
-          // PC-Login Bridge mode - browser was auto-opened on the phone
-          <>
-            <Text style={styles.loginTitle}>Im Browser anmelden</Text>
-            <Text style={styles.loginDesc}>
-              Ein Browser-Fenster wurde geöffnet. Melde dich dort mit deinem Google-Konto an.
-            </Text>
+        <View style={styles.loginArea}>
+          {userCode ? (
+            // Device Flow mode
+            <>
+              <Text style={styles.loginTitle}>Im Browser anmelden</Text>
+              <Text style={styles.loginDesc}>
+                Ein Browser-Fenster wurde geöffnet. Melde dich dort mit deinem Google-Konto an.
+              </Text>
 
-            <View style={styles.waitingRow}>
-              <ActivityIndicator size="small" color={colors.accent} />
-              <Text style={styles.waitingText}>Warte auf Anmeldung...</Text>
-            </View>
+              <TouchableOpacity
+                style={styles.codeBox}
+                activeOpacity={0.7}
+                onPress={async () => {
+                  await Clipboard.setStringAsync(userCode);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }}
+              >
+                <Text style={styles.codeLabel}>Bestätigungscode:</Text>
+                <Text selectable style={styles.codeText}>{userCode}</Text>
+                <View style={styles.copyRow}>
+                  <Ionicons
+                    name={copied ? 'checkmark-circle' : 'copy-outline'}
+                    size={16}
+                    color={copied ? '#22c55e' : colors.textTertiary}
+                  />
+                  <Text style={[styles.copyHint, copied && { color: '#22c55e' }]}>
+                    {copied ? 'Kopiert!' : 'Tippen zum Kopieren'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
 
-            <View style={styles.stepsBox}>
-              <Text style={styles.stepText}>1. Melde dich im Browser mit Google an</Text>
-              <Text style={styles.stepText}>2. Erteile die Berechtigungen</Text>
-              <Text style={styles.stepText}>3. Die App verbindet sich automatisch</Text>
-            </View>
-
-            <TouchableOpacity
-              style={styles.reopenButton}
-              onPress={() => Linking.openURL(pcLoginUrl)}
-            >
-              <Ionicons name="open-outline" size={18} color={colors.accent} />
-              <Text style={styles.reopenText}>Browser erneut öffnen</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.cancelButton} onPress={cancelAuth}>
-              <Text style={styles.cancelText}>Abbrechen</Text>
-            </TouchableOpacity>
-          </>
-        ) : userCode ? (
-          // Device Flow mode
-          <>
-            <Text style={styles.loginTitle}>Im Browser anmelden</Text>
-            <Text style={styles.loginDesc}>
-              Ein Browser-Fenster wurde geöffnet. Melde dich dort mit deinem Google-Konto an.
-            </Text>
-
-            <TouchableOpacity
-              style={styles.codeBox}
-              activeOpacity={0.7}
-              onPress={async () => {
-                await Clipboard.setStringAsync(userCode);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 2000);
-              }}
-            >
-              <Text style={styles.codeLabel}>Bestätigungscode:</Text>
-              <Text selectable style={styles.codeText}>{userCode}</Text>
-              <View style={styles.copyRow}>
-                <Ionicons
-                  name={copied ? 'checkmark-circle' : 'copy-outline'}
-                  size={16}
-                  color={copied ? '#22c55e' : colors.textTertiary}
-                />
-                <Text style={[styles.copyHint, copied && { color: '#22c55e' }]}>
-                  {copied ? 'Kopiert!' : 'Tippen zum Kopieren'}
-                </Text>
+              <View style={styles.waitingRow}>
+                <ActivityIndicator size="small" color={colors.accent} />
+                <Text style={styles.waitingText}>Warte auf Anmeldung...</Text>
               </View>
+
+              <TouchableOpacity
+                style={styles.reopenButton}
+                onPress={() => {
+                  const url = verificationUrl;
+                  if (url) Linking.openURL(url);
+                }}
+              >
+                <Ionicons name="open-outline" size={18} color={colors.accent} />
+                <Text style={styles.reopenText}>Browser erneut öffnen</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.cancelButton} onPress={cancelAuth}>
+                <Text style={styles.cancelText}>Abbrechen</Text>
+              </TouchableOpacity>
+            </>
+          ) : authLoading ? (
+            // Loading state
+            <>
+              <Text style={styles.loginTitle}>Anmeldung läuft...</Text>
+              <View style={styles.waitingRow}>
+                <ActivityIndicator size="small" color={colors.accent} />
+                <Text style={styles.waitingText}>Bitte warten...</Text>
+              </View>
+              <TouchableOpacity style={styles.cancelButton} onPress={cancelAuth}>
+                <Text style={styles.cancelText}>Abbrechen</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            // Initial state - sign in button
+            <>
+              <Text style={styles.loginTitle}>Mit Google anmelden</Text>
+              <Text style={styles.loginDesc}>
+                Melde dich mit deinem Google-Konto an, um auf die freigegebenen Google Drive Ordner zuzugreifen.
+              </Text>
+
+              <TouchableOpacity
+                style={[styles.googleButton, !clientId && styles.buttonDisabled]}
+                onPress={startGoogleSignIn}
+                disabled={!clientId}
+              >
+                <Ionicons name="logo-google" size={22} color="white" />
+                <Text style={styles.googleButtonText}>Mit Google anmelden</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+
+        <Text style={styles.footerText}>
+          Dein Google-Konto wird nur verwendet, um auf freigegebene Ordner zuzugreifen.
+        </Text>
+
+        <TouchableOpacity style={styles.rescanButton} onPress={resetSetup}>
+          <Ionicons name="qr-code-outline" size={16} color={colors.textTertiary} />
+          <Text style={styles.rescanText}>QR-Code erneut scannen</Text>
+        </TouchableOpacity>
+      </ScrollView>
+
+      {/* WebView Modal for Google OAuth */}
+      <Modal
+        visible={!!webViewAuth}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={cancelAuth}
+      >
+        <SafeAreaView style={styles.webViewContainer}>
+          <View style={styles.webViewHeader}>
+            <TouchableOpacity onPress={cancelAuth} style={styles.webViewCloseBtn}>
+              <Ionicons name="close" size={24} color={colors.textPrimary} />
             </TouchableOpacity>
-
-            <View style={styles.waitingRow}>
-              <ActivityIndicator size="small" color={colors.accent} />
-              <Text style={styles.waitingText}>Warte auf Anmeldung...</Text>
-            </View>
-
-            <TouchableOpacity
-              style={styles.reopenButton}
-              onPress={() => {
-                const url = verificationUrl;
-                if (url) Linking.openURL(url);
+            <Text style={styles.webViewTitle}>Google Anmeldung</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          {webViewAuth && (
+            <WebView
+              source={{ uri: webViewAuth.authUrl }}
+              onShouldStartLoadWithRequest={handleWebViewNavigation}
+              onNavigationStateChange={(navState) => {
+                // Fallback: also check in onNavigationStateChange
+                if (navState.url && webViewAuth && navState.url.startsWith(webViewAuth.redirectUri)) {
+                  handleWebViewNavigation({ url: navState.url });
+                }
               }}
-            >
-              <Ionicons name="open-outline" size={18} color={colors.accent} />
-              <Text style={styles.reopenText}>Browser erneut öffnen</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.cancelButton} onPress={cancelAuth}>
-              <Text style={styles.cancelText}>Abbrechen</Text>
-            </TouchableOpacity>
-          </>
-        ) : (
-          // Initial state - sign in button
-          <>
-            <Text style={styles.loginTitle}>Mit Google anmelden</Text>
-            <Text style={styles.loginDesc}>
-              Melde dich mit deinem Google-Konto an, um auf die freigegebenen Google Drive Ordner zuzugreifen.
-            </Text>
-
-            <TouchableOpacity
-              style={[styles.googleButton, (!clientId || authLoading) && styles.buttonDisabled]}
-              onPress={startGoogleSignIn}
-              disabled={!clientId || authLoading}
-            >
-              {authLoading ? (
-                <ActivityIndicator color="white" />
-              ) : (
-                <>
-                  <Ionicons name="logo-google" size={22} color="white" />
-                  <Text style={styles.googleButtonText}>Mit Google anmelden</Text>
-                </>
+              userAgent="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+              javaScriptEnabled
+              domStorageEnabled
+              thirdPartyCookiesEnabled
+              sharedCookiesEnabled
+              startInLoadingState
+              renderLoading={() => (
+                <View style={styles.webViewLoading}>
+                  <ActivityIndicator size="large" color={colors.accent} />
+                  <Text style={styles.webViewLoadingText}>Google wird geladen...</Text>
+                </View>
               )}
-            </TouchableOpacity>
-          </>
-        )}
-      </View>
-
-      <Text style={styles.footerText}>
-        Dein Google-Konto wird nur verwendet, um auf freigegebene Ordner zuzugreifen.
-      </Text>
-
-      <TouchableOpacity style={styles.rescanButton} onPress={resetSetup}>
-        <Ionicons name="qr-code-outline" size={16} color={colors.textTertiary} />
-        <Text style={styles.rescanText}>QR-Code erneut scannen</Text>
-      </TouchableOpacity>
-    </ScrollView>
+              style={styles.webView}
+            />
+          )}
+        </SafeAreaView>
+      </Modal>
+    </>
   );
 }
 
@@ -621,14 +616,6 @@ const styles = StyleSheet.create({
     letterSpacing: 4,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
-  pcLinkText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.accent,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
   copyRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -649,18 +636,6 @@ const styles = StyleSheet.create({
   waitingText: {
     fontSize: 15,
     color: colors.textSecondary,
-  },
-  stepsBox: {
-    backgroundColor: 'rgba(59, 130, 246, 0.06)',
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 16,
-    gap: 6,
-  },
-  stepText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    lineHeight: 18,
   },
   reopenButton: {
     flexDirection: 'row',
@@ -699,5 +674,43 @@ const styles = StyleSheet.create({
   rescanText: {
     fontSize: 13,
     color: colors.textTertiary,
+  },
+  // WebView Modal styles
+  webViewContainer: {
+    flex: 1,
+    backgroundColor: colors.bgPrimary,
+  },
+  webViewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.cardBg,
+  },
+  webViewCloseBtn: {
+    padding: 8,
+  },
+  webViewTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  webView: {
+    flex: 1,
+  },
+  webViewLoading: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.bgPrimary,
+  },
+  webViewLoadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: colors.textSecondary,
   },
 });
