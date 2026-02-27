@@ -119,12 +119,18 @@ export default function LoginScreen() {
     try {
       const deviceFlowScopes = config.google.scopes;
       console.log('[Fuchs] Starting device authorization flow with scopes:', deviceFlowScopes);
+
+      // Generate a stable device ID from the client ID (deterministic per app installation)
+      const deviceId = `fuchs_mobile_${clientId.substring(0, 12)}`;
+
       const deviceRes = await fetch('https://oauth2.googleapis.com/device/code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           client_id: clientId,
           scope: deviceFlowScopes.join(' '),
+          device_id: deviceId,
+          device_name: 'Fuchs Metallbau App',
         }).toString(),
       });
 
@@ -132,12 +138,10 @@ export default function LoginScreen() {
       console.log('[Fuchs] Device code response:', JSON.stringify(deviceData));
 
       if (!deviceRes.ok) {
-        // Device Flow not supported or scope invalid - fall back to PC-Login Bridge
-        if (deviceData.error === 'unauthorized_client' || deviceData.error === 'invalid_client' || deviceData.error === 'invalid_scope') {
-          console.log('[Fuchs] Device flow not supported (' + deviceData.error + '), falling back to PC-Login Bridge');
-          return startPcLogin();
-        }
-        throw new Error(deviceData.error_description || deviceData.error || 'Device-Code Anfrage fehlgeschlagen');
+        // Device Flow not supported - fall back to PC-Login Bridge
+        // Catch all error types that indicate the device flow won't work
+        console.log('[Fuchs] Device flow failed (' + (deviceData.error || 'unknown') + '), falling back to PC-Login Bridge');
+        return startPcLogin();
       }
 
       const { device_code, user_code, verification_url, expires_in, interval } = deviceData;

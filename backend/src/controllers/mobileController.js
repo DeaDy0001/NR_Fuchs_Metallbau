@@ -1164,14 +1164,10 @@ const initPcLogin = (req, res) => {
     const protocol = req.protocol || 'http';
     const loginUrl = `${protocol}://${host}/api/mobile/auth/pc-login/${sessionId}`;
 
-    // Build redirect URI from request host (so callback works when opened from mobile)
-    const redirectUri = `${protocol}://${host}/api/auth/google/callback`;
-
     mobileLoginSessions.set(sessionId, {
       status: 'pending',
       tokens: null,
       userInfo: null,
-      redirectUri, // Store for use in callback
       expiresAt: Date.now() + MOBILE_LOGIN_EXPIRY_MS,
     });
 
@@ -1206,10 +1202,7 @@ const pcLoginPage = (req, res) => {
 
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-
-    // Use the redirect URI stored in the session (built from the original request host)
-    // This ensures the callback URL matches the host the user is accessing from
-    const redirectUri = session.redirectUri || process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback';
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback';
 
     const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
 
@@ -1224,7 +1217,88 @@ const pcLoginPage = (req, res) => {
       state: `mobile_login:${sessionId}`,
     });
 
-    res.redirect(authUrl);
+    // Build the current server URL from request headers (for polling endpoint)
+    const port = process.env.PORT || 3001;
+    const host = req.headers.host || `localhost:${port}`;
+    const protocol = req.protocol || 'http';
+    const pollUrl = `${protocol}://${host}/api/mobile/auth/poll-login`;
+
+    // Serve an HTML page that handles the login flow
+    // The page auto-polls the server for login completion
+    res.send(`<!DOCTYPE html><html lang="de"><head>
+      <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+      <title>Google Anmeldung</title>
+      <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+          display:flex;justify-content:center;align-items:center;min-height:100vh;
+          margin:0;background:#1a1a2e;color:#fff;padding:20px}
+        .box{background:#16213e;padding:32px;border-radius:16px;text-align:center;
+          max-width:420px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,0.3)}
+        h1{font-size:22px;margin-bottom:8px}
+        .subtitle{color:#94a3b8;font-size:14px;line-height:1.5;margin-bottom:24px}
+        .btn{display:block;width:100%;padding:14px 24px;border-radius:10px;
+          font-size:16px;font-weight:600;text-decoration:none;text-align:center;
+          cursor:pointer;border:none;margin-bottom:12px}
+        .btn-google{background:#4285F4;color:#fff}
+        .btn-google:hover{background:#3367d6}
+        .status{display:none;margin-top:20px;padding:16px;border-radius:10px;
+          background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3)}
+        .status.show{display:block}
+        .status.success h2{color:#22c55e}
+        .spinner{display:inline-block;width:20px;height:20px;border:2px solid #94a3b8;
+          border-top-color:#3b82f6;border-radius:50%;animation:spin 1s linear infinite;
+          margin-right:8px;vertical-align:middle}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        .waiting{color:#94a3b8;font-size:14px;margin-top:16px}
+        .icon{font-size:48px;margin-bottom:12px}
+      </style>
+    </head><body>
+      <div class="box">
+        <div class="icon">&#128274;</div>
+        <h1>Google Anmeldung</h1>
+        <p class="subtitle">Melde dich mit deinem Google-Konto an, um die App mit dem Server zu verbinden.</p>
+        <a id="loginBtn" class="btn btn-google" href="${authUrl.replace(/"/g, '&quot;')}">Mit Google anmelden</a>
+        <div class="waiting" id="waitingMsg" style="display:none">
+          <span class="spinner"></span> Warte auf Anmeldung...
+        </div>
+        <div class="status" id="successMsg">
+          <h2 style="color:#22c55e;font-size:18px">&#10004; Anmeldung erfolgreich!</h2>
+          <p style="color:#94a3b8;margin-top:8px">Du kannst dieses Fenster schliessen und zur App zurückkehren.</p>
+        </div>
+      </div>
+      <script>
+        // Show waiting message after clicking login
+        document.getElementById('loginBtn').addEventListener('click', function() {
+          document.getElementById('waitingMsg').style.display = 'block';
+        });
+        // Poll for login completion (works whether auth happens in this browser or on PC)
+        var sessionId = '${sessionId}';
+        var pollUrl = '${pollUrl}';
+        function pollStatus() {
+          fetch(pollUrl, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({sessionId: sessionId})
+          })
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (data.status === 'complete') {
+              document.getElementById('loginBtn').style.display = 'none';
+              document.getElementById('waitingMsg').style.display = 'none';
+              document.getElementById('successMsg').classList.add('show');
+            } else if (data.error) {
+              // Session expired or failed
+            } else {
+              setTimeout(pollStatus, 3000);
+            }
+          })
+          .catch(function() { setTimeout(pollStatus, 5000); });
+        }
+        // Start polling after a short delay
+        setTimeout(pollStatus, 2000);
+      </script>
+    </body></html>`);
   } catch (error) {
     console.error('[Fuchs] pcLoginPage error:', error);
     res.status(500).send('Fehler: ' + error.message);
@@ -1255,8 +1329,7 @@ const handleMobilePcCallback = async (req, res, code, sessionId) => {
 
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    // Use the redirect URI from the session (matches what was used in the auth URL)
-    const redirectUri = session.redirectUri || process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback';
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback';
 
     const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
     const { tokens } = await oauth2Client.getToken(code);
@@ -1372,8 +1445,39 @@ const pollPcLogin = (req, res) => {
   }
 };
 
+/**
+ * Get network addresses and drive paths for QR code setup page
+ * GET /api/mobile/connect-info
+ */
+const getConnectInfo = (req, res) => {
+  try {
+    const networkAddresses = getNetworkAddresses();
+    const serverPort = process.env.PORT || 3001;
+
+    let drivePaths = [];
+    try {
+      drivePaths = db.prepare('SELECT id, name FROM drive_paths ORDER BY id ASC').all();
+    } catch (e) {
+      // Table might not exist yet
+    }
+
+    res.json({
+      networkAddresses: networkAddresses.map(a => ({
+        name: a.name,
+        address: a.address,
+        url: `http://${a.address}:${serverPort}`,
+      })),
+      drivePaths,
+    });
+  } catch (error) {
+    console.error('Error getting connect info:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 module.exports = {
   generateConnectToken,
+  getConnectInfo,
   connectLandingPage,
   registerDevice,
   authenticateDevice,

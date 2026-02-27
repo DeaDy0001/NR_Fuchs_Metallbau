@@ -31,6 +31,9 @@ const upload = multer({
 
 // ---- Public routes (no auth needed) ----
 
+// Get network addresses and drive paths for QR setup page (called from desktop)
+router.get('/connect-info', mobile.getConnectInfo);
+
 // Generate QR code connection token (called from desktop)
 router.post('/connect-token', mobile.generateConnectToken);
 

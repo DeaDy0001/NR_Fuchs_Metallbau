@@ -17,7 +17,21 @@ function MobileAppSettings() {
   useEffect(() => {
     loadDevices();
     loadInbox();
+    loadConnectInfo();
   }, []);
+
+  const loadConnectInfo = async () => {
+    try {
+      const response = await fetch('/api/mobile/connect-info');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.networkAddresses) setNetworkAddresses(data.networkAddresses);
+        if (data.drivePaths) setDrivePaths(data.drivePaths);
+      }
+    } catch (error) {
+      console.error('Failed to load connect info:', error);
+    }
+  };
 
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
