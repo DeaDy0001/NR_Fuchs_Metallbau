@@ -3,6 +3,7 @@ import { getSetting, setSetting, getUploadQueueCount, getActiveDriveConnection, 
 import { isAuthenticated, clearAuth, getAccessToken } from '../services/googleAuth';
 import { checkFolderAccess, findOrCreateFolder } from '../services/driveService';
 import { startQueueProcessing, stopQueueProcessing, addUploadListener } from '../services/uploadQueue';
+import { startHeartbeat, stopHeartbeat } from '../services/heartbeat';
 
 const ensureDriveFolders = async (connection) => {
   if (!connection.meta_folder_id || !connection.inbox_folder_id) {
@@ -44,14 +45,19 @@ export const AppProvider = ({ children }) => {
     loadState();
   }, []);
 
-  // Start upload queue processing when connected to Drive
+  // Start upload queue processing and heartbeat when connected to Drive
   useEffect(() => {
     if (isConnected && activeConnection) {
       startQueueProcessing();
+      startHeartbeat();
     } else {
       stopQueueProcessing();
+      stopHeartbeat();
     }
-    return () => stopQueueProcessing();
+    return () => {
+      stopQueueProcessing();
+      stopHeartbeat();
+    };
   }, [isConnected]);
 
   // Listen for upload queue changes

@@ -60,6 +60,9 @@ router.get('/auth/login-done', mobile.loginDonePage);
 // Register device with token (called from app after QR scan)
 router.post('/register', mobile.registerDevice);
 
+// Device heartbeat (called from mobile app periodically)
+router.post('/heartbeat', mobile.deviceHeartbeat);
+
 // Device management (called from desktop)
 router.get('/devices', mobile.getDevices);
 router.delete('/devices/:deviceId', mobile.removeDevice);

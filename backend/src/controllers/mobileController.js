@@ -383,6 +383,44 @@ const authenticateDevice = (req, res, next) => {
 };
 
 /**
+ * Heartbeat from mobile app - creates/updates device record and updates last_seen
+ * POST /api/mobile/heartbeat
+ */
+const deviceHeartbeat = (req, res) => {
+  try {
+    const { deviceId, deviceName, userName } = req.body;
+
+    if (!deviceId || !userName) {
+      return res.status(400).json({ error: 'deviceId und userName sind erforderlich' });
+    }
+
+    // Check if device already exists
+    const existing = db.prepare('SELECT id FROM mobile_devices WHERE device_id = ?').get(deviceId);
+
+    if (existing) {
+      // Update last_seen and optionally device_name/user_name
+      db.prepare(`
+        UPDATE mobile_devices
+        SET last_seen = datetime('now'), device_name = ?, user_name = ?
+        WHERE device_id = ?
+      `).run(deviceName || 'Unbekannt', userName, deviceId);
+    } else {
+      // Create new device record
+      const authToken = crypto.randomBytes(48).toString('hex');
+      db.prepare(`
+        INSERT INTO mobile_devices (device_id, device_name, user_name, auth_token, last_seen)
+        VALUES (?, ?, ?, ?, datetime('now'))
+      `).run(deviceId, deviceName || 'Unbekannt', userName, authToken);
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error in device heartbeat:', error);
+    res.status(500).json({ error: 'Heartbeat failed' });
+  }
+};
+
+/**
  * Get list of registered devices
  * GET /api/mobile/devices
  */
@@ -391,7 +429,20 @@ const getDevices = (req, res) => {
     const devices = db.prepare(
       'SELECT id, device_id, device_name, user_name, last_seen, created_at FROM mobile_devices ORDER BY last_seen DESC'
     ).all();
-    res.json(devices);
+
+    // Compute is_online: device seen within last 2 minutes
+    const now = new Date();
+    const devicesWithStatus = devices.map(device => {
+      let isOnline = false;
+      if (device.last_seen) {
+        const lastSeen = new Date(device.last_seen + 'Z'); // SQLite datetime is UTC
+        const diffMs = now - lastSeen;
+        isOnline = diffMs < 2 * 60 * 1000; // 2 minutes
+      }
+      return { ...device, is_online: isOnline };
+    });
+
+    res.json(devicesWithStatus);
   } catch (error) {
     console.error('Error getting devices:', error);
     res.status(500).json({ error: 'Failed to get devices' });
@@ -1784,4 +1835,5 @@ module.exports = {
   loginDonePage,
   handleMobilePcCallback,
   pollPcLogin,
+  deviceHeartbeat,
 };

@@ -16,6 +16,10 @@ function MobileAppSettings() {
   useEffect(() => {
     loadDevices();
     loadConnectInfo();
+
+    // Auto-refresh devices every 30 seconds for online status
+    const interval = setInterval(loadDevices, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const loadConnectInfo = async () => {
@@ -273,15 +277,21 @@ function MobileAppSettings() {
             </div>
           ) : (
             devices.map(device => (
-              <div key={device.device_id} className="device-item">
-                <div className="device-icon">
+              <div key={device.device_id} className={`device-item ${device.is_online ? 'device-online' : 'device-offline'}`}>
+                <div className={`device-icon ${device.is_online ? 'device-icon-online' : ''}`}>
                   <Smartphone size={20} />
                 </div>
                 <div className="device-info">
-                  <div className="device-name">{device.user_name}</div>
+                  <div className="device-name">
+                    {device.user_name}
+                    <span className={`device-status-badge ${device.is_online ? 'status-online' : 'status-offline'}`}>
+                      <span className={`status-dot ${device.is_online ? 'dot-online' : 'dot-offline'}`} />
+                      {device.is_online ? 'Im Netzwerk' : 'Offline'}
+                    </span>
+                  </div>
                   <div className="device-meta">
                     <span>
-                      <Wifi size={12} />
+                      <Smartphone size={12} />
                       {device.device_name || 'Unbekannt'}
                     </span>
                     <span>

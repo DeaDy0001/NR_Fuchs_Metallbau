@@ -214,6 +214,54 @@
   color: var(--text-tertiary);
 }
 
+/* Device online/offline status */
+.device-online {
+  border-color: rgba(74, 222, 128, 0.3);
+}
+
+.device-icon-online {
+  background: rgba(74, 222, 128, 0.15) !important;
+  color: #4ade80 !important;
+}
+
+.device-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+
+.status-online {
+  background: rgba(74, 222, 128, 0.1);
+  color: #4ade80;
+}
+
+.status-offline {
+  background: rgba(148, 163, 184, 0.1);
+  color: #64748b;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot-online {
+  background: #4ade80;
+  box-shadow: 0 0 6px rgba(74, 222, 128, 0.5);
+}
+
+.dot-offline {
+  background: #64748b;
+}
+
 /* Inbox */
 .inbox-list {
   display: flex;
