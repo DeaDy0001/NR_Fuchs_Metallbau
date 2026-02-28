@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Search, Plus, Edit2, Save, X, CheckSquare, Square, ZoomIn, ZoomOut, RotateCcw, ChevronLeft, ChevronRight, Trash2, Pencil, RefreshCw } from 'lucide-react';
 import ImageEditor from '../components/ImageEditor';
+import DeleteProjectModal from '../components/DeleteProjectModal';
 import './ProjectsList.css';
 
 // Helper function to format SQLite timestamps (which are in UTC)
@@ -34,6 +35,9 @@ function ProjectsList() {
   const [projectFiles, setProjectFiles] = useState({ images: [], pdfs: [], hasImages: false, hasPdfs: false });
   const [activeTab, setActiveTab] = useState('images'); // Active tab in project modal
   const [loadingFiles, setLoadingFiles] = useState(false);
+
+  // Delete project state
+  const [deletingProject, setDeletingProject] = useState(null); // Project to delete (opens DeleteProjectModal)
 
   // New project creation state
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -736,6 +740,16 @@ function ProjectsList() {
                       >
                         <Edit2 size={18} />
                       </button>
+                      <button
+                        className="icon-btn icon-btn-danger"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeletingProject(project);
+                        }}
+                        title="Projekt löschen"
+                      >
+                        <Trash2 size={18} />
+                      </button>
                     </div>
                   </div>
 
@@ -775,9 +789,19 @@ function ProjectsList() {
           <div className="modal project-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>{viewingProject.folder_name}</h2>
-              <button className="modal-close" onClick={closeProjectModal}>
-                <X size={24} />
-              </button>
+              <div className="modal-header-actions">
+                <button
+                  className="btn btn-sm btn-danger-outline"
+                  onClick={() => setDeletingProject(viewingProject)}
+                  title="Projekt löschen"
+                >
+                  <Trash2 size={16} />
+                  Löschen
+                </button>
+                <button className="modal-close" onClick={closeProjectModal}>
+                  <X size={24} />
+                </button>
+              </div>
             </div>
 
             {/* Edit-Felder */}
@@ -1258,6 +1282,21 @@ function ProjectsList() {
             </div>
           </div>
         </div>
+      )}
+
+      {deletingProject && (
+        <DeleteProjectModal
+          project={deletingProject}
+          onClose={() => setDeletingProject(null)}
+          onDeleted={() => {
+            setDeletingProject(null);
+            // If we were viewing this project, close the modal
+            if (viewingProject && viewingProject.id === deletingProject.id) {
+              closeProjectModal();
+            }
+            loadProjects();
+          }}
+        />
       )}
     </div>
   );

@@ -95,6 +95,41 @@
   margin: 0;
 }
 
+.modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.btn-danger-outline {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  background: transparent;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 0.375rem;
+  color: #f87171;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-danger-outline:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: #ef4444;
+}
+
+.icon-btn-danger {
+  color: var(--text-tertiary) !important;
+  transition: color 0.2s !important;
+}
+
+.icon-btn-danger:hover {
+  color: #ef4444 !important;
+}
+
 .modal-body {
   padding: 1.5rem;
 }

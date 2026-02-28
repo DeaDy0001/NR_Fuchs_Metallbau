@@ -14,6 +14,7 @@ const {
   findOrCreateSubfolder,
   listFilesInFolder,
   uploadFileToDrive,
+  deleteFileFromDrive,
 } = require('../services/googleDriveService');
 const { isAuthenticated, getDriveClient } = require('../services/authService');
 
@@ -319,20 +320,199 @@ const updateProject = async (req, res) => {
 };
 
 // Delete a project
-const deleteProject = (req, res) => {
+/**
+ * Delete a project with three modes:
+ * DELETE /api/projects/:id?mode=soft|with_images|complete
+ *
+ * - soft: Remove project from DB, images become unassigned. Local Bilder folder deleted,
+ *         rest of project folder stays. Drive project folder deleted.
+ * - with_images: Delete project + all assigned images (local files + Drive files + DB records)
+ * - complete: Delete entire local project folder + Drive project folder + all DB records
+ */
+const deleteProject = async (req, res) => {
   try {
     const { id } = req.params;
+    const { mode = 'soft' } = req.query;
 
-    const result = db.prepare('DELETE FROM projects WHERE id = ?').run(id);
-
-    if (result.changes === 0) {
-      return res.status(404).json({ error: 'Project not found' });
+    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(id);
+    if (!project) {
+      return res.status(404).json({ error: 'Projekt nicht gefunden' });
     }
 
-    res.json({ success: true });
+    const setting = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    const projectPath = setting?.project_path;
+    const projectFolder = projectPath ? path.join(projectPath, project.folder_name) : null;
+    const bilderFolder = projectFolder ? path.join(projectFolder, 'Bilder') : null;
+
+    const results = { deletedImages: 0, deletedDriveFiles: 0, errors: [] };
+
+    // Get all images assigned to this project
+    const assignedImages = db.prepare(`
+      SELECT di.* FROM drive_images di
+      JOIN image_project_assignments ipa ON di.id = ipa.image_id
+      WHERE ipa.project_id = ?
+    `).all(id);
+
+    // --- MODE: soft ---
+    // Remove project from software, images become unassigned
+    if (mode === 'soft') {
+      // Delete local Bilder folder (but keep rest of project folder)
+      if (bilderFolder && await fs.pathExists(bilderFolder)) {
+        try {
+          await fs.remove(bilderFolder);
+        } catch (e) {
+          results.errors.push(`Lokaler Bilder-Ordner: ${e.message}`);
+        }
+      }
+
+      // Delete .project.json if it exists in project root
+      if (projectFolder) {
+        const metaFile = path.join(projectFolder, '.project.json');
+        if (await fs.pathExists(metaFile)) {
+          try { await fs.remove(metaFile); } catch {}
+        }
+      }
+
+      // Delete Drive project folder
+      await deleteDriveProjectFolder(project.folder_name, results);
+
+      // Delete image DB records that are ONLY assigned to this project
+      for (const img of assignedImages) {
+        const otherAssignments = db.prepare(
+          'SELECT COUNT(*) as cnt FROM image_project_assignments WHERE image_id = ? AND project_id != ?'
+        ).get(img.id, id);
+
+        if (otherAssignments.cnt === 0) {
+          // Only assigned to this project - delete the image record
+          db.prepare('DELETE FROM drive_images WHERE id = ?').run(img.id);
+          results.deletedImages++;
+        }
+      }
+
+      // Delete project from DB (cascading deletes assignments)
+      db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+    }
+
+    // --- MODE: with_images ---
+    // Delete project + all images (local files + Drive files)
+    else if (mode === 'with_images') {
+      // Delete each image's local file and Drive file
+      for (const img of assignedImages) {
+        // Delete local file
+        if (img.local_path && projectPath) {
+          const localFile = path.join(__dirname, '../../..', img.local_path);
+          if (await fs.pathExists(localFile)) {
+            try {
+              await fs.remove(localFile);
+              results.deletedImages++;
+            } catch (e) {
+              results.errors.push(`Lokale Datei ${img.name}: ${e.message}`);
+            }
+          }
+        }
+
+        // Delete Drive file
+        if (img.drive_file_id) {
+          try {
+            await deleteFileFromDrive(img.drive_file_id);
+            results.deletedDriveFiles++;
+          } catch (e) {
+            if (e.code !== 404) results.errors.push(`Drive-Datei ${img.name}: ${e.message}`);
+          }
+        }
+
+        // Delete thumbnail
+        if (img.thumbnail_url) {
+          const thumbPath = path.join(__dirname, '../../..', img.thumbnail_url);
+          try { await fs.remove(thumbPath); } catch {}
+        }
+
+        // Delete image from DB
+        db.prepare('DELETE FROM drive_images WHERE id = ?').run(img.id);
+      }
+
+      // Delete local Bilder folder
+      if (bilderFolder && await fs.pathExists(bilderFolder)) {
+        try { await fs.remove(bilderFolder); } catch (e) {
+          results.errors.push(`Lokaler Bilder-Ordner: ${e.message}`);
+        }
+      }
+
+      // Delete Drive project folder
+      await deleteDriveProjectFolder(project.folder_name, results);
+
+      // Delete project from DB
+      db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+    }
+
+    // --- MODE: complete ---
+    // Delete EVERYTHING - entire local project folder + Drive folder
+    else if (mode === 'complete') {
+      // Delete all image DB records for this project
+      for (const img of assignedImages) {
+        if (img.drive_file_id) {
+          try {
+            await deleteFileFromDrive(img.drive_file_id);
+            results.deletedDriveFiles++;
+          } catch (e) {
+            if (e.code !== 404) results.errors.push(`Drive-Datei ${img.name}: ${e.message}`);
+          }
+        }
+        if (img.thumbnail_url) {
+          const thumbPath = path.join(__dirname, '../../..', img.thumbnail_url);
+          try { await fs.remove(thumbPath); } catch {}
+        }
+        db.prepare('DELETE FROM drive_images WHERE id = ?').run(img.id);
+        results.deletedImages++;
+      }
+
+      // Delete ENTIRE local project folder
+      if (projectFolder && await fs.pathExists(projectFolder)) {
+        try {
+          await fs.remove(projectFolder);
+        } catch (e) {
+          results.errors.push(`Lokaler Projektordner: ${e.message}`);
+        }
+      }
+
+      // Delete Drive project folder
+      await deleteDriveProjectFolder(project.folder_name, results);
+
+      // Delete project from DB
+      db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+    } else {
+      return res.status(400).json({ error: `Unbekannter Löschmodus: ${mode}` });
+    }
+
+    res.json({
+      success: true,
+      mode,
+      projectName: project.folder_name,
+      ...results,
+    });
   } catch (error) {
     console.error('Error deleting project:', error);
-    res.status(500).json({ error: 'Failed to delete project' });
+    res.status(500).json({ error: `Projekt konnte nicht gelöscht werden: ${error.message}` });
+  }
+};
+
+/**
+ * Helper: Find and delete a project's folder on Google Drive
+ */
+const deleteDriveProjectFolder = async (folderName, results) => {
+  try {
+    if (!await isAuthenticated()) return;
+
+    const { projekteFolder } = await ensureProjekteFolderOnDrive();
+    const driveFolders = await listFoldersInFolder(projekteFolder.id);
+    const targetFolder = driveFolders.find(f => f.name.toLowerCase() === folderName.toLowerCase());
+
+    if (targetFolder) {
+      await deleteFileFromDrive(targetFolder.id);
+      results.deletedDriveFiles++;
+    }
+  } catch (e) {
+    results.errors.push(`Drive-Projektordner: ${e.message}`);
   }
 };
 
