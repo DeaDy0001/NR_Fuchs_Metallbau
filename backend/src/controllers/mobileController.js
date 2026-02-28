@@ -1721,6 +1721,37 @@ const loginDonePage = (req, res) => {
   `);
 };
 
+/**
+ * Proxy a Google Drive image through the server (browser can't access Drive URLs directly)
+ * GET /api/mobile/inbox/image-proxy/:fileId
+ */
+const proxyInboxImage = async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    if (!fileId) {
+      return res.status(400).json({ error: 'fileId ist erforderlich' });
+    }
+
+    const { getDriveClient } = require('../services/authService');
+    const drive = await getDriveClient();
+
+    const response = await drive.files.get(
+      { fileId, alt: 'media' },
+      { responseType: 'stream' }
+    );
+
+    // Forward content type from Google
+    const contentType = response.headers['content-type'] || 'image/jpeg';
+    res.set('Content-Type', contentType);
+    res.set('Cache-Control', 'public, max-age=3600');
+
+    response.data.pipe(res);
+  } catch (error) {
+    console.error('Error proxying inbox image:', error.message);
+    res.status(500).json({ error: 'Bild konnte nicht geladen werden' });
+  }
+};
+
 module.exports = {
   generateConnectToken,
   getConnectInfo,
@@ -1737,6 +1768,7 @@ module.exports = {
   getImage,
   getInbox,
   getInboxImages,
+  proxyInboxImage,
   confirmInboxProject,
   mergeInboxProject,
   deleteInboxProject,

@@ -67,6 +67,7 @@ router.delete('/devices/:deviceId', mobile.removeDevice);
 // Inbox (called from desktop)
 router.get('/inbox', mobile.getInbox);
 router.get('/inbox/:folderId/images', mobile.getInboxImages);
+router.get('/inbox/image-proxy/:fileId', mobile.proxyInboxImage);
 router.post('/inbox/confirm', mobile.confirmInboxProject);
 router.post('/inbox/merge', mobile.mergeInboxProject);
 router.delete('/inbox/:folderId', mobile.deleteInboxProject);

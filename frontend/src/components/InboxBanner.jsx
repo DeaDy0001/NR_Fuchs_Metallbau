@@ -111,23 +111,15 @@ function ImageLightbox({ images, startIndex, onClose }) {
     }
   };
 
-  // Build full-res URL from thumbnail (remove size constraint)
-  const getFullUrl = (img) => {
-    if (img.thumbnailUrl) {
-      return img.thumbnailUrl.replace(/=s\d+/, '=s1600');
-    }
-    return null;
-  };
-
-  const fullUrl = getFullUrl(currentImage);
+  const proxyUrl = currentImage.id ? `/api/mobile/inbox/image-proxy/${currentImage.id}` : null;
 
   return (
     <div className="image-lightbox-overlay" onClick={onClose}>
       <div className="image-lightbox-container" onClick={e => e.stopPropagation()}>
-        {fullUrl && (
+        {proxyUrl && (
           <img
             ref={imgRef}
-            src={fullUrl}
+            src={proxyUrl}
             alt={currentImage.name}
             style={{ transform: `scale(${zoom})` }}
             draggable={false}
@@ -446,8 +438,8 @@ function InboxModal({ projects, onClose, onRefresh }) {
                             title={img.name}
                             onClick={() => openLightbox(project.drive_folder_id, idx)}
                           >
-                            {img.thumbnailUrl ? (
-                              <img src={img.thumbnailUrl} alt={img.name} />
+                            {img.id ? (
+                              <img src={`/api/mobile/inbox/image-proxy/${img.id}`} alt={img.name} />
                             ) : (
                               <div className="pending-image-placeholder">
                                 <Image size={24} />
