@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Smartphone, QrCode, RefreshCw, Trash2, Download, CheckCircle, XCircle, Wifi, Clock, FolderOpen } from 'lucide-react';
+import { Smartphone, QrCode, RefreshCw, Trash2, CheckCircle, XCircle, Wifi, Clock, FolderOpen } from 'lucide-react';
 import './MobileAppSettings.css';
 
 function MobileAppSettings() {
@@ -7,7 +7,6 @@ function MobileAppSettings() {
   const [qrLoading, setQrLoading] = useState(false);
   const [qrError, setQrError] = useState(null);
   const [devices, setDevices] = useState([]);
-  const [inbox, setInbox] = useState([]);
   const [notification, setNotification] = useState(null);
   const [drivePaths, setDrivePaths] = useState([]);
   const [selectedDrivePathId, setSelectedDrivePathId] = useState(null);
@@ -16,7 +15,6 @@ function MobileAppSettings() {
 
   useEffect(() => {
     loadDevices();
-    loadInbox();
     loadConnectInfo();
   }, []);
 
@@ -76,16 +74,6 @@ function MobileAppSettings() {
       setDevices(data);
     } catch (error) {
       console.error('Failed to load devices:', error);
-    }
-  };
-
-  const loadInbox = async () => {
-    try {
-      const response = await fetch('/api/mobile/inbox');
-      const data = await response.json();
-      setInbox(data.filter(i => i.status === 'new_project' || i.status === 'pending'));
-    } catch (error) {
-      console.error('Failed to load inbox:', error);
     }
   };
 
@@ -261,34 +249,13 @@ function MobileAppSettings() {
         )}
       </div>
 
-      {/* APK Download */}
-      <div className="settings-section">
-        <h2>App herunterladen</h2>
-        <p className="section-description">
-          Lade die APK-Datei herunter und installiere sie auf deinem Android-Gerät.
-        </p>
-        <div className="apk-download">
-          <div className="apk-info">
-            <Smartphone size={24} />
-            <div>
-              <strong>Fuchs Metallbau App</strong>
-              <span>Android (APK)</span>
-            </div>
-          </div>
-          <a href="/api/mobile/app.apk" className="btn btn-primary" download>
-            <Download size={16} />
-            APK herunterladen
-          </a>
-        </div>
-      </div>
-
       {/* Connected Devices */}
       <div className="settings-section">
         <div className="section-header-row">
           <div>
             <h2>Verbundene Geräte</h2>
             <p className="section-description">
-              Alle Geräte, die mit diesem Server verbunden sind.
+              Alle registrierten Geräte, die sich über den QR-Code angemeldet haben.
             </p>
           </div>
           <button className="btn btn-secondary" onClick={loadDevices}>
@@ -335,21 +302,6 @@ function MobileAppSettings() {
           )}
         </div>
       </div>
-
-      {/* Inbox hint */}
-      {inbox.length > 0 && (
-        <div className="settings-section">
-          <div className="section-header-row">
-            <div>
-              <h2>Inbox</h2>
-              <p className="section-description">
-                Es gibt {inbox.length} neue {inbox.length === 1 ? 'Projekt' : 'Projekte'} von der Handy-App.
-                Klicke auf die blaue Leiste oben im Fenster, um sie zu bestätigen.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
