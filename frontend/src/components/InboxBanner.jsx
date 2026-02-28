@@ -227,6 +227,15 @@ function InboxModal({ projects, onClose, onRefresh }) {
   const [processing, setProcessing] = useState({});
   const [notification, setNotification] = useState(null);
   const [lightbox, setLightbox] = useState(null);
+  const hasChangesRef = useRef(false);
+
+  const handleClose = useCallback(() => {
+    if (hasChangesRef.current) {
+      // Trigger Drive sync in background so merged/confirmed images appear in Bilder
+      fetch('/api/drive/images/refresh', { method: 'POST' }).catch(() => {});
+    }
+    onClose();
+  }, [onClose]);
 
   useEffect(() => {
     loadExistingProjects();
@@ -279,6 +288,7 @@ function InboxModal({ projects, onClose, onRefresh }) {
         })
       });
       if (response.ok) {
+        hasChangesRef.current = true;
         showNotification(`"${item.project_name}" in Projekte verschoben`);
         await onRefresh();
       } else {
@@ -306,6 +316,7 @@ function InboxModal({ projects, onClose, onRefresh }) {
         }),
       });
       if (response.ok) {
+        hasChangesRef.current = true;
         const data = await response.json();
         showNotification(`${data.movedCount} Bilder mit "${targetProject.folder_name}" zusammengeführt`);
         setMergeTarget(null);
@@ -363,11 +374,11 @@ function InboxModal({ projects, onClose, onRefresh }) {
   });
 
   return (
-    <div className="pending-modal-overlay" onClick={onClose}>
+    <div className="pending-modal-overlay" onClick={handleClose}>
       <div className="pending-modal" onClick={e => e.stopPropagation()}>
         <div className="pending-modal-header">
           <h2>Inbox - Neue Projekte von der App</h2>
-          <button className="pending-modal-close" onClick={onClose}>
+          <button className="pending-modal-close" onClick={handleClose}>
             <X size={20} />
           </button>
         </div>
