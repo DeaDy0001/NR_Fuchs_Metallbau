@@ -255,7 +255,8 @@ const getImages = (req, res) => {
 
     let query = 'SELECT DISTINCT di.* FROM drive_images di';
     const params = [];
-    const whereClauses = [];
+    // Always exclude NR_Fuchs_Meta (internal inbox/mobile system folder)
+    const whereClauses = ["(di.subfolder IS NULL OR di.subfolder != 'NR_Fuchs_Meta')"];
 
     // Filter by projects
     if (projectIds) {
@@ -372,7 +373,7 @@ const getImages = (req, res) => {
     // Get total count
     let countQuery = 'SELECT COUNT(DISTINCT di.id) as count FROM drive_images di';
     const countParams = [];
-    const countWhereClauses = [];
+    const countWhereClauses = ["(di.subfolder IS NULL OR di.subfolder != 'NR_Fuchs_Meta')"];
 
     // Same filters for count
     if (projectIds) {
@@ -444,8 +445,8 @@ const getImages = (req, res) => {
     const countStmt = db.prepare(countQuery);
     const countResult = countStmt.get(...countParams);
 
-    // Get all unique subfolders (not limited by pagination)
-    const subfoldersStmt = db.prepare('SELECT DISTINCT subfolder FROM drive_images WHERE subfolder IS NOT NULL ORDER BY subfolder ASC');
+    // Get all unique subfolders (not limited by pagination, excluding internal NR_Fuchs_Meta)
+    const subfoldersStmt = db.prepare("SELECT DISTINCT subfolder FROM drive_images WHERE subfolder IS NOT NULL AND subfolder != 'NR_Fuchs_Meta' ORDER BY subfolder ASC");
     const allSubfolders = subfoldersStmt.all().map(row => row.subfolder);
 
     res.json({

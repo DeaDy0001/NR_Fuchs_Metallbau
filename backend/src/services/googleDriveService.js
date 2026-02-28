@@ -127,9 +127,10 @@ const listFilesInFolderRecursive = async (folderId, parentSubfolder = null) => {
       });
     });
 
-    // Find subfolders
+    // Find subfolders (skip NR_Fuchs_Meta - used internally for inbox/mobile system)
     const subfolders = items.filter(item =>
-      item.mimeType === 'application/vnd.google-apps.folder'
+      item.mimeType === 'application/vnd.google-apps.folder' &&
+      item.name !== 'NR_Fuchs_Meta'
     );
 
     // Recursively process subfolders
