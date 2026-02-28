@@ -57,40 +57,97 @@ function InboxBanner() {
 function ImageLightbox({ images, startIndex, onClose }) {
   const [currentIndex, setCurrentIndex] = useState(startIndex);
   const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const imgRef = useRef(null);
+  const containerRef = useRef(null);
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
+  const isPanningRef = useRef(false);
+  const panStartRef = useRef({ x: 0, y: 0 });
+  const panOriginRef = useRef({ x: 0, y: 0 });
 
   const currentImage = images[currentIndex];
+
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+  useEffect(() => { panRef.current = pan; }, [pan]);
+
+  const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
 
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') onClose();
       if (e.key === 'ArrowLeft' && currentIndex > 0) {
         setCurrentIndex(i => i - 1);
-        setZoom(1);
+        resetView();
       }
       if (e.key === 'ArrowRight' && currentIndex < images.length - 1) {
         setCurrentIndex(i => i + 1);
-        setZoom(1);
+        resetView();
       }
     };
 
     const handleWheel = (e) => {
       if (e.shiftKey) {
         e.preventDefault();
-        setZoom(prev => {
-          const delta = e.deltaY > 0 ? -0.15 : 0.15;
-          return Math.min(Math.max(prev + delta, 0.5), 5);
-        });
+        const container = containerRef.current;
+        if (!container) return;
+        const rect = container.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left - rect.width / 2;
+        const mouseY = e.clientY - rect.top - rect.height / 2;
+
+        const oldZoom = zoomRef.current;
+        const delta = e.deltaY > 0 ? -0.15 : 0.15;
+        const newZoom = Math.min(Math.max(oldZoom + delta, 0.5), 5);
+
+        if (newZoom <= 1) {
+          setZoom(newZoom);
+          setPan({ x: 0, y: 0 });
+        } else {
+          const scale = newZoom / oldZoom;
+          const cur = panRef.current;
+          setPan({
+            x: mouseX - scale * (mouseX - cur.x),
+            y: mouseY - scale * (mouseY - cur.y)
+          });
+          setZoom(newZoom);
+        }
       }
+    };
+
+    const handleMouseDown = (e) => {
+      if (e.button === 1 && zoomRef.current > 1) {
+        e.preventDefault();
+        isPanningRef.current = true;
+        panStartRef.current = { x: e.clientX, y: e.clientY };
+        panOriginRef.current = { ...panRef.current };
+      }
+    };
+
+    const handleMouseMove = (e) => {
+      if (!isPanningRef.current) return;
+      setPan({
+        x: panOriginRef.current.x + (e.clientX - panStartRef.current.x),
+        y: panOriginRef.current.y + (e.clientY - panStartRef.current.y)
+      });
+    };
+
+    const handleMouseUp = (e) => {
+      if (e.button === 1) isPanningRef.current = false;
     };
 
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('wheel', handleWheel, { passive: false });
+    document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
     document.body.style.overflow = 'hidden';
 
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('wheel', handleWheel);
+      document.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
       document.body.style.overflow = '';
     };
   }, [currentIndex, images.length, onClose]);
@@ -99,7 +156,7 @@ function ImageLightbox({ images, startIndex, onClose }) {
     e.stopPropagation();
     if (currentIndex > 0) {
       setCurrentIndex(i => i - 1);
-      setZoom(1);
+      resetView();
     }
   };
 
@@ -107,7 +164,7 @@ function ImageLightbox({ images, startIndex, onClose }) {
     e.stopPropagation();
     if (currentIndex < images.length - 1) {
       setCurrentIndex(i => i + 1);
-      setZoom(1);
+      resetView();
     }
   };
 
@@ -115,13 +172,21 @@ function ImageLightbox({ images, startIndex, onClose }) {
 
   return (
     <div className="image-lightbox-overlay" onClick={onClose}>
-      <div className="image-lightbox-container" onClick={e => e.stopPropagation()}>
+      <div
+        ref={containerRef}
+        className="image-lightbox-container"
+        onClick={e => e.stopPropagation()}
+        onMouseDown={e => { if (e.button === 1) e.preventDefault(); }}
+      >
         {proxyUrl && (
           <img
             ref={imgRef}
             src={proxyUrl}
             alt={currentImage.name}
-            style={{ transform: `scale(${zoom})` }}
+            style={{
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              cursor: zoom > 1 ? (isPanningRef.current ? 'grabbing' : 'grab') : 'default'
+            }}
             draggable={false}
           />
         )}
@@ -143,7 +208,7 @@ function ImageLightbox({ images, startIndex, onClose }) {
         </button>
       )}
 
-      <div className="image-lightbox-zoom-hint">Shift + Mausrad zum Zoomen</div>
+      <div className="image-lightbox-zoom-hint">Shift + Mausrad zum Zoomen · Mittlere Maustaste zum Verschieben</div>
       <div className="image-lightbox-name">
         {currentImage.name} ({currentIndex + 1}/{images.length})
       </div>
