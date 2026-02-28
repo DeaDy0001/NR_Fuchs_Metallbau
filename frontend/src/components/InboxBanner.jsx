@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Inbox, Check, GitMerge, Trash2, X, Search, Image, FolderOpen, Loader, ChevronDown, ChevronUp, Tag } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Inbox, Check, GitMerge, Trash2, X, Search, Image, FolderOpen, Loader, ChevronDown, ChevronUp, Tag, ChevronLeft, ChevronRight } from 'lucide-react';
 import './InboxBanner.css';
 
 function InboxBanner() {
@@ -53,6 +53,113 @@ function InboxBanner() {
   );
 }
 
+/* ========== Image Lightbox ========== */
+function ImageLightbox({ images, startIndex, onClose }) {
+  const [currentIndex, setCurrentIndex] = useState(startIndex);
+  const [zoom, setZoom] = useState(1);
+  const imgRef = useRef(null);
+
+  const currentImage = images[currentIndex];
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'ArrowLeft' && currentIndex > 0) {
+        setCurrentIndex(i => i - 1);
+        setZoom(1);
+      }
+      if (e.key === 'ArrowRight' && currentIndex < images.length - 1) {
+        setCurrentIndex(i => i + 1);
+        setZoom(1);
+      }
+    };
+
+    const handleWheel = (e) => {
+      if (e.shiftKey) {
+        e.preventDefault();
+        setZoom(prev => {
+          const delta = e.deltaY > 0 ? -0.15 : 0.15;
+          return Math.min(Math.max(prev + delta, 0.5), 5);
+        });
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('wheel', handleWheel, { passive: false });
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('wheel', handleWheel);
+      document.body.style.overflow = '';
+    };
+  }, [currentIndex, images.length, onClose]);
+
+  const goPrev = (e) => {
+    e.stopPropagation();
+    if (currentIndex > 0) {
+      setCurrentIndex(i => i - 1);
+      setZoom(1);
+    }
+  };
+
+  const goNext = (e) => {
+    e.stopPropagation();
+    if (currentIndex < images.length - 1) {
+      setCurrentIndex(i => i + 1);
+      setZoom(1);
+    }
+  };
+
+  // Build full-res URL from thumbnail (remove size constraint)
+  const getFullUrl = (img) => {
+    if (img.thumbnailUrl) {
+      return img.thumbnailUrl.replace(/=s\d+/, '=s1600');
+    }
+    return null;
+  };
+
+  const fullUrl = getFullUrl(currentImage);
+
+  return (
+    <div className="image-lightbox-overlay" onClick={onClose}>
+      <div className="image-lightbox-container" onClick={e => e.stopPropagation()}>
+        {fullUrl && (
+          <img
+            ref={imgRef}
+            src={fullUrl}
+            alt={currentImage.name}
+            style={{ transform: `scale(${zoom})` }}
+            draggable={false}
+          />
+        )}
+      </div>
+
+      <button className="image-lightbox-close" onClick={onClose}>
+        <X size={20} />
+      </button>
+
+      {images.length > 1 && currentIndex > 0 && (
+        <button className="image-lightbox-nav prev" onClick={goPrev}>
+          <ChevronLeft size={24} />
+        </button>
+      )}
+
+      {images.length > 1 && currentIndex < images.length - 1 && (
+        <button className="image-lightbox-nav next" onClick={goNext}>
+          <ChevronRight size={24} />
+        </button>
+      )}
+
+      <div className="image-lightbox-zoom-hint">Shift + Mausrad zum Zoomen</div>
+      <div className="image-lightbox-name">
+        {currentImage.name} ({currentIndex + 1}/{images.length})
+      </div>
+    </div>
+  );
+}
+
+/* ========== Inbox Modal ========== */
 function InboxModal({ projects, onClose, onRefresh }) {
   const [expandedProject, setExpandedProject] = useState(null);
   const [images, setImages] = useState({});
@@ -62,6 +169,7 @@ function InboxModal({ projects, onClose, onRefresh }) {
   const [mergeSearch, setMergeSearch] = useState('');
   const [processing, setProcessing] = useState({});
   const [notification, setNotification] = useState(null);
+  const [lightbox, setLightbox] = useState(null);
 
   useEffect(() => {
     loadExistingProjects();
@@ -178,6 +286,13 @@ function InboxModal({ projects, onClose, onRefresh }) {
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
+  };
+
+  const openLightbox = (folderId, index) => {
+    const folderImages = images[folderId];
+    if (folderImages && folderImages.length > 0) {
+      setLightbox({ images: folderImages, startIndex: index });
+    }
   };
 
   const filteredProjects = existingProjects.filter(p => {
@@ -324,8 +439,13 @@ function InboxModal({ projects, onClose, onRefresh }) {
                       </div>
                     ) : images[project.drive_folder_id]?.length > 0 ? (
                       <div className="pending-images-grid">
-                        {images[project.drive_folder_id].map(img => (
-                          <div key={img.id} className="pending-image-card" title={img.name}>
+                        {images[project.drive_folder_id].map((img, idx) => (
+                          <div
+                            key={img.id}
+                            className="pending-image-card"
+                            title={img.name}
+                            onClick={() => openLightbox(project.drive_folder_id, idx)}
+                          >
                             {img.thumbnailUrl ? (
                               <img src={img.thumbnailUrl} alt={img.name} />
                             ) : (
@@ -347,6 +467,14 @@ function InboxModal({ projects, onClose, onRefresh }) {
           )}
         </div>
       </div>
+
+      {lightbox && (
+        <ImageLightbox
+          images={lightbox.images}
+          startIndex={lightbox.startIndex}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </div>
   );
 }
