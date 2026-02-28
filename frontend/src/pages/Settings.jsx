@@ -199,89 +199,109 @@ function Settings({ settings, updateSettings, onSettingsChange }) {
       </div>
 
       <div className="settings-section">
-        <h2>Logo</h2>
+        <h2>
+          <Network size={20} style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />
+          Netzwerk-Zugriff
+        </h2>
         <p className="section-description">
-          Laden Sie ein Logo hoch, das in der Kopfzeile angezeigt wird.
+          Über folgende Adressen ist dieser Server erreichbar. Teile eine Adresse mit anderen Geräten im selben Netzwerk, um darauf zuzugreifen.
         </p>
-
-        <div className="logo-settings">
-          {settings.logo_path && (
-            <div className="logo-preview">
-              <img src={settings.logo_path} alt="Logo" />
-            </div>
-          )}
-
-          <div className="logo-actions">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleLogoUpload}
-              style={{ display: 'none' }}
-            />
-
-            <button
-              className="btn btn-primary"
-              onClick={() => fileInputRef.current.click()}
-              disabled={uploading}
-            >
-              <Upload size={18} />
-              {uploading ? 'Lädt hoch...' : settings.logo_path ? 'Logo ändern' : 'Logo hochladen'}
-            </button>
-
-            {settings.logo_path && (
-              <button
-                className="btn btn-danger"
-                onClick={handleLogoDelete}
-              >
-                <Trash2 size={18} />
-                Logo löschen
-              </button>
-            )}
+        {networkInfo ? (
+          <div className="network-list">
+            {networkInfo.addresses.map((entry, i) => (
+              <div key={i} className="network-item">
+                <div className="network-item-info">
+                  <span className="network-item-name">{entry.name}</span>
+                  <span className="network-item-url">{entry.url}</span>
+                </div>
+                <button
+                  className="btn-copy"
+                  onClick={() => copyToClipboard(entry.url)}
+                  title="In Zwischenablage kopieren"
+                >
+                  {copiedUrl === entry.url ? <Check size={16} /> : <Copy size={16} />}
+                  {copiedUrl === entry.url ? 'Kopiert' : 'Kopieren'}
+                </button>
+              </div>
+            ))}
           </div>
-        </div>
+        ) : (
+          <p className="section-description" style={{ marginBottom: 0 }}>Lade Netzwerk-Informationen...</p>
+        )}
       </div>
 
-      <div className="settings-section">
-        <h2>Favicon</h2>
-        <p className="section-description">
-          Laden Sie ein Favicon hoch, das im Browser-Tab angezeigt wird. Empfohlen: 32x32 oder 64x64 Pixel, .ico, .png oder .svg Format.
-        </p>
-
-        <div className="logo-settings">
-          {settings.favicon_path && (
-            <div className="favicon-preview">
-              <img src={settings.favicon_path} alt="Favicon" />
-            </div>
-          )}
-
-          <div className="logo-actions">
-            <input
-              ref={faviconInputRef}
-              type="file"
-              accept="image/*,.ico"
-              onChange={handleFaviconUpload}
-              style={{ display: 'none' }}
-            />
-
-            <button
-              className="btn btn-primary"
-              onClick={() => faviconInputRef.current.click()}
-              disabled={uploadingFavicon}
-            >
-              <Upload size={18} />
-              {uploadingFavicon ? 'Lädt hoch...' : settings.favicon_path ? 'Favicon ändern' : 'Favicon hochladen'}
-            </button>
-
-            {settings.favicon_path && (
-              <button
-                className="btn btn-danger"
-                onClick={handleFaviconDelete}
-              >
-                <Trash2 size={18} />
-                Favicon löschen
-              </button>
+      <div className="settings-section logo-favicon-row">
+        <div className="logo-favicon-col">
+          <h2>Logo</h2>
+          <p className="section-description">
+            Wird in der Kopfzeile angezeigt.
+          </p>
+          <div className="logo-settings">
+            {settings.logo_path && (
+              <div className="logo-preview">
+                <img src={settings.logo_path} alt="Logo" />
+              </div>
             )}
+            <div className="logo-actions">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleLogoUpload}
+                style={{ display: 'none' }}
+              />
+              <button
+                className="btn btn-primary"
+                onClick={() => fileInputRef.current.click()}
+                disabled={uploading}
+              >
+                <Upload size={18} />
+                {uploading ? 'Lädt hoch...' : settings.logo_path ? 'Ändern' : 'Hochladen'}
+              </button>
+              {settings.logo_path && (
+                <button className="btn btn-danger" onClick={handleLogoDelete}>
+                  <Trash2 size={18} />
+                  Löschen
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="logo-favicon-col">
+          <h2>Favicon</h2>
+          <p className="section-description">
+            Wird im Browser-Tab angezeigt. 32x32 / 64x64 px.
+          </p>
+          <div className="logo-settings">
+            {settings.favicon_path && (
+              <div className="favicon-preview">
+                <img src={settings.favicon_path} alt="Favicon" />
+              </div>
+            )}
+            <div className="logo-actions">
+              <input
+                ref={faviconInputRef}
+                type="file"
+                accept="image/*,.ico"
+                onChange={handleFaviconUpload}
+                style={{ display: 'none' }}
+              />
+              <button
+                className="btn btn-primary"
+                onClick={() => faviconInputRef.current.click()}
+                disabled={uploadingFavicon}
+              >
+                <Upload size={18} />
+                {uploadingFavicon ? 'Lädt hoch...' : settings.favicon_path ? 'Ändern' : 'Hochladen'}
+              </button>
+              {settings.favicon_path && (
+                <button className="btn btn-danger" onClick={handleFaviconDelete}>
+                  <Trash2 size={18} />
+                  Löschen
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -340,49 +360,6 @@ function Settings({ settings, updateSettings, onSettingsChange }) {
         </div>
       </div>
 
-      <div className="settings-section">
-        <h2>Theme</h2>
-        <p className="section-description">
-          Aktuell wird nur der Dark Mode unterstützt.
-        </p>
-        <div className="theme-info">
-          <div className="theme-badge">
-            Dark Mode aktiv
-          </div>
-        </div>
-      </div>
-
-      <div className="settings-section">
-        <h2>
-          <Network size={20} style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />
-          Netzwerk-Zugriff
-        </h2>
-        <p className="section-description">
-          Über folgende Adressen ist dieser Server erreichbar. Teile eine Adresse mit anderen Geräten im selben Netzwerk, um darauf zuzugreifen.
-        </p>
-        {networkInfo ? (
-          <div className="network-list">
-            {networkInfo.addresses.map((entry, i) => (
-              <div key={i} className="network-item">
-                <div className="network-item-info">
-                  <span className="network-item-name">{entry.name}</span>
-                  <span className="network-item-url">{entry.url}</span>
-                </div>
-                <button
-                  className="btn-copy"
-                  onClick={() => copyToClipboard(entry.url)}
-                  title="In Zwischenablage kopieren"
-                >
-                  {copiedUrl === entry.url ? <Check size={16} /> : <Copy size={16} />}
-                  {copiedUrl === entry.url ? 'Kopiert' : 'Kopieren'}
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="section-description" style={{ marginBottom: 0 }}>Lade Netzwerk-Informationen...</p>
-        )}
-      </div>
     </div>
   );
 }

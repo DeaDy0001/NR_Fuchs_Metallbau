@@ -15,8 +15,7 @@
   border-radius: 0.75rem;
   width: 100%;
   max-width: 950px;
-  height: 85vh;
-  max-height: 750px;
+  max-height: 95vh;
   position: relative;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
   display: flex;
