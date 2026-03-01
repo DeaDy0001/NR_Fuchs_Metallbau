@@ -171,7 +171,7 @@ function ImageLightbox({ images, startIndex, onClose }) {
   const proxyUrl = currentImage.id ? `/api/mobile/inbox/image-proxy/${currentImage.id}` : null;
 
   return (
-    <div className="image-lightbox-overlay" onClick={onClose}>
+    <div className="image-lightbox-overlay" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div
         ref={containerRef}
         className="image-lightbox-container"
@@ -192,7 +192,7 @@ function ImageLightbox({ images, startIndex, onClose }) {
         )}
       </div>
 
-      <button className="image-lightbox-close" onClick={onClose}>
+      <button className="image-lightbox-close" onClick={(e) => { e.stopPropagation(); onClose(); }}>
         <X size={20} />
       </button>
 

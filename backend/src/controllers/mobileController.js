@@ -965,6 +965,11 @@ const confirmInboxProject = async (req, res) => {
       return res.status(400).json({ error: 'NR_Fuchs_Meta Ordner nicht gefunden' });
     }
 
+    // List files BEFORE moving (to avoid any Google Drive API caching issues)
+    const files = await listFilesInFolder(folderId);
+    const images = files.filter(f => f.mimeType && f.mimeType.startsWith('image/'));
+    console.log(`📋 Found ${images.length} images in inbox folder "${projectName}" before move`);
+
     const projekteFolder = await findOrCreateSubfolder(metaFolder.id, 'Projekte');
 
     // Move folder from inbox/ to Projekte/
@@ -975,10 +980,9 @@ const confirmInboxProject = async (req, res) => {
 
     await moveFileOnDrive(folderId, projekteFolder.id, sourceParentId);
 
-    // Create local project folder + Bilder subfolder
+    // Create local project folder + Bilder subfolder + download images
     const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
     let downloaded = 0;
-    let totalImages = 0;
 
     if (settings?.project_path) {
       const projectFolder = path.join(settings.project_path, projectName);
@@ -987,37 +991,24 @@ const confirmInboxProject = async (req, res) => {
       console.log(`📁 Created local project folder: ${bilderFolder}`);
 
       // Download images from Drive to local Bilder folder
-      const files = await listFilesInFolder(folderId);
-      const images = files.filter(f => f.mimeType && f.mimeType.startsWith('image/'));
-      totalImages = images.length;
-
       for (const img of images) {
         try {
-          // Download and register in drive_images
-          const imageId = await downloadAndRegisterImage(
-            img.id,
-            img.name,
-            img.mimeType,
-            drivePath.id,
-            drivePath.name
-          );
-
-          // Copy to local project Bilder/ folder
-          if (imageId) {
-            const image = db.prepare('SELECT * FROM drive_images WHERE id = ?').get(imageId);
-            if (image?.local_path) {
-              const sourcePath = path.join(__dirname, '../../..', image.local_path.startsWith('/') ? image.local_path.substring(1) : image.local_path);
-              const destPath = path.join(bilderFolder, img.name);
-              await fs.copy(sourcePath, destPath, { overwrite: false });
-            }
+          // Download directly to Bilder folder
+          const destPath = path.join(bilderFolder, img.name);
+          if (!await fs.pathExists(destPath)) {
+            await downloadFile(img.id, destPath);
+            downloaded++;
+            console.log(`✓ Downloaded "${img.name}" to "${bilderFolder}"`);
+          } else {
+            downloaded++;
+            console.log(`⏭ "${img.name}" already exists, skipped`);
           }
-
-          downloaded++;
-          console.log(`✓ Downloaded "${img.name}" to project "${projectName}"`);
         } catch (e) {
-          console.error(`Failed to download ${img.name}:`, e.message);
+          console.error(`✗ Failed to download ${img.name}:`, e.message);
         }
       }
+    } else {
+      console.warn('⚠ project_path not configured, skipping local download');
     }
 
     // Create project in DB if not exists
@@ -1041,9 +1032,10 @@ const confirmInboxProject = async (req, res) => {
       // Non-critical
     }
 
+    console.log(`✅ Project "${projectName}" confirmed: ${downloaded}/${images.length} images downloaded`);
     res.json({
       success: true,
-      message: `Projekt "${projectName}" wurde erstellt (${downloaded}/${totalImages} Bilder heruntergeladen)`,
+      message: `Projekt "${projectName}" wurde erstellt (${downloaded}/${images.length} Bilder heruntergeladen)`,
     });
   } catch (error) {
     console.error('Error confirming inbox project:', error);
