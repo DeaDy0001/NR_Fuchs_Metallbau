@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert, Image,
-  ActivityIndicator, FlatList, Dimensions, Modal, ScrollView, TextInput,
+  ActivityIndicator, FlatList, Dimensions, Modal, ScrollView, TextInput, Animated,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
@@ -10,17 +10,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
 import { addToUploadQueue, getCachedProjects } from '../services/database';
-import { uploadImage, createProject } from '../services/api';
+import { createProject } from '../services/api';
 import { processUploadQueue } from '../services/uploadQueue';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function CameraScreen({ navigation, route }) {
-  const { isConnected, refreshQueueCount } = useApp();
+  const { refreshQueueCount } = useApp();
   const [permission, requestPermission] = useCameraPermissions();
   const [capturedImages, setCapturedImages] = useState([]);
-  const [uploading, setUploading] = useState(false);
   const [facing, setFacing] = useState('back');
+  const [toast, setToast] = useState(null);
+  const toastOpacity = useRef(new Animated.Value(0)).current;
   const [flash, setFlash] = useState('off');
   const [gpsEnabled, setGpsEnabled] = useState(false);
   const [locationPermission, setLocationPermission] = useState(null);
@@ -284,59 +285,54 @@ export default function CameraScreen({ navigation, route }) {
     );
   };
 
+  const showToast = (message) => {
+    setToast(message);
+    Animated.timing(toastOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+    setTimeout(() => {
+      Animated.timing(toastOpacity, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+        setToast(null);
+      });
+    }, 3000);
+  };
+
+  const dismissToast = () => {
+    Animated.timing(toastOpacity, { toValue: 0, duration: 150, useNativeDriver: true }).start(() => {
+      setToast(null);
+    });
+  };
+
   const handleUpload = async () => {
     if (capturedImages.length === 0) return;
 
-    setUploading(true);
-    let successCount = 0;
-    let queueCount = 0;
+    const count = capturedImages.length;
 
     try {
+      // Always add to queue - non-blocking
       for (const img of capturedImages) {
-        if (!isConnected) {
-          await addToUploadQueue(
-            img.uri, img.fileName, img.mimeType,
-            projectId, projectName, projectFolderId,
-            img.gps ? JSON.stringify(img.gps) : null
-          );
-          queueCount++;
-        } else {
-          try {
-            await uploadImage(
-              img.uri, img.fileName, img.mimeType,
-              projectId, projectName,
-              img.gps
-            );
-            successCount++;
-          } catch {
-            await addToUploadQueue(
-              img.uri, img.fileName, img.mimeType,
-              projectId, projectName, projectFolderId,
-              img.gps ? JSON.stringify(img.gps) : null
-            );
-            queueCount++;
-          }
-        }
+        await addToUploadQueue(
+          img.uri, img.fileName, img.mimeType,
+          projectId, projectName, projectFolderId,
+          img.gps ? JSON.stringify(img.gps) : null
+        );
       }
 
       await refreshQueueCount();
-      if (queueCount > 0) processUploadQueue();
 
-      const total = capturedImages.length;
-      if (successCount === total) {
-        Alert.alert('Hochgeladen', `${total} ${total === 1 ? 'Bild wurde' : 'Bilder wurden'} erfolgreich hochgeladen.`);
-      } else if (queueCount === total) {
-        Alert.alert('In Warteschlange', `${total} ${total === 1 ? 'Bild wurde' : 'Bilder wurden'} in die Warteschlange gelegt.`);
-      } else {
-        Alert.alert('Teilweise hochgeladen', `${successCount} hochgeladen, ${queueCount} in der Warteschlange.`);
-      }
-
+      // Clear images and go back to camera view
       setCapturedImages([]);
       setShowPreviewGallery(false);
+
+      // Show brief toast notification
+      const msg = projectName
+        ? `${count} ${count === 1 ? 'Bild wird' : 'Bilder werden'} zu "${projectName}" hochgeladen`
+        : `${count} ${count === 1 ? 'Bild wird' : 'Bilder werden'} hochgeladen`;
+      showToast(msg);
+
+      // Trigger queue processing in background
+      processUploadQueue();
     } catch (error) {
-      Alert.alert('Fehler', 'Upload fehlgeschlagen: ' + error.message);
-    } finally {
-      setUploading(false);
+      console.error('Error queuing images:', error);
+      showToast('Fehler beim Einreihen: ' + error.message);
     }
   };
 
@@ -410,21 +406,13 @@ export default function CameraScreen({ navigation, route }) {
 
           {/* Upload / Queue */}
           <TouchableOpacity
-            style={[styles.previewActionBtnSend, uploading && styles.buttonDisabled]}
+            style={styles.previewActionBtnSend}
             onPress={handleUpload}
-            disabled={uploading}
           >
-            {uploading ? (
-              <ActivityIndicator color="white" size="small" />
-            ) : (
-              <>
-                <Ionicons name={isConnected ? 'send' : 'time-outline'} size={24} color="white" />
-                <Text style={styles.previewActionLabelSend}>
-                  {isConnected ? 'Senden' : 'Queue'}
-                  {capturedImages.length > 1 ? ` (${capturedImages.length})` : ''}
-                </Text>
-              </>
-            )}
+            <Ionicons name="send" size={24} color="white" />
+            <Text style={styles.previewActionLabelSend}>
+              Senden{capturedImages.length > 1 ? ` (${capturedImages.length})` : ''}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -569,6 +557,20 @@ export default function CameraScreen({ navigation, route }) {
 
       {/* Project Picker Modal */}
       {renderProjectPicker()}
+
+      {/* Toast notification - dismissable by touch */}
+      {toast && (
+        <TouchableOpacity
+          style={styles.toastTouchArea}
+          activeOpacity={1}
+          onPress={dismissToast}
+        >
+          <Animated.View style={[styles.toastContainer, { opacity: toastOpacity }]}>
+            <Ionicons name="cloud-upload-outline" size={20} color={colors.accent} />
+            <Text style={styles.toastText}>{toast}</Text>
+          </Animated.View>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -642,7 +644,6 @@ const styles = StyleSheet.create({
     paddingVertical: 10, paddingHorizontal: 20, borderRadius: 12, backgroundColor: colors.accent,
   },
   previewActionLabelSend: { fontSize: 11, color: 'white', fontWeight: '600' },
-  buttonDisabled: { opacity: 0.6 },
 
   // Permission
   permissionText: { color: colors.textPrimary, fontSize: 16 },
@@ -674,4 +675,30 @@ const styles = StyleSheet.create({
   projectPickerColor: { width: 4, height: 28, borderRadius: 2 },
   projectPickerText: { flex: 1, fontSize: 15, fontWeight: '500', color: colors.textPrimary },
   projectPickerMeta: { fontSize: 12, color: colors.textTertiary },
+
+  // Toast notification
+  toastTouchArea: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0,
+    paddingTop: 54,
+    paddingHorizontal: 20,
+    zIndex: 999,
+  },
+  toastContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(59,130,246,0.3)',
+  },
+  toastText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '500',
+    flex: 1,
+  },
 });

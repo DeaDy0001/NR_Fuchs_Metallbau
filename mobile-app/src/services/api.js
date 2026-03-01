@@ -223,12 +223,22 @@ export const uploadImage = async (fileUri, fileName, mimeType, projectId = null,
     const projectFolder = await findOrCreateFolder(inboxFolderId, projectName);
     targetFolderId = projectFolder.id;
   } else {
-    // No project - upload to inbox root
+    // No project - upload to inbox/{userName}/ subfolder
+    let inboxFolderId;
     if (!connection.inbox_folder_id) {
       const inboxFolder = await findOrCreateFolder(connection.meta_folder_id, 'inbox');
-      targetFolderId = inboxFolder.id;
+      inboxFolderId = inboxFolder.id;
     } else {
-      targetFolderId = connection.inbox_folder_id;
+      inboxFolderId = connection.inbox_folder_id;
+    }
+
+    // Create user-specific subfolder so uploads are grouped by user
+    const userName = await getSetting('userName', '');
+    if (userName) {
+      const userFolder = await findOrCreateFolder(inboxFolderId, userName);
+      targetFolderId = userFolder.id;
+    } else {
+      targetFolderId = inboxFolderId;
     }
   }
 

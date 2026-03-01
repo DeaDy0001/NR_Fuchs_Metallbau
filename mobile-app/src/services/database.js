@@ -225,6 +225,39 @@ export const getUploadQueueCount = async () => {
   return result?.count || 0;
 };
 
+/**
+ * Get items for the queue display screen:
+ * - ALL pending/failed/permanently_failed items
+ * - Last 30 completed items
+ */
+export const getQueueDisplayItems = async () => {
+  const db = await getDb();
+  const pending = await db.getAllAsync(
+    'SELECT * FROM upload_queue WHERE status IN (\'queued\', \'failed\', \'permanently_failed\') ORDER BY created_at ASC'
+  );
+  const completed = await db.getAllAsync(
+    'SELECT * FROM upload_queue WHERE status = \'uploaded\' ORDER BY uploaded_at DESC LIMIT 30'
+  );
+  return { pending, completed };
+};
+
+/**
+ * Cleanup old completed items - keep only last 30
+ */
+export const cleanupOldQueueItems = async () => {
+  const db = await getDb();
+  await db.runAsync(`
+    DELETE FROM upload_queue
+    WHERE status = 'uploaded'
+    AND id NOT IN (
+      SELECT id FROM upload_queue
+      WHERE status = 'uploaded'
+      ORDER BY uploaded_at DESC
+      LIMIT 30
+    )
+  `);
+};
+
 // ============================================================
 // Cache helpers
 // ============================================================

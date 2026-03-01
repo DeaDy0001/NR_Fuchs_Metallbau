@@ -4,6 +4,8 @@ import { uploadImage } from './api';
 
 let isProcessing = false;
 let listeners = [];
+let currentlyUploadingId = null;
+let uploadProgress = { current: 0, total: 0 };
 
 export const addUploadListener = (callback) => {
   listeners.push(callback);
@@ -13,8 +15,19 @@ export const addUploadListener = (callback) => {
 };
 
 const notifyListeners = (event) => {
-  listeners.forEach(l => l(event));
+  listeners.forEach(l => {
+    try { l(event); } catch {}
+  });
 };
+
+/**
+ * Get the current upload state (for UI display)
+ */
+export const getCurrentUploadState = () => ({
+  isProcessing,
+  currentlyUploadingId,
+  uploadProgress: { ...uploadProgress },
+});
 
 /**
  * Process the upload queue
@@ -23,12 +36,15 @@ const notifyListeners = (event) => {
 export const processUploadQueue = async () => {
   if (isProcessing) return;
   isProcessing = true;
+  currentlyUploadingId = null;
 
   try {
     // Check network
     const networkState = await Network.getNetworkStateAsync();
     if (!networkState.isConnected || !networkState.isInternetReachable) {
       notifyListeners({ type: 'offline' });
+      // Switch to slow interval (5 min) when offline
+      switchInterval(300000);
       return;
     }
 
@@ -36,13 +52,21 @@ export const processUploadQueue = async () => {
     const wifiOnly = await getSetting('wifiOnly', 'false');
     if (wifiOnly === 'true' && networkState.type !== Network.NetworkStateType.WIFI) {
       notifyListeners({ type: 'wifi_only', message: 'Upload wartet auf WLAN' });
+      switchInterval(300000);
       return;
     }
 
     // Get queued uploads
     const queue = await getQueuedUploads();
-    if (queue.length === 0) return;
+    if (queue.length === 0) {
+      notifyListeners({ type: 'idle' });
+      return;
+    }
 
+    // We're online with items to process - use fast interval
+    switchInterval(30000);
+
+    uploadProgress = { current: 0, total: queue.length };
     notifyListeners({ type: 'processing', count: queue.length });
 
     for (const item of queue) {
@@ -53,8 +77,15 @@ export const processUploadQueue = async () => {
           continue;
         }
 
+        currentlyUploadingId = item.id;
+        uploadProgress.current++;
+        notifyListeners({
+          type: 'uploading',
+          item,
+          progress: { ...uploadProgress },
+        });
+
         // Upload to Google Drive via api.js
-        // Use project_folder_id (Drive folder ID) as projectId for direct folder targeting
         await uploadImage(
           item.file_uri,
           item.file_name,
@@ -64,28 +95,39 @@ export const processUploadQueue = async () => {
         );
 
         await updateUploadStatus(item.id, 'uploaded');
-        notifyListeners({ type: 'uploaded', item });
+        notifyListeners({ type: 'uploaded', item, progress: { ...uploadProgress } });
       } catch (error) {
         await updateUploadStatus(item.id, 'failed', error.message);
         notifyListeners({ type: 'error', item, error: error.message });
       }
     }
 
+    currentlyUploadingId = null;
     notifyListeners({ type: 'done' });
   } catch (error) {
     console.error('Upload queue processing error:', error);
   } finally {
     isProcessing = false;
+    currentlyUploadingId = null;
   }
 };
 
 /**
- * Start periodic queue processing
+ * Interval management - 30s when online with items, 5min when offline
  */
 let intervalId = null;
+let currentIntervalMs = 30000;
+
+const switchInterval = (newIntervalMs) => {
+  if (currentIntervalMs === newIntervalMs && intervalId) return;
+  if (intervalId) clearInterval(intervalId);
+  currentIntervalMs = newIntervalMs;
+  intervalId = setInterval(processUploadQueue, newIntervalMs);
+};
 
 export const startQueueProcessing = (intervalMs = 30000) => {
   if (intervalId) clearInterval(intervalId);
+  currentIntervalMs = intervalMs;
   intervalId = setInterval(processUploadQueue, intervalMs);
   // Run immediately
   processUploadQueue();
@@ -95,5 +137,17 @@ export const stopQueueProcessing = () => {
   if (intervalId) {
     clearInterval(intervalId);
     intervalId = null;
+  }
+};
+
+/**
+ * Force immediate processing (for "Sofort synchronisieren" button)
+ */
+export const forceProcessQueue = async () => {
+  // Reset to fast interval
+  switchInterval(30000);
+  // Process now if not already processing
+  if (!isProcessing) {
+    await processUploadQueue();
   }
 };

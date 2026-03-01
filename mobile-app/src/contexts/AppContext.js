@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { getSetting, setSetting, getUploadQueueCount, getActiveDriveConnection, updateDriveConnectionFolders } from '../services/database';
 import { isAuthenticated, clearAuth, getAccessToken } from '../services/googleAuth';
 import { checkFolderAccess, findOrCreateFolder } from '../services/driveService';
-import { startQueueProcessing, stopQueueProcessing, addUploadListener } from '../services/uploadQueue';
+import { startQueueProcessing, stopQueueProcessing, addUploadListener, forceProcessQueue } from '../services/uploadQueue';
 import { startHeartbeat, stopHeartbeat } from '../services/heartbeat';
 
 const ensureDriveFolders = async (connection) => {
