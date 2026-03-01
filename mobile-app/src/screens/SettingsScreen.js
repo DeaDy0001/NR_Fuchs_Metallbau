@@ -20,6 +20,7 @@ export default function SettingsScreen({ navigation }) {
   const [imageQuality, setImageQuality] = useState(80);
   const [maxResolution, setMaxResolution] = useState(1920);
   const [maxImageSizeKB, setMaxImageSizeKB] = useState(1024);
+  const [keepOriginal, setKeepOriginal] = useState(true);
   const [cacheMaxAgeDays, setCacheMaxAgeDays] = useState(30);
   const [lazyLoadImages, setLazyLoadImages] = useState(true);
   const [autoDeleteOld, setAutoDeleteOld] = useState(false);
@@ -42,6 +43,7 @@ export default function SettingsScreen({ navigation }) {
     setImageQuality(parseInt(await getSetting('imageQuality', '80')));
     setMaxResolution(parseInt(await getSetting('maxImageResolution', '1920')));
     setMaxImageSizeKB(parseInt(await getSetting('maxImageSizeKB', '1024')));
+    setKeepOriginal((await getSetting('keepOriginal', 'true')) === 'true');
     setCacheMaxAgeDays(parseInt(await getSetting('cacheMaxAgeDays', '30')));
     setLazyLoadImages((await getSetting('lazyLoadImages', 'true')) === 'true');
     setAutoDeleteOld((await getSetting('autoDeleteOld', 'false')) === 'true');
@@ -304,6 +306,81 @@ export default function SettingsScreen({ navigation }) {
             thumbColor="white"
           />
         </View>
+
+        <View style={styles.settingRow}>
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>Original behalten</Text>
+            <Text style={styles.settingDesc}>
+              {keepOriginal
+                ? 'Originalfoto wird in der Galerie gespeichert, komprimierte Version wird hochgeladen'
+                : 'Nur die komprimierte Version bleibt in der App'}
+            </Text>
+          </View>
+          <Switch
+            value={keepOriginal}
+            onValueChange={async (v) => { setKeepOriginal(v); await saveSetting('keepOriginal', v); }}
+            trackColor={{ false: colors.bgTertiary, true: colors.accent }}
+            thumbColor="white"
+          />
+        </View>
+      </View>
+
+      {/* Upload Compression */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Bildkomprimierung</Text>
+
+        {/* Quality */}
+        <View style={styles.settingBlock}>
+          <Text style={styles.settingLabel}>Bildqualität: {imageQuality}%</Text>
+          <Text style={styles.settingDesc}>Qualität der hochgeladenen Bilder (niedrigere Werte = kleinere Dateien)</Text>
+          <Slider
+            value={imageQuality}
+            min={10}
+            max={100}
+            step={5}
+            onValueChange={async (v) => { setImageQuality(v); await saveSetting('imageQuality', v); }}
+            leftLabel="Klein"
+            rightLabel="Hoch"
+          />
+        </View>
+
+        {/* Max Resolution */}
+        <View style={styles.settingBlock}>
+          <Text style={styles.settingLabel}>Maximale Auflösung</Text>
+          <Text style={styles.settingDesc}>Bilder werden vor dem Hochladen auf diese Größe skaliert</Text>
+          <View style={styles.optionGrid}>
+            {resolutionOptions.map(opt => (
+              <TouchableOpacity
+                key={opt.value}
+                style={[styles.optionChip, maxResolution === opt.value && styles.optionChipActive]}
+                onPress={async () => { setMaxResolution(opt.value); await saveSetting('maxImageResolution', opt.value); }}
+              >
+                <Text style={[styles.optionChipText, maxResolution === opt.value && styles.optionChipTextActive]}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* Max File Size */}
+        <View style={styles.settingBlock}>
+          <Text style={styles.settingLabel}>Maximale Dateigröße pro Bild</Text>
+          <Text style={styles.settingDesc}>Bilder werden zusätzlich komprimiert, bis sie diese Größe nicht überschreiten</Text>
+          <View style={styles.optionGrid}>
+            {maxSizeOptions.map(opt => (
+              <TouchableOpacity
+                key={opt.value}
+                style={[styles.optionChip, maxImageSizeKB === opt.value && styles.optionChipActive]}
+                onPress={async () => { setMaxImageSizeKB(opt.value); await saveSetting('maxImageSizeKB', opt.value); }}
+              >
+                <Text style={[styles.optionChipText, maxImageSizeKB === opt.value && styles.optionChipTextActive]}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
       </View>
 
       {/* Bilder herunterladen */}
@@ -347,7 +424,7 @@ export default function SettingsScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      {/* Image Sync & Compression */}
+      {/* Bilder-Anzeige */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Bilder-Anzeige</Text>
 
@@ -362,59 +439,6 @@ export default function SettingsScreen({ navigation }) {
             trackColor={{ false: colors.bgTertiary, true: colors.accent }}
             thumbColor="white"
           />
-        </View>
-
-        {/* Quality */}
-        <View style={styles.settingBlock}>
-          <Text style={styles.settingLabel}>Bildqualität: {imageQuality}%</Text>
-          <Text style={styles.settingDesc}>Niedrigere Qualität = weniger Speicherverbrauch</Text>
-          <Slider
-            value={imageQuality}
-            min={10}
-            max={100}
-            step={5}
-            onValueChange={async (v) => { setImageQuality(v); await saveSetting('imageQuality', v); }}
-            leftLabel="Klein"
-            rightLabel="Hoch"
-          />
-        </View>
-
-        {/* Max Resolution */}
-        <View style={styles.settingBlock}>
-          <Text style={styles.settingLabel}>Maximale Auflösung</Text>
-          <Text style={styles.settingDesc}>Heruntergeladene Bilder werden auf diese Größe skaliert</Text>
-          <View style={styles.optionGrid}>
-            {resolutionOptions.map(opt => (
-              <TouchableOpacity
-                key={opt.value}
-                style={[styles.optionChip, maxResolution === opt.value && styles.optionChipActive]}
-                onPress={async () => { setMaxResolution(opt.value); await saveSetting('maxImageResolution', opt.value); }}
-              >
-                <Text style={[styles.optionChipText, maxResolution === opt.value && styles.optionChipTextActive]}>
-                  {opt.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        {/* Max File Size */}
-        <View style={styles.settingBlock}>
-          <Text style={styles.settingLabel}>Maximale Dateigröße pro Bild</Text>
-          <Text style={styles.settingDesc}>Bilder werden komprimiert, bis sie diese Größe nicht überschreiten</Text>
-          <View style={styles.optionGrid}>
-            {maxSizeOptions.map(opt => (
-              <TouchableOpacity
-                key={opt.value}
-                style={[styles.optionChip, maxImageSizeKB === opt.value && styles.optionChipActive]}
-                onPress={async () => { setMaxImageSizeKB(opt.value); await saveSetting('maxImageSizeKB', opt.value); }}
-              >
-                <Text style={[styles.optionChipText, maxImageSizeKB === opt.value && styles.optionChipTextActive]}>
-                  {opt.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
         </View>
       </View>
 

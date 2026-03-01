@@ -1,6 +1,7 @@
 import * as Network from 'expo-network';
 import { getSetting, getQueuedUploads, updateUploadStatus } from './database';
 import { uploadImage } from './api';
+import { processImageForUpload } from './imageProcessor';
 
 let isProcessing = false;
 let listeners = [];
@@ -79,15 +80,30 @@ export const processUploadQueue = async () => {
 
         currentlyUploadingId = item.id;
         uploadProgress.current++;
+
+        // Step 1: Compress/resize image according to settings
+        notifyListeners({
+          type: 'compressing',
+          item,
+          progress: { ...uploadProgress },
+        });
+
+        let uploadUri = item.file_uri;
+        try {
+          uploadUri = await processImageForUpload(item.file_uri, item.file_name);
+        } catch (e) {
+          console.warn('Image processing failed, uploading original:', e.message);
+        }
+
+        // Step 2: Upload to Google Drive
         notifyListeners({
           type: 'uploading',
           item,
           progress: { ...uploadProgress },
         });
 
-        // Upload to Google Drive via api.js
         await uploadImage(
-          item.file_uri,
+          uploadUri,
           item.file_name,
           item.mime_type,
           item.project_folder_id || item.project_id,

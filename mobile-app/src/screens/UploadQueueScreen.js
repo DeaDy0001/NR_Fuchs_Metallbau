@@ -13,6 +13,7 @@ export default function UploadQueueScreen() {
   const [completed, setCompleted] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [uploadState, setUploadState] = useState(getCurrentUploadState());
+  const [currentPhase, setCurrentPhase] = useState(null); // 'compressing' or 'uploading'
 
   // Animated progress for uploading items
   const progressAnims = useRef({});
@@ -29,6 +30,14 @@ export default function UploadQueueScreen() {
   useEffect(() => {
     const unsubscribe = addUploadListener(async (event) => {
       setUploadState(getCurrentUploadState());
+
+      if (event.type === 'compressing') {
+        setCurrentPhase('compressing');
+      } else if (event.type === 'uploading') {
+        setCurrentPhase('uploading');
+      } else if (event.type === 'uploaded' || event.type === 'done') {
+        setCurrentPhase(null);
+      }
 
       if (event.type === 'uploaded' || event.type === 'done' || event.type === 'error') {
         await loadQueue();
@@ -79,6 +88,9 @@ export default function UploadQueueScreen() {
 
   const getStatusConfig = (status, itemId) => {
     const isCurrentlyUploading = uploadState.currentlyUploadingId === itemId;
+    if (isCurrentlyUploading && currentPhase === 'compressing') {
+      return { icon: 'image-outline', color: '#f59e0b', label: 'Wird komprimiert...' };
+    }
     if (isCurrentlyUploading) {
       return { icon: 'cloud-upload', color: colors.accent, label: 'Wird hochgeladen...' };
     }
