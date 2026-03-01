@@ -76,6 +76,8 @@ router.post('/inbox/add-to-library', mobile.addToLibrary);
 router.post('/inbox/merge', mobile.mergeInboxProject);
 router.post('/inbox/merge-selected', mobile.mergeSelectedInboxImages);
 router.post('/inbox/delete-images', mobile.deleteInboxImages);
+router.post('/inbox/process-delete', mobile.processDeleteRequests);
+router.post('/inbox/dismiss-delete', mobile.dismissDeleteRequests);
 router.delete('/inbox/:folderId', mobile.deleteInboxProject);
 
 // Admin: mobile OAuth credentials management (called from desktop settings)

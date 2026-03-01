@@ -406,6 +406,20 @@ export const deleteRecentPhotos = async (photoIds) => {
   await db.runAsync(`DELETE FROM recent_photos WHERE id IN (${placeholders})`, photoIds);
 };
 
+/**
+ * Check which photos are still queued (not yet uploaded) by file_name
+ */
+export const getQueuedFileNames = async (fileNames) => {
+  if (!fileNames || fileNames.length === 0) return new Set();
+  const db = await getDb();
+  const placeholders = fileNames.map(() => '?').join(',');
+  const rows = await db.getAllAsync(
+    `SELECT file_name FROM upload_queue WHERE file_name IN (${placeholders}) AND status IN ('queued', 'failed')`,
+    fileNames
+  );
+  return new Set(rows.map(r => r.file_name));
+};
+
 // ============================================================
 // Pending Projects (created on mobile, waiting for desktop confirmation)
 // ============================================================

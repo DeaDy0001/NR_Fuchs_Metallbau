@@ -2,7 +2,7 @@ const db = require('../config/database');
 const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
-const { compressImage, generateThumbnail, findSubfolder, findOrCreateSubfolder, moveFileOnDrive, listFoldersInFolder, listFilesInFolder, extractFolderId, deleteFileFromDrive, downloadFile, getFileMetadata } = require('../services/googleDriveService');
+const { compressImage, generateThumbnail, findSubfolder, findOrCreateSubfolder, moveFileOnDrive, listFoldersInFolder, listFilesInFolder, extractFolderId, deleteFileFromDrive, downloadFile, getFileMetadata, listAllFilesInFolder, readDriveFileAsJson, updateDriveFileContent } = require('../services/googleDriveService');
 const { google } = require('googleapis');
 const os = require('os');
 
@@ -927,7 +927,44 @@ const getInbox = async (req, res) => {
       console.error('Error scanning Drive inbox:', e.message);
     }
 
-    res.json(driveInboxProjects);
+    // Also read delete_requests.json from inbox (if exists)
+    let deleteRequests = [];
+    try {
+      const drivePath = db.prepare('SELECT path FROM drive_paths LIMIT 1').get();
+      if (drivePath) {
+        let rootFolderId = drivePath.path;
+        const urlMatch = drivePath.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+        if (urlMatch) rootFolderId = urlMatch[1];
+
+        const metaFolder = await findSubfolder(rootFolderId, 'NR_Fuchs_Meta');
+        if (metaFolder) {
+          const inboxFolder = await findSubfolder(metaFolder.id, 'inbox');
+          if (inboxFolder) {
+            // Find delete_requests.json in inbox
+            const allFiles = await listAllFilesInFolder(inboxFolder.id);
+            const deleteFile = allFiles.find(f => f.name === 'delete_requests.json');
+            if (deleteFile) {
+              try {
+                const data = await readDriveFileAsJson(deleteFile.id);
+                if (Array.isArray(data) && data.length > 0) {
+                  deleteRequests = data.map(req => ({
+                    ...req,
+                    _deleteFileId: deleteFile.id,
+                    _inboxFolderId: inboxFolder.id,
+                  }));
+                }
+              } catch (e) {
+                console.error('Error reading delete_requests.json:', e.message);
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error reading delete requests:', e.message);
+    }
+
+    res.json({ projects: driveInboxProjects, deleteRequests });
   } catch (error) {
     console.error('Error getting inbox:', error);
     res.status(500).json({ error: 'Failed to get inbox' });
@@ -2177,6 +2214,180 @@ const proxyInboxImage = async (req, res) => {
   }
 };
 
+/**
+ * Process delete requests from mobile app
+ * POST /api/mobile/inbox/process-delete
+ * Body: { requestIds: string[] } - IDs of delete requests to process
+ */
+const processDeleteRequests = async (req, res) => {
+  try {
+    const { requestIds } = req.body;
+    if (!requestIds || !Array.isArray(requestIds) || requestIds.length === 0) {
+      return res.status(400).json({ error: 'requestIds (Array) ist erforderlich' });
+    }
+
+    // Get inbox folder and read delete_requests.json
+    const drivePath = db.prepare('SELECT path FROM drive_paths LIMIT 1').get();
+    if (!drivePath) {
+      return res.status(400).json({ error: 'Kein Google Drive Ordner konfiguriert' });
+    }
+
+    let rootFolderId = drivePath.path;
+    const urlMatch = drivePath.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    if (urlMatch) rootFolderId = urlMatch[1];
+
+    const metaFolder = await findSubfolder(rootFolderId, 'NR_Fuchs_Meta');
+    if (!metaFolder) return res.status(400).json({ error: 'NR_Fuchs_Meta nicht gefunden' });
+
+    const inboxFolder = await findSubfolder(metaFolder.id, 'inbox');
+    if (!inboxFolder) return res.status(400).json({ error: 'Inbox nicht gefunden' });
+
+    // Find and read delete_requests.json
+    const allFiles = await listAllFilesInFolder(inboxFolder.id);
+    const deleteFile = allFiles.find(f => f.name === 'delete_requests.json');
+    if (!deleteFile) return res.status(404).json({ error: 'Keine Löschanfragen gefunden' });
+
+    const allRequests = await readDriveFileAsJson(deleteFile.id);
+    if (!Array.isArray(allRequests)) {
+      return res.status(400).json({ error: 'Ungültiges Format der Löschanfragen' });
+    }
+
+    // Process each requested deletion
+    const requestsToProcess = allRequests.filter(r => requestIds.includes(r.id));
+    let deletedCount = 0;
+    const errors = [];
+
+    // Get project settings for local deletion
+    const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+
+    // Find Projekte folder on Drive for searching
+    const projekteFolder = await findSubfolder(metaFolder.id, 'Projekte');
+
+    for (const req of requestsToProcess) {
+      try {
+        let fileDeleted = false;
+
+        // Search for the file on Drive
+        // 1. If project_id is set, search in that folder
+        // 2. Otherwise search in Projekte/ subfolders by project_name
+        // 3. Also search in inbox subfolders
+        const searchFolders = [];
+
+        if (req.project_id) {
+          searchFolders.push(req.project_id);
+        }
+
+        if (req.project_name && projekteFolder) {
+          const projFolder = await findSubfolder(projekteFolder.id, req.project_name);
+          if (projFolder) searchFolders.push(projFolder.id);
+        }
+
+        // Search for the file in each potential folder
+        for (const folderId of searchFolders) {
+          try {
+            const files = await listAllFilesInFolder(folderId);
+            const match = files.find(f => f.name === req.file_name);
+            if (match) {
+              await deleteFileFromDrive(match.id);
+              fileDeleted = true;
+              console.log(`🗑️ Deleted "${req.file_name}" from Drive (folder ${folderId})`);
+              break;
+            }
+          } catch (e) {
+            console.error(`Error searching folder ${folderId}:`, e.message);
+          }
+        }
+
+        // Delete from local Bilder/ folder
+        if (settings?.project_path && req.project_name) {
+          const localPath = path.join(settings.project_path, req.project_name, 'Bilder', req.file_name);
+          if (await fs.pathExists(localPath)) {
+            await fs.remove(localPath);
+            console.log(`🗑️ Deleted local file: ${localPath}`);
+          }
+        }
+
+        // Delete from drive_images DB if exists
+        try {
+          db.prepare('DELETE FROM drive_images WHERE original_name = ?').run(req.file_name);
+        } catch {}
+
+        if (fileDeleted) deletedCount++;
+        else errors.push(`"${req.file_name}" nicht auf Drive gefunden`);
+      } catch (e) {
+        console.error(`Error processing delete request for ${req.file_name}:`, e.message);
+        errors.push(`"${req.file_name}": ${e.message}`);
+      }
+    }
+
+    // Remove processed requests from delete_requests.json
+    const remaining = allRequests.filter(r => !requestIds.includes(r.id));
+    if (remaining.length > 0) {
+      await updateDriveFileContent(deleteFile.id, remaining);
+    } else {
+      // No more requests → delete the file entirely
+      await deleteFileFromDrive(deleteFile.id);
+    }
+
+    res.json({
+      success: true,
+      deletedCount,
+      errors: errors.length > 0 ? errors : undefined,
+      message: `${deletedCount} ${deletedCount === 1 ? 'Bild' : 'Bilder'} gelöscht`,
+    });
+  } catch (error) {
+    console.error('Error processing delete requests:', error);
+    res.status(500).json({ error: 'Löschen fehlgeschlagen: ' + error.message });
+  }
+};
+
+/**
+ * Dismiss delete requests without deleting the actual files
+ * POST /api/mobile/inbox/dismiss-delete
+ * Body: { requestIds: string[] }
+ */
+const dismissDeleteRequests = async (req, res) => {
+  try {
+    const { requestIds } = req.body;
+    if (!requestIds || !Array.isArray(requestIds) || requestIds.length === 0) {
+      return res.status(400).json({ error: 'requestIds (Array) ist erforderlich' });
+    }
+
+    const drivePath = db.prepare('SELECT path FROM drive_paths LIMIT 1').get();
+    if (!drivePath) return res.status(400).json({ error: 'Kein Google Drive Ordner konfiguriert' });
+
+    let rootFolderId = drivePath.path;
+    const urlMatch = drivePath.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    if (urlMatch) rootFolderId = urlMatch[1];
+
+    const metaFolder = await findSubfolder(rootFolderId, 'NR_Fuchs_Meta');
+    if (!metaFolder) return res.status(400).json({ error: 'NR_Fuchs_Meta nicht gefunden' });
+
+    const inboxFolder = await findSubfolder(metaFolder.id, 'inbox');
+    if (!inboxFolder) return res.status(400).json({ error: 'Inbox nicht gefunden' });
+
+    const allFiles = await listAllFilesInFolder(inboxFolder.id);
+    const deleteFile = allFiles.find(f => f.name === 'delete_requests.json');
+    if (!deleteFile) return res.status(404).json({ error: 'Keine Löschanfragen gefunden' });
+
+    const allRequests = await readDriveFileAsJson(deleteFile.id);
+    const remaining = Array.isArray(allRequests)
+      ? allRequests.filter(r => !requestIds.includes(r.id))
+      : [];
+
+    if (remaining.length > 0) {
+      await updateDriveFileContent(deleteFile.id, remaining);
+    } else {
+      await deleteFileFromDrive(deleteFile.id);
+    }
+
+    res.json({ success: true, dismissed: requestIds.length });
+  } catch (error) {
+    console.error('Error dismissing delete requests:', error);
+    res.status(500).json({ error: 'Fehler: ' + error.message });
+  }
+};
+
 module.exports = {
   generateConnectToken,
   getConnectInfo,
@@ -2200,6 +2411,8 @@ module.exports = {
   mergeSelectedInboxImages,
   deleteInboxImages,
   deleteInboxProject,
+  processDeleteRequests,
+  dismissDeleteRequests,
   mobileGoogleAuth,
   mobileGoogleCallback,
   mobileRefreshToken,

@@ -521,6 +521,46 @@ const uploadFileToDrive = async (localFilePath, parentFolderId, fileName) => {
   }
 };
 
+/**
+ * Read a Drive file's content as JSON
+ */
+const readDriveFileAsJson = async (fileId) => {
+  try {
+    const drive = await getDriveClient();
+    const response = await drive.files.get(
+      { fileId, alt: 'media' },
+      { responseType: 'text' }
+    );
+    return typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
+  } catch (error) {
+    console.error('Error reading Drive file as JSON:', error.message);
+    throw error;
+  }
+};
+
+/**
+ * Update a Drive file's content (overwrite with new JSON data)
+ */
+const updateDriveFileContent = async (fileId, data) => {
+  try {
+    const drive = await getDriveClient();
+    const { Readable } = require('stream');
+    const content = JSON.stringify(data, null, 2);
+    const stream = Readable.from([content]);
+
+    await drive.files.update({
+      fileId,
+      media: {
+        mimeType: 'application/json',
+        body: stream,
+      },
+    });
+  } catch (error) {
+    console.error('Error updating Drive file content:', error.message);
+    throw error;
+  }
+};
+
 module.exports = {
   extractFolderId,
   listFilesInFolder,
@@ -538,4 +578,6 @@ module.exports = {
   getFileMetadata,
   findOrCreateSubfolder,
   uploadFileToDrive,
+  readDriveFileAsJson,
+  updateDriveFileContent,
 };

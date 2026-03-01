@@ -4,6 +4,7 @@ import './InboxBanner.css';
 
 function InboxBanner() {
   const [inboxItems, setInboxItems] = useState([]);
+  const [deleteRequests, setDeleteRequests] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [scanning, setScanning] = useState(false);
 
@@ -13,7 +14,15 @@ function InboxBanner() {
       const response = await fetch('/api/mobile/inbox');
       if (response.ok) {
         const data = await response.json();
-        setInboxItems(data);
+        // Handle new { projects, deleteRequests } format
+        if (data.projects) {
+          setInboxItems(data.projects);
+          setDeleteRequests(data.deleteRequests || []);
+        } else if (Array.isArray(data)) {
+          // Backwards compat with old format
+          setInboxItems(data);
+          setDeleteRequests([]);
+        }
       }
     } catch (error) {
       console.error('Error loading inbox:', error);
@@ -28,7 +37,8 @@ function InboxBanner() {
     return () => clearInterval(interval);
   }, [loadInbox]);
 
-  if (inboxItems.length === 0) return null;
+  const totalCount = inboxItems.length + (deleteRequests.length > 0 ? 1 : 0);
+  if (totalCount === 0) return null;
 
   return (
     <>
@@ -37,6 +47,7 @@ function InboxBanner() {
           <Inbox size={18} />
           <span>
             Neue Uploads von der Handy-App ({inboxItems.length})
+            {deleteRequests.length > 0 && ` · ${deleteRequests.length} Löschanfragen`}
           </span>
           {scanning && <Loader size={14} className="spinning" />}
         </div>
@@ -45,6 +56,7 @@ function InboxBanner() {
       {showModal && (
         <InboxModal
           projects={inboxItems}
+          deleteRequests={deleteRequests}
           onClose={() => setShowModal(false)}
           onRefresh={loadInbox}
         />
@@ -217,7 +229,7 @@ function ImageLightbox({ images, startIndex, onClose }) {
 }
 
 /* ========== Inbox Modal ========== */
-function InboxModal({ projects, onClose, onRefresh }) {
+function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
   const [expandedProject, setExpandedProject] = useState(null);
   const [images, setImages] = useState({});
   const [loadingImages, setLoadingImages] = useState({});
@@ -551,6 +563,53 @@ function InboxModal({ projects, onClose, onRefresh }) {
     }
   };
 
+  /** Process delete requests (actually delete files) */
+  const handleProcessDeleteRequests = async (requestIds) => {
+    setProcessing(prev => ({ ...prev, delete_requests: 'processing' }));
+    try {
+      const response = await fetch('/api/mobile/inbox/process-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestIds }),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        hasChangesRef.current = true;
+        showNotification(data.message || `${data.deletedCount} Bilder gelöscht`);
+        await onRefresh();
+      } else {
+        showNotification(data.error || 'Fehler beim Löschen', 'error');
+      }
+    } catch (e) {
+      showNotification('Fehler: ' + e.message, 'error');
+    } finally {
+      setProcessing(prev => ({ ...prev, delete_requests: null }));
+    }
+  };
+
+  /** Dismiss delete requests (keep files, remove requests) */
+  const handleDismissDeleteRequests = async (requestIds) => {
+    setProcessing(prev => ({ ...prev, delete_requests: 'dismissing' }));
+    try {
+      const response = await fetch('/api/mobile/inbox/dismiss-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestIds }),
+      });
+      if (response.ok) {
+        showNotification('Löschanfragen verworfen');
+        await onRefresh();
+      } else {
+        const data = await response.json();
+        showNotification(data.error || 'Fehler', 'error');
+      }
+    } catch (e) {
+      showNotification('Fehler: ' + e.message, 'error');
+    } finally {
+      setProcessing(prev => ({ ...prev, delete_requests: null }));
+    }
+  };
+
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
@@ -837,7 +896,88 @@ function InboxModal({ projects, onClose, onRefresh }) {
         )}
 
         <div className="pending-modal-body">
-          {projects.length === 0 ? (
+          {/* Delete Requests Section */}
+          {deleteRequests.length > 0 && (
+            <div className="delete-requests-section">
+              <div className="delete-requests-header">
+                <Trash2 size={16} />
+                <span>Löschanfragen vom Handy ({deleteRequests.length})</span>
+                <div className="delete-requests-actions">
+                  <button
+                    className="btn-pending btn-accept btn-small"
+                    onClick={() => handleProcessDeleteRequests(deleteRequests.map(r => r.id))}
+                    disabled={processing.delete_requests}
+                    title="Alle löschen"
+                  >
+                    <Trash2 size={14} />
+                    Alle löschen
+                  </button>
+                  <button
+                    className="btn-pending btn-dismiss btn-small"
+                    onClick={() => handleDismissDeleteRequests(deleteRequests.map(r => r.id))}
+                    disabled={processing.delete_requests}
+                    title="Anfragen verwerfen (Bilder behalten)"
+                  >
+                    <X size={14} />
+                    Verwerfen
+                  </button>
+                </div>
+              </div>
+              <div className="delete-requests-list">
+                {deleteRequests.map(req => (
+                  <div key={req.id} className="delete-request-item">
+                    <div className="delete-request-info">
+                      <Image size={14} />
+                      <span className="delete-request-filename">{req.file_name}</span>
+                      {req.project_name ? (
+                        <span className="delete-request-project">
+                          <FolderOpen size={12} />
+                          {req.project_name}
+                        </span>
+                      ) : (
+                        <span className="delete-request-no-project">Kein Projekt</span>
+                      )}
+                    </div>
+                    <div className="delete-request-meta">
+                      <span className="delete-request-by">{req.requested_by}</span>
+                      <span className="delete-request-date">
+                        {new Date(req.requested_at).toLocaleDateString('de-DE', {
+                          day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+                        })}
+                      </span>
+                    </div>
+                    <div className="delete-request-item-actions">
+                      <button
+                        className="btn-pending btn-delete btn-icon"
+                        onClick={() => handleProcessDeleteRequests([req.id])}
+                        disabled={processing.delete_requests}
+                        title="Bild löschen"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                      <button
+                        className="btn-pending btn-dismiss btn-icon"
+                        onClick={() => handleDismissDeleteRequests([req.id])}
+                        disabled={processing.delete_requests}
+                        title="Anfrage verwerfen"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {processing.delete_requests && (
+                <div className="delete-requests-processing">
+                  <Loader size={16} className="spinning" />
+                  <span>{processing.delete_requests === 'processing' ? 'Wird gelöscht...' : 'Wird verworfen...'}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Upload Projects */}
+          {projects.length === 0 && deleteRequests.length === 0 ? (
             <div className="pending-empty">
               <Inbox size={48} strokeWidth={1} />
               <p>Keine neuen Uploads in der Inbox</p>

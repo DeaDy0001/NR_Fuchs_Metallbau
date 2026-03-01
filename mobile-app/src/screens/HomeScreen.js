@@ -7,8 +7,8 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { getRecentPhotos, getCachedProjects, addToUploadQueue, updateRecentPhotoProject, deleteRecentPhotos } from '../services/database';
-import { createProject } from '../services/api';
+import { getRecentPhotos, getCachedProjects, addToUploadQueue, updateRecentPhotoProject, deleteRecentPhotos, getQueuedFileNames } from '../services/database';
+import { createProject, requestDeleteFromSoftware } from '../services/api';
 import { syncMetadata } from '../services/syncService';
 import * as FileSystem from 'expo-file-system';
 
@@ -140,52 +140,88 @@ export default function HomeScreen({ navigation }) {
     setSelectedIds(new Set(recentPhotos.map(p => p.id)));
   };
 
+  // Helper: delete photos locally (files + DB)
+  const deletePhotosLocally = async (selectedPhotos) => {
+    for (const photo of selectedPhotos) {
+      if (photo.file_uri) {
+        try { await FileSystem.deleteAsync(photo.file_uri, { idempotent: true }); } catch {}
+      }
+      if (photo.thumbnail_uri && photo.thumbnail_uri !== photo.file_uri) {
+        try { await FileSystem.deleteAsync(photo.thumbnail_uri, { idempotent: true }); } catch {}
+      }
+    }
+    await deleteRecentPhotos(selectedPhotos.map(p => p.id));
+    await loadData();
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  };
+
   // Delete selected photos
-  const handleDeleteSelected = () => {
+  const handleDeleteSelected = async () => {
     const count = selectedIds.size;
     if (count === 0) return;
 
-    Alert.alert(
-      'Fotos löschen',
-      `${count} ${count === 1 ? 'Foto' : 'Fotos'} vom Handy löschen?`,
-      [
+    const selectedPhotos = recentPhotos.filter(p => selectedIds.has(p.id));
+
+    // Check which photos are still in the upload queue (not yet uploaded)
+    const fileNames = selectedPhotos.map(p => p.file_name);
+    const queuedNames = await getQueuedFileNames(fileNames);
+
+    // Photos that are still queued → just delete locally, no question needed
+    const queuedPhotos = selectedPhotos.filter(p => queuedNames.has(p.file_name));
+    // Photos that have been uploaded → ask user if they also want software deletion
+    const uploadedPhotos = selectedPhotos.filter(p => !queuedNames.has(p.file_name));
+
+    if (uploadedPhotos.length === 0) {
+      // All photos are still in queue → simple delete
+      Alert.alert(
+        'Fotos löschen',
+        `${count} ${count === 1 ? 'Foto' : 'Fotos'} vom Handy löschen? (noch nicht hochgeladen)`,
+        [
+          { text: 'Abbrechen', style: 'cancel' },
+          {
+            text: 'Löschen',
+            style: 'destructive',
+            onPress: () => deletePhotosLocally(selectedPhotos),
+          },
+        ]
+      );
+    } else {
+      // Some/all photos have been uploaded → offer choice
+      const uploadedCount = uploadedPhotos.length;
+      const buttons = [
         { text: 'Abbrechen', style: 'cancel' },
         {
-          text: 'Löschen',
+          text: 'Nur vom Handy',
+          onPress: () => deletePhotosLocally(selectedPhotos),
+        },
+        {
+          text: 'Auch aus Software',
           style: 'destructive',
           onPress: async () => {
             try {
-              const selectedPhotos = recentPhotos.filter(p => selectedIds.has(p.id));
-
-              // Delete local files
-              for (const photo of selectedPhotos) {
-                if (photo.file_uri) {
-                  try {
-                    await FileSystem.deleteAsync(photo.file_uri, { idempotent: true });
-                  } catch {}
-                }
-                if (photo.thumbnail_uri && photo.thumbnail_uri !== photo.file_uri) {
-                  try {
-                    await FileSystem.deleteAsync(photo.thumbnail_uri, { idempotent: true });
-                  } catch {}
-                }
-              }
-
-              // Delete from database
-              await deleteRecentPhotos([...selectedIds]);
-
-              // Refresh and exit selection
-              await loadData();
-              setSelectionMode(false);
-              setSelectedIds(new Set());
+              // Send delete requests to inbox for desktop software
+              await requestDeleteFromSoftware(uploadedPhotos);
+              // Delete locally
+              await deletePhotosLocally(selectedPhotos);
+              Alert.alert(
+                'Löschanfrage gesendet',
+                `${uploadedCount} ${uploadedCount === 1 ? 'Foto' : 'Fotos'} zum Löschen in der Desktop-Software vorgemerkt.`
+              );
             } catch (error) {
-              console.error('Failed to delete photos:', error);
-              Alert.alert('Fehler', 'Fotos konnten nicht gelöscht werden.');
+              console.error('Failed to request deletion:', error);
+              Alert.alert('Fehler', 'Löschanfrage konnte nicht gesendet werden: ' + error.message);
             }
           },
         },
-      ]
-    );
+      ];
+
+      Alert.alert(
+        'Fotos löschen',
+        `${uploadedCount} ${uploadedCount === 1 ? 'Foto wurde' : 'Fotos wurden'} bereits hochgeladen. Auch aus der Desktop-Software löschen?`,
+        buttons
+      );
+    }
   };
 
   // Project assignment
