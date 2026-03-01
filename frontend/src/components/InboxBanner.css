@@ -113,6 +113,12 @@
   overflow: hidden;
 }
 
+/* User inbox card - purple accent */
+.pending-project-card.user-inbox-card {
+  border-color: rgba(168, 85, 247, 0.4);
+  background: linear-gradient(135deg, #2d2d2d 0%, rgba(168, 85, 247, 0.08) 100%);
+}
+
 .pending-project-header {
   display: flex;
   justify-content: space-between;
@@ -126,6 +132,15 @@
   background: #333333;
 }
 
+.pending-project-header.user-inbox-header {
+  cursor: default;
+  border-bottom: 1px solid rgba(168, 85, 247, 0.2);
+}
+
+.pending-project-header.user-inbox-header:hover {
+  background: transparent;
+}
+
 .pending-project-info {
   display: flex;
   align-items: center;
@@ -133,10 +148,18 @@
   color: #a0a0a0;
 }
 
+.user-inbox-header .pending-project-info {
+  color: #a78bfa;
+}
+
 .pending-project-name {
   font-size: 15px;
   font-weight: 600;
   color: #e5e5e5;
+}
+
+.user-inbox-header .pending-project-name {
+  color: #c4b5fd;
 }
 
 .pending-project-meta {
@@ -146,6 +169,11 @@
   font-size: 12px;
   color: #707070;
   margin-top: 2px;
+}
+
+.pending-selection-count {
+  color: #a78bfa;
+  font-weight: 500;
 }
 
 .pending-project-actions {
@@ -205,6 +233,16 @@
   border-top: 1px solid #3a3a3a;
   padding: 12px 16px;
   background: rgba(59, 130, 246, 0.05);
+}
+
+.pending-merge-hint {
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+  border-radius: 6px;
+  text-align: center;
 }
 
 .pending-merge-search {
@@ -306,6 +344,41 @@
   padding: 12px 16px;
 }
 
+.pending-images-section.user-inbox-images {
+  border-top-color: rgba(168, 85, 247, 0.2);
+}
+
+.pending-images-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.btn-select-all {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #a78bfa;
+  background: rgba(168, 85, 247, 0.1);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-select-all:hover {
+  background: rgba(168, 85, 247, 0.2);
+}
+
+.pending-images-count {
+  font-size: 12px;
+  color: #707070;
+}
+
 .pending-images-loading {
   display: flex;
   align-items: center;
@@ -329,12 +402,78 @@
   background: #3a3a3a;
   position: relative;
   cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+  border: 2px solid transparent;
 }
 
 .pending-image-card:hover {
   transform: scale(1.05);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* Selectable image cards (user inbox) */
+.pending-image-card.selectable {
+  cursor: pointer;
+  border-color: rgba(100, 100, 100, 0.3);
+}
+
+.pending-image-card.selectable:hover {
+  transform: scale(1.03);
+  border-color: rgba(168, 85, 247, 0.4);
+}
+
+.pending-image-card.selectable.selected {
+  border-color: #a78bfa;
+  box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.3), 0 4px 12px rgba(168, 85, 247, 0.15);
+}
+
+.pending-image-card.selectable:not(.selected) img {
+  opacity: 0.5;
+}
+
+.pending-image-checkbox {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  color: #707070;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 4px;
+  padding: 2px;
+  line-height: 0;
+  z-index: 1;
+}
+
+.pending-image-checkbox.checked {
+  color: #a78bfa;
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.pending-image-zoom {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  border: none;
+  border-radius: 4px;
+  color: #a0a0a0;
+  cursor: pointer;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.pending-image-card:hover .pending-image-zoom {
+  opacity: 1;
+}
+
+.pending-image-zoom:hover {
+  color: white;
+  background: rgba(0, 0, 0, 0.8);
 }
 
 .pending-image-card img {

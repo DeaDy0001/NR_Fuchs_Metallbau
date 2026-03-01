@@ -223,7 +223,7 @@ export const uploadImage = async (fileUri, fileName, mimeType, projectId = null,
     const projectFolder = await findOrCreateFolder(inboxFolderId, projectName);
     targetFolderId = projectFolder.id;
   } else {
-    // No project - upload to inbox/{userName}/ subfolder
+    // No project - upload to inbox/{deviceId}/ subfolder
     let inboxFolderId;
     if (!connection.inbox_folder_id) {
       const inboxFolder = await findOrCreateFolder(connection.meta_folder_id, 'inbox');
@@ -232,11 +232,11 @@ export const uploadImage = async (fileUri, fileName, mimeType, projectId = null,
       inboxFolderId = connection.inbox_folder_id;
     }
 
-    // Create user-specific subfolder so uploads are grouped by user
-    const userName = await getSetting('userName', '');
-    if (userName) {
-      const userFolder = await findOrCreateFolder(inboxFolderId, userName);
-      targetFolderId = userFolder.id;
+    // Use fixed device ID for subfolder (stays constant, unlike userName which can change)
+    const deviceId = await getSetting('heartbeat_device_id', '');
+    if (deviceId) {
+      const deviceFolder = await findOrCreateFolder(inboxFolderId, deviceId);
+      targetFolderId = deviceFolder.id;
     } else {
       targetFolderId = inboxFolderId;
     }
@@ -249,16 +249,6 @@ export const uploadImage = async (fileUri, fileName, mimeType, projectId = null,
     fileUri,
     mimeType || 'image/jpeg'
   );
-
-  // Also save as recent photo
-  try {
-    const { addRecentPhoto } = require('./database');
-    await addRecentPhoto(
-      fileUri, fileName, mimeType,
-      projectId, projectName,
-      gpsData ? JSON.stringify(gpsData) : null
-    );
-  } catch {}
 
   return { success: true, fileId: uploadedFile.id };
 };

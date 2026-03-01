@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Inbox, Check, GitMerge, Trash2, X, Search, Image, FolderOpen, Loader, ChevronDown, ChevronUp, Tag, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Inbox, Check, GitMerge, Trash2, X, Search, Image, FolderOpen, Loader, ChevronDown, ChevronUp, Tag, ChevronLeft, ChevronRight, User, CheckSquare, Square } from 'lucide-react';
 import './InboxBanner.css';
 
 function InboxBanner() {
@@ -36,7 +36,7 @@ function InboxBanner() {
         <div className="inbox-banner-content">
           <Inbox size={18} />
           <span>
-            Neue Projekte von der Handy-App ({inboxItems.length})
+            Neue Uploads von der Handy-App ({inboxItems.length})
           </span>
           {scanning && <Loader size={14} className="spinning" />}
         </div>
@@ -227,6 +227,8 @@ function InboxModal({ projects, onClose, onRefresh }) {
   const [processing, setProcessing] = useState({});
   const [notification, setNotification] = useState(null);
   const [lightbox, setLightbox] = useState(null);
+  // Track selected images per folder (for user inbox selective merge)
+  const [selectedImages, setSelectedImages] = useState({});
   const hasChangesRef = useRef(false);
 
   const handleClose = useCallback(() => {
@@ -240,6 +242,13 @@ function InboxModal({ projects, onClose, onRefresh }) {
   useEffect(() => {
     loadExistingProjects();
   }, []);
+
+  // Auto-expand and load images for user inbox items
+  useEffect(() => {
+    projects.filter(p => p.is_user_inbox && p.drive_folder_id).forEach(p => {
+      loadImages(p.drive_folder_id);
+    });
+  }, [projects]);
 
   const loadExistingProjects = async () => {
     try {
@@ -259,6 +268,11 @@ function InboxModal({ projects, onClose, onRefresh }) {
       if (response.ok) {
         const data = await response.json();
         setImages(prev => ({ ...prev, [folderId]: data }));
+        // Initialize all images as selected for user inbox items
+        setSelectedImages(prev => ({
+          ...prev,
+          [folderId]: new Set(data.map(img => img.id)),
+        }));
       }
     } catch {} finally {
       setLoadingImages(prev => ({ ...prev, [folderId]: false }));
@@ -273,6 +287,37 @@ function InboxModal({ projects, onClose, onRefresh }) {
       setExpandedProject(folderId);
       if (folderId) loadImages(folderId);
     }
+  };
+
+  const toggleImageSelection = (folderId, imageId) => {
+    setSelectedImages(prev => {
+      const current = new Set(prev[folderId] || []);
+      if (current.has(imageId)) {
+        current.delete(imageId);
+      } else {
+        current.add(imageId);
+      }
+      return { ...prev, [folderId]: current };
+    });
+  };
+
+  const selectAllImages = (folderId) => {
+    const folderImages = images[folderId] || [];
+    setSelectedImages(prev => ({
+      ...prev,
+      [folderId]: new Set(folderImages.map(img => img.id)),
+    }));
+  };
+
+  const deselectAllImages = (folderId) => {
+    setSelectedImages(prev => ({
+      ...prev,
+      [folderId]: new Set(),
+    }));
+  };
+
+  const getSelectedCount = (folderId) => {
+    return selectedImages[folderId]?.size || 0;
   };
 
   const handleConfirm = async (item) => {
@@ -332,13 +377,61 @@ function InboxModal({ projects, onClose, onRefresh }) {
     }
   };
 
+  /** Selective merge: move only selected images from user inbox to target project */
+  const handleSelectiveMerge = async (inboxItem, targetProject) => {
+    const selected = selectedImages[inboxItem.drive_folder_id];
+    if (!selected || selected.size === 0) {
+      showNotification('Bitte mindestens ein Bild auswählen', 'error');
+      return;
+    }
+
+    setProcessing(prev => ({ ...prev, [inboxItem.id]: 'merging' }));
+    try {
+      const response = await fetch('/api/mobile/inbox/merge-selected', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceFolderId: inboxItem.drive_folder_id,
+          targetFolderId: targetProject.folder_id || targetProject.id,
+          fileIds: [...selected],
+        }),
+      });
+      if (response.ok) {
+        hasChangesRef.current = true;
+        const data = await response.json();
+        showNotification(`${data.movedCount} Bilder mit "${targetProject.folder_name}" zusammengeführt`);
+        setMergeTarget(null);
+        // Clear image cache so it reloads remaining images
+        setImages(prev => {
+          const next = { ...prev };
+          delete next[inboxItem.drive_folder_id];
+          return next;
+        });
+        setSelectedImages(prev => {
+          const next = { ...prev };
+          delete next[inboxItem.drive_folder_id];
+          return next;
+        });
+        await onRefresh();
+      } else {
+        const data = await response.json();
+        showNotification(data.error || 'Fehler', 'error');
+      }
+    } catch (e) {
+      showNotification('Fehler: ' + e.message, 'error');
+    } finally {
+      setProcessing(prev => ({ ...prev, [inboxItem.id]: null }));
+    }
+  };
+
   const handleDelete = async (item) => {
-    if (!window.confirm(`"${item.project_name}" wirklich ablehnen und aus der Inbox löschen?`)) return;
+    const label = item.is_user_inbox ? 'Bilder' : `"${item.project_name}"`;
+    if (!window.confirm(`${label} wirklich ablehnen und aus der Inbox löschen?`)) return;
     setProcessing(prev => ({ ...prev, [item.id]: 'deleting' }));
     try {
       const response = await fetch(`/api/mobile/inbox/${item.drive_folder_id}`, { method: 'DELETE' });
       if (response.ok) {
-        showNotification(`"${item.project_name}" abgelehnt`);
+        showNotification(`${label} abgelehnt`);
         await onRefresh();
       } else {
         const data = await response.json();
@@ -373,11 +466,225 @@ function InboxModal({ projects, onClose, onRefresh }) {
     return nameMatch || tagMatch;
   });
 
+  const renderProjectCard = (project) => {
+    const isUserInbox = project.is_user_inbox;
+    const folderId = project.drive_folder_id;
+    const folderImages = images[folderId] || [];
+    const selected = selectedImages[folderId] || new Set();
+    const selectedCount = selected.size;
+    const totalCount = folderImages.length;
+    const isExpanded = expandedProject === folderId || isUserInbox;
+
+    return (
+      <div
+        key={project.id}
+        className={`pending-project-card ${isUserInbox ? 'user-inbox-card' : ''}`}
+      >
+        {/* Header */}
+        <div
+          className={`pending-project-header ${isUserInbox ? 'user-inbox-header' : ''}`}
+          onClick={() => !isUserInbox && toggleExpand(project)}
+        >
+          <div className="pending-project-info">
+            {isUserInbox ? <User size={20} /> : <FolderOpen size={20} />}
+            <div>
+              <div className="pending-project-name">{project.project_name}</div>
+              <div className="pending-project-meta">
+                <Image size={12} />
+                {project.image_count || 0} {(project.image_count || 0) === 1 ? 'Bild' : 'Bilder'}
+                {isUserInbox && selectedCount < totalCount && totalCount > 0 && (
+                  <span className="pending-selection-count">
+                    · {selectedCount} ausgewählt
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="pending-project-actions">
+            {processing[project.id] ? (
+              <Loader size={18} className="spinning" />
+            ) : (
+              <>
+                {!isUserInbox && project.drive_folder_id && (
+                  <button
+                    className="btn-pending btn-accept"
+                    onClick={(e) => { e.stopPropagation(); handleConfirm(project); }}
+                    title="Als neues Projekt hinzufügen"
+                  >
+                    <Check size={16} />
+                    Hinzufügen
+                  </button>
+                )}
+                <button
+                  className="btn-pending btn-merge"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMergeTarget(mergeTarget?.id === project.id ? null : project);
+                    setMergeSearch('');
+                  }}
+                  title={isUserInbox ? 'Ausgewählte Bilder einem Projekt zuordnen' : 'Mit bestehendem Projekt zusammenführen'}
+                >
+                  <GitMerge size={16} />
+                  Zusammenführen{isUserInbox && selectedCount > 0 ? ` (${selectedCount})` : ''}
+                </button>
+                {isUserInbox && project.drive_folder_id && (
+                  <button
+                    className="btn-pending btn-accept"
+                    onClick={(e) => { e.stopPropagation(); handleConfirm(project); }}
+                    title="Alle Bilder als neues Projekt hinzufügen"
+                  >
+                    <Check size={16} />
+                    Hinzufügen
+                  </button>
+                )}
+                <button
+                  className="btn-pending btn-delete"
+                  onClick={(e) => { e.stopPropagation(); handleDelete(project); }}
+                  title="Ablehnen"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </>
+            )}
+            {!isUserInbox && (
+              isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />
+            )}
+          </div>
+        </div>
+
+        {/* Merge picker */}
+        {mergeTarget?.id === project.id && (
+          <div className="pending-merge-section">
+            {isUserInbox && selectedCount === 0 && (
+              <div className="pending-merge-hint">
+                Bitte mindestens ein Bild unten auswählen
+              </div>
+            )}
+            <div className="pending-merge-search">
+              <Search size={16} />
+              <input
+                type="text"
+                placeholder="Projekt suchen (Name oder Tag)..."
+                value={mergeSearch}
+                onChange={e => setMergeSearch(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="pending-merge-list">
+              {filteredProjects.map(ep => (
+                <div
+                  key={ep.id}
+                  className="pending-merge-item"
+                  onClick={() => isUserInbox
+                    ? handleSelectiveMerge(project, ep)
+                    : handleMerge(project, ep)
+                  }
+                >
+                  <div
+                    className="pending-merge-color"
+                    style={{ backgroundColor: ep.color || '#3b82f6' }}
+                  />
+                  <div className="pending-merge-item-info">
+                    <span className="pending-merge-item-name">{ep.folder_name}</span>
+                    {Array.isArray(ep.tags) && ep.tags.length > 0 && (
+                      <div className="pending-merge-tags">
+                        {ep.tags.map((tag, i) => (
+                          <span key={i} className="pending-merge-tag">
+                            <Tag size={10} />
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <span className="pending-merge-count">{ep.image_count || 0} Bilder</span>
+                </div>
+              ))}
+              {filteredProjects.length === 0 && (
+                <div className="pending-merge-empty">Keine Projekte gefunden</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Image preview - always shown for user inbox, expandable for projects */}
+        {isExpanded && (
+          <div className={`pending-images-section ${isUserInbox ? 'user-inbox-images' : ''}`}>
+            {loadingImages[folderId] ? (
+              <div className="pending-images-loading">
+                <Loader size={20} className="spinning" />
+                <span>Bilder werden geladen...</span>
+              </div>
+            ) : folderImages.length > 0 ? (
+              <>
+                {isUserInbox && (
+                  <div className="pending-images-toolbar">
+                    <button
+                      className="btn-select-all"
+                      onClick={() => selectedCount === totalCount ? deselectAllImages(folderId) : selectAllImages(folderId)}
+                    >
+                      {selectedCount === totalCount ? <CheckSquare size={14} /> : <Square size={14} />}
+                      {selectedCount === totalCount ? 'Alle abwählen' : 'Alle auswählen'}
+                    </button>
+                    <span className="pending-images-count">
+                      {selectedCount} / {totalCount} ausgewählt
+                    </span>
+                  </div>
+                )}
+                <div className="pending-images-grid">
+                  {folderImages.map((img, idx) => {
+                    const isSelected = selected.has(img.id);
+                    return (
+                      <div
+                        key={img.id}
+                        className={`pending-image-card ${isUserInbox ? (isSelected ? 'selectable selected' : 'selectable') : ''}`}
+                        title={img.name}
+                        onClick={isUserInbox
+                          ? () => toggleImageSelection(folderId, img.id)
+                          : () => openLightbox(folderId, idx)
+                        }
+                      >
+                        {img.id ? (
+                          <img src={`/api/mobile/inbox/image-proxy/${img.id}`} alt={img.name} />
+                        ) : (
+                          <div className="pending-image-placeholder">
+                            <Image size={24} />
+                          </div>
+                        )}
+                        {isUserInbox && (
+                          <div className={`pending-image-checkbox ${isSelected ? 'checked' : ''}`}>
+                            {isSelected ? <CheckSquare size={18} /> : <Square size={18} />}
+                          </div>
+                        )}
+                        <div className="pending-image-name">{img.name}</div>
+                        {isUserInbox && (
+                          <button
+                            className="pending-image-zoom"
+                            onClick={(e) => { e.stopPropagation(); openLightbox(folderId, idx); }}
+                            title="Vergrößern"
+                          >
+                            <Search size={12} />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <div className="pending-images-empty">Keine Bilder</div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="pending-modal-overlay" onClick={handleClose}>
       <div className="pending-modal" onClick={e => e.stopPropagation()}>
         <div className="pending-modal-header">
-          <h2>Inbox - Neue Projekte von der App</h2>
+          <h2>Inbox - Neue Uploads von der App</h2>
           <button className="pending-modal-close" onClick={handleClose}>
             <X size={20} />
           </button>
@@ -393,145 +700,10 @@ function InboxModal({ projects, onClose, onRefresh }) {
           {projects.length === 0 ? (
             <div className="pending-empty">
               <Inbox size={48} strokeWidth={1} />
-              <p>Keine neuen Projekte in der Inbox</p>
+              <p>Keine neuen Uploads in der Inbox</p>
             </div>
           ) : (
-            projects.map(project => (
-              <div key={project.id} className="pending-project-card">
-                {/* Header */}
-                <div className="pending-project-header" onClick={() => toggleExpand(project)}>
-                  <div className="pending-project-info">
-                    <FolderOpen size={20} />
-                    <div>
-                      <div className="pending-project-name">{project.project_name}</div>
-                      <div className="pending-project-meta">
-                        <Image size={12} />
-                        {project.image_count || 0} {(project.image_count || 0) === 1 ? 'Bild' : 'Bilder'}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="pending-project-actions">
-                    {processing[project.id] ? (
-                      <Loader size={18} className="spinning" />
-                    ) : (
-                      <>
-                        {project.drive_folder_id && (
-                          <button
-                            className="btn-pending btn-accept"
-                            onClick={(e) => { e.stopPropagation(); handleConfirm(project); }}
-                            title="Als neues Projekt hinzufügen"
-                          >
-                            <Check size={16} />
-                            Hinzufügen
-                          </button>
-                        )}
-                        <button
-                          className="btn-pending btn-merge"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setMergeTarget(mergeTarget?.id === project.id ? null : project);
-                            setMergeSearch('');
-                          }}
-                          title="Mit bestehendem Projekt zusammenführen"
-                        >
-                          <GitMerge size={16} />
-                          Zusammenführen
-                        </button>
-                        <button
-                          className="btn-pending btn-delete"
-                          onClick={(e) => { e.stopPropagation(); handleDelete(project); }}
-                          title="Ablehnen"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </>
-                    )}
-                    {expandedProject === project.drive_folder_id ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                  </div>
-                </div>
-
-                {/* Merge picker */}
-                {mergeTarget?.id === project.id && (
-                  <div className="pending-merge-section">
-                    <div className="pending-merge-search">
-                      <Search size={16} />
-                      <input
-                        type="text"
-                        placeholder="Projekt suchen (Name oder Tag)..."
-                        value={mergeSearch}
-                        onChange={e => setMergeSearch(e.target.value)}
-                        autoFocus
-                      />
-                    </div>
-                    <div className="pending-merge-list">
-                      {filteredProjects.map(ep => (
-                        <div
-                          key={ep.id}
-                          className="pending-merge-item"
-                          onClick={() => handleMerge(project, ep)}
-                        >
-                          <div
-                            className="pending-merge-color"
-                            style={{ backgroundColor: ep.color || '#3b82f6' }}
-                          />
-                          <div className="pending-merge-item-info">
-                            <span className="pending-merge-item-name">{ep.folder_name}</span>
-                            {Array.isArray(ep.tags) && ep.tags.length > 0 && (
-                              <div className="pending-merge-tags">
-                                {ep.tags.map((tag, i) => (
-                                  <span key={i} className="pending-merge-tag">
-                                    <Tag size={10} />
-                                    {tag}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          <span className="pending-merge-count">{ep.image_count || 0} Bilder</span>
-                        </div>
-                      ))}
-                      {filteredProjects.length === 0 && (
-                        <div className="pending-merge-empty">Keine Projekte gefunden</div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Image preview */}
-                {expandedProject === project.drive_folder_id && (
-                  <div className="pending-images-section">
-                    {loadingImages[project.drive_folder_id] ? (
-                      <div className="pending-images-loading">
-                        <Loader size={20} className="spinning" />
-                        <span>Bilder werden geladen...</span>
-                      </div>
-                    ) : images[project.drive_folder_id]?.length > 0 ? (
-                      <div className="pending-images-grid">
-                        {images[project.drive_folder_id].map((img, idx) => (
-                          <div
-                            key={img.id}
-                            className="pending-image-card"
-                            title={img.name}
-                            onClick={() => openLightbox(project.drive_folder_id, idx)}
-                          >
-                            {img.id ? (
-                              <img src={`/api/mobile/inbox/image-proxy/${img.id}`} alt={img.name} />
-                            ) : (
-                              <div className="pending-image-placeholder">
-                                <Image size={24} />
-                              </div>
-                            )}
-                            <div className="pending-image-name">{img.name}</div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="pending-images-empty">Keine Bilder in diesem Projekt</div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))
+            projects.map(project => renderProjectCard(project))
           )}
         </div>
       </div>

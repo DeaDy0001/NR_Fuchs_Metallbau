@@ -784,6 +784,25 @@ const getImage = async (req, res) => {
 };
 
 /**
+ * Check if a folder name looks like a UUID (device ID)
+ */
+const isDeviceIdFolder = (name) => {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(name);
+};
+
+/**
+ * Resolve a device ID to a user name from mobile_devices table
+ */
+const resolveDeviceUser = (deviceId) => {
+  try {
+    const device = db.prepare('SELECT user_name FROM mobile_devices WHERE device_id = ?').get(deviceId);
+    return device?.user_name || null;
+  } catch {
+    return null;
+  }
+};
+
+/**
  * Get mobile inbox (uploads pending review in desktop)
  * GET /api/mobile/inbox
  */
@@ -810,19 +829,25 @@ const getInbox = async (req, res) => {
                 const files = await listFilesInFolder(f.id);
                 image_count = files.length;
               } catch {}
+
+              // Detect if folder is a device inbox (UUID name) vs a project
+              const isUserInbox = isDeviceIdFolder(f.name);
+              const deviceUser = isUserInbox ? (resolveDeviceUser(f.name) || 'Unbekannt') : null;
+
               return {
                 id: `drive_inbox_${f.id}`,
                 drive_folder_id: f.id,
                 inbox_folder_id: inboxFolder.id,
                 file_name: `project_${f.name}`,
                 original_name: f.name,
-                project_name: f.name,
+                project_name: isUserInbox ? `Bilder ohne Projekt von ${deviceUser}` : f.name,
                 image_count,
-                status: 'new_project',
+                status: isUserInbox ? 'user_inbox' : 'new_project',
                 source: 'drive_inbox',
-                uploaded_at: f.modifiedTime || new Date().toISOString(),
-                device_user: 'Handy-App',
+                is_user_inbox: isUserInbox,
+                device_user: isUserInbox ? deviceUser : 'Handy-App',
                 device_name: 'Google Drive',
+                uploaded_at: f.modifiedTime || new Date().toISOString(),
               };
             }));
           }
@@ -964,6 +989,51 @@ const mergeInboxProject = async (req, res) => {
     });
   } catch (error) {
     console.error('Error merging inbox project:', error);
+    res.status(500).json({ error: 'Zusammenführung fehlgeschlagen: ' + error.message });
+  }
+};
+
+/**
+ * Selective merge - move only specific files from inbox folder to target project
+ * POST /api/mobile/inbox/merge-selected
+ * Body: { sourceFolderId, targetFolderId, fileIds: [fileId1, fileId2, ...] }
+ */
+const mergeSelectedInboxImages = async (req, res) => {
+  try {
+    const { sourceFolderId, targetFolderId, fileIds } = req.body;
+
+    if (!sourceFolderId || !targetFolderId || !Array.isArray(fileIds) || fileIds.length === 0) {
+      return res.status(400).json({ error: 'sourceFolderId, targetFolderId und fileIds sind erforderlich' });
+    }
+
+    // Move only the selected files
+    let movedCount = 0;
+    for (const fileId of fileIds) {
+      try {
+        await moveFileOnDrive(fileId, targetFolderId, sourceFolderId);
+        movedCount++;
+      } catch (e) {
+        console.error(`Error moving file ${fileId}:`, e.message);
+      }
+    }
+
+    // Check if source folder is now empty - if so, delete it
+    try {
+      const remaining = await listFilesInFolder(sourceFolderId);
+      if (remaining.length === 0) {
+        await deleteFileFromDrive(sourceFolderId);
+      }
+    } catch (e) {
+      // Non-critical
+    }
+
+    res.json({
+      success: true,
+      movedCount,
+      message: `${movedCount} Bilder wurden zusammengeführt`,
+    });
+  } catch (error) {
+    console.error('Error merging selected inbox images:', error);
     res.status(500).json({ error: 'Zusammenführung fehlgeschlagen: ' + error.message });
   }
 };
@@ -1822,6 +1892,7 @@ module.exports = {
   proxyInboxImage,
   confirmInboxProject,
   mergeInboxProject,
+  mergeSelectedInboxImages,
   deleteInboxProject,
   mobileGoogleAuth,
   mobileGoogleCallback,

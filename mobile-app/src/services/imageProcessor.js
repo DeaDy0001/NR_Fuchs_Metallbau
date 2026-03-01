@@ -37,13 +37,22 @@ export const processImageForUpload = async (fileUri, fileName) => {
   // Camera photos are named "photo_..." - gallery picks already exist in the gallery
   if (keepOriginal && fileName && fileName.startsWith('photo_')) {
     try {
-      const { status } = await MediaLibrary.requestPermissionsAsync();
+      // Use getPermissionsAsync (not request) since we're in background queue.
+      // Permission is pre-requested in CameraScreen when the user opens the camera.
+      let { status } = await MediaLibrary.getPermissionsAsync();
+      if (status !== 'granted') {
+        // Fallback: try requesting (works on some devices even in background)
+        const result = await MediaLibrary.requestPermissionsAsync();
+        status = result.status;
+      }
       if (status === 'granted') {
         await MediaLibrary.saveToLibraryAsync(fileUri);
-        console.log(`📸 Original saved to gallery: ${fileName}`);
+        console.log(`[Fuchs] Original saved to gallery: ${fileName}`);
+      } else {
+        console.warn('[Fuchs] MediaLibrary permission not granted, cannot save original to gallery');
       }
     } catch (e) {
-      console.warn('Could not save original to gallery:', e.message);
+      console.warn('[Fuchs] Could not save original to gallery:', e.message);
     }
   }
 

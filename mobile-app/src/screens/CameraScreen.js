@@ -6,6 +6,7 @@ import {
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
+import * as MediaLibrary from 'expo-media-library';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
@@ -164,6 +165,12 @@ export default function CameraScreen({ navigation, route }) {
     if (route.params?.pickFromGallery) {
       pickFromGallery();
     }
+  }, []);
+
+  // Pre-request MediaLibrary permission for "Original behalten" feature
+  // Must be done in foreground context, not in background queue
+  useEffect(() => {
+    MediaLibrary.requestPermissionsAsync().catch(() => {});
   }, []);
 
   // Check GPS permission on mount
