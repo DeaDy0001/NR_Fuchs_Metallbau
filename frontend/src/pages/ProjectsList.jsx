@@ -1081,7 +1081,7 @@ function ProjectsList() {
                             if (!sidebarProjectSearch) return true;
                             if (p.folder_name.toLowerCase().includes(searchLower)) return true;
                             try {
-                              const tags = JSON.parse(p.tags || '[]');
+                              const tags = Array.isArray(p.tags) ? p.tags : JSON.parse(p.tags || '[]');
                               return tags.some(t => {
                                 const tagName = typeof t === 'string' ? t : t.name || '';
                                 return tagName.toLowerCase().includes(searchLower);

@@ -7,7 +7,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { getRecentPhotos, getCachedProjects, addToUploadQueue, updateRecentPhotoProject } from '../services/database';
+import { getRecentPhotos, getCachedProjects, addToUploadQueue, updateRecentPhotoProject, cacheProject } from '../services/database';
 import { createProject } from '../services/api';
 import { syncMetadata } from '../services/syncService';
 
@@ -114,9 +114,16 @@ export default function HomeScreen({ navigation }) {
         return next;
       });
     } else {
-      // Normal navigation
+      // Normal navigation with full images array for swipe
+      const photoIndex = recentPhotos.findIndex(p => p.id === photo.id);
+      const imagesList = recentPhotos.map(p => ({
+        id: p.id,
+        name: p.file_name,
+        localUri: p.thumbnail_uri || p.file_uri,
+      }));
       navigation.navigate('ImageView', {
-        localUri: photo.thumbnail_uri || photo.file_uri,
+        images: imagesList,
+        initialIndex: photoIndex >= 0 ? photoIndex : 0,
         imageName: photo.file_name,
         projectName: photo.project_name,
       });
@@ -202,12 +209,29 @@ export default function HomeScreen({ navigation }) {
     try {
       const result = await createProject(projectSearch.trim());
       if (result.success) {
+        // Use Bilder subfolder as upload target if available
+        const uploadFolderId = result.bilder_folder_id || result.folder_id;
         const newProject = {
+          id: result.id,
+          folder_name: result.folder_name,
+          folder_id: uploadFolderId,
+          color: '#3b82f6',
+        };
+
+        // Cache project locally so it appears in the Projekte tab immediately
+        await cacheProject({
           id: result.id,
           folder_name: result.folder_name,
           folder_id: result.folder_id,
           color: '#3b82f6',
-        };
+          notes: '',
+          tags: '[]',
+          image_count: 0,
+          is_own: true,
+          is_starred: false,
+          updated_at: new Date().toISOString(),
+        });
+
         await handleAssignToProject(newProject);
       }
     } catch (error) {

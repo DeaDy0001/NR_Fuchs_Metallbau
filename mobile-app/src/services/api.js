@@ -170,17 +170,18 @@ const getInboxFolderId = async () => {
 };
 
 /**
- * Create a new project (= create folder on Drive under inbox/)
- * Projects from mobile go into the inbox first, so the desktop software
- * can review and move them to Projekte/ (confirm/merge).
+ * Create a new project (= create folder on Drive under Projekte/)
+ * Creates the project folder directly under Projekte/ with a Bilder subfolder.
  * Returns the new project object with folder info
  */
 export const createProject = async (name) => {
-  const inboxFolderId = await getInboxFolderId();
+  const projekteFolderId = await getProjekteFolderId();
 
-  // Check if folder already exists in inbox
-  const existing = await findFolder(inboxFolderId, name);
+  // Check if folder already exists in Projekte/
+  const existing = await findFolder(projekteFolderId, name);
   if (existing) {
+    // Ensure Bilder subfolder exists
+    await findOrCreateFolder(existing.id, 'Bilder');
     return {
       success: true,
       id: existing.id,
@@ -189,13 +190,18 @@ export const createProject = async (name) => {
     };
   }
 
-  const folder = await findOrCreateFolder(inboxFolderId, name);
+  // Create project folder under Projekte/
+  const folder = await findOrCreateFolder(projekteFolderId, name);
+
+  // Create Bilder subfolder
+  const bilderFolder = await findOrCreateFolder(folder.id, 'Bilder');
 
   return {
     success: true,
     id: folder.id,
     folder_name: name,
     folder_id: folder.id,
+    bilder_folder_id: bilderFolder.id,
   };
 };
 

@@ -12,6 +12,7 @@ import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
 import { addToUploadQueue, getCachedProjects } from '../services/database';
 import { createProject } from '../services/api';
+import { cacheProject } from '../services/database';
 import { processUploadQueue } from '../services/uploadQueue';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -75,10 +76,25 @@ export default function CameraScreen({ navigation, route }) {
     setCreatingProject(true);
     try {
       const result = await createProject(name);
+      // Use Bilder subfolder as upload target
+      const uploadFolderId = result.bilder_folder_id || result.folder_id;
       selectProject({
         id: result.id,
         folder_name: result.folder_name,
+        folder_id: uploadFolderId,
+      });
+      // Cache project so it appears in Projekte tab
+      await cacheProject({
+        id: result.id,
+        folder_name: result.folder_name,
         folder_id: result.folder_id,
+        color: '#3b82f6',
+        notes: '',
+        tags: '[]',
+        image_count: 0,
+        is_own: true,
+        is_starred: false,
+        updated_at: new Date().toISOString(),
       });
       setNewProjectName('');
     } catch (error) {
@@ -488,6 +504,7 @@ export default function CameraScreen({ navigation, route }) {
         style={styles.camera}
         facing={facing}
         flash={flash}
+        shutterSound={false}
       />
 
       {/* Overlay on top of camera */}

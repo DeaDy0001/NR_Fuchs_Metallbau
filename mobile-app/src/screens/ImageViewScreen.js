@@ -311,6 +311,7 @@ export default function ImageViewScreen({ route, navigation }) {
   const { imageId, imageName, projectName, images, initialIndex, localUri } = route.params;
   const [currentIndex, setCurrentIndex] = useState(initialIndex || 0);
   const insets = useSafeAreaInsets();
+  const flatListRef = useRef(null);
 
   // Single image mode (no images array)
   const imageList = images || [{ id: imageId, name: imageName, localUri }];
@@ -329,6 +330,22 @@ export default function ImageViewScreen({ route, navigation }) {
     offset: SCREEN_WIDTH * index,
     index,
   }), []);
+
+  const navigatePrev = useCallback(() => {
+    if (currentIndex > 0) {
+      const newIndex = currentIndex - 1;
+      flatListRef.current?.scrollToIndex({ index: newIndex, animated: true });
+      setCurrentIndex(newIndex);
+    }
+  }, [currentIndex]);
+
+  const navigateNext = useCallback(() => {
+    if (currentIndex < imageList.length - 1) {
+      const newIndex = currentIndex + 1;
+      flatListRef.current?.scrollToIndex({ index: newIndex, animated: true });
+      setCurrentIndex(newIndex);
+    }
+  }, [currentIndex, imageList.length]);
 
   return (
     <View style={styles.container}>
@@ -351,6 +368,7 @@ export default function ImageViewScreen({ route, navigation }) {
         />
       ) : (
         <FlatList
+          ref={flatListRef}
           data={imageList}
           horizontal
           pagingEnabled
@@ -370,12 +388,31 @@ export default function ImageViewScreen({ route, navigation }) {
         />
       )}
 
-      {/* Footer - Back button */}
-      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      {/* Footer - Back button + navigation */}
+      <View style={[styles.footer, { paddingBottom: insets.bottom || 4 }]}>
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={20} color="white" />
           <Text style={styles.backBtnText}>Zurück</Text>
         </TouchableOpacity>
+
+        {imageList.length > 1 && (
+          <View style={styles.navButtons}>
+            <TouchableOpacity
+              style={[styles.navBtn, currentIndex === 0 && styles.navBtnDisabled]}
+              onPress={navigatePrev}
+              disabled={currentIndex === 0}
+            >
+              <Ionicons name="chevron-back" size={22} color="white" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.navBtn, currentIndex === imageList.length - 1 && styles.navBtnDisabled]}
+              onPress={navigateNext}
+              disabled={currentIndex === imageList.length - 1}
+            >
+              <Ionicons name="chevron-forward" size={22} color="white" />
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -403,17 +440,18 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.85)',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 10,
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.1)',
   },
   backBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
     backgroundColor: 'rgba(255,255,255,0.1)',
     borderRadius: 10,
     borderWidth: 1,
@@ -423,5 +461,20 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 15,
     fontWeight: '600',
+  },
+  navButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  navBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  navBtnDisabled: {
+    opacity: 0.3,
   },
 });
