@@ -7,7 +7,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { getRecentPhotos, getCachedProjects, addToUploadQueue, updateRecentPhotoProject, cacheProject, deleteRecentPhotos } from '../services/database';
+import { getRecentPhotos, getCachedProjects, addToUploadQueue, updateRecentPhotoProject, deleteRecentPhotos } from '../services/database';
 import { createProject } from '../services/api';
 import { syncMetadata } from '../services/syncService';
 import * as FileSystem from 'expo-file-system';
@@ -258,28 +258,12 @@ export default function HomeScreen({ navigation }) {
     try {
       const result = await createProject(projectSearch.trim());
       if (result.success) {
-        // Use Bilder subfolder as upload target if available
-        const uploadFolderId = result.bilder_folder_id || result.folder_id;
         const newProject = {
-          id: result.id,
-          folder_name: result.folder_name,
-          folder_id: uploadFolderId,
-          color: '#3b82f6',
-        };
-
-        // Cache project locally so it appears in the Projekte tab immediately
-        await cacheProject({
           id: result.id,
           folder_name: result.folder_name,
           folder_id: result.folder_id,
           color: '#3b82f6',
-          notes: '',
-          tags: '[]',
-          image_count: 0,
-          is_own: true,
-          is_starred: false,
-          updated_at: new Date().toISOString(),
-        });
+        };
 
         await handleAssignToProject(newProject);
       }

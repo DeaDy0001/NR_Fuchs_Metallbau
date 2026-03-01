@@ -6,7 +6,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
-import { getCachedProjects, getCachedTags, addPendingProject, getPendingProjects, clearConfirmedPendingProjects, cacheProject } from '../services/database';
+import { getCachedProjects, getCachedTags, addPendingProject, getPendingProjects, clearConfirmedPendingProjects } from '../services/database';
 import { syncMetadata } from '../services/syncService';
 import { createProject } from '../services/api';
 import { useApp } from '../contexts/AppContext';
@@ -96,24 +96,13 @@ export default function ProjectsScreen({ navigation }) {
       const result = await createProject(name);
       setNewProjectName('');
       setShowNewProject(false);
-      // Cache project locally so it appears immediately in the list
-      await cacheProject({
-        id: result.id,
-        folder_name: result.folder_name,
-        folder_id: result.folder_id,
-        color: '#3b82f6',
-        notes: '',
-        tags: '[]',
-        image_count: 0,
-        is_own: true,
-        is_starred: false,
-        updated_at: new Date().toISOString(),
-      });
-      // Reload data to show the new project
+      // Add as pending project (shown until confirmed by desktop software)
+      await addPendingProject(name, result.folder_id);
+      // Reload data to show the pending project
       await loadData();
       Alert.alert(
         'Projekt erstellt',
-        `"${name}" wurde unter Projekte/ auf Google Drive erstellt.`
+        `"${name}" wurde in der Inbox erstellt und wartet auf Bestätigung in der Desktop-Software.`
       );
     } catch (error) {
       Alert.alert('Fehler', error.message);
