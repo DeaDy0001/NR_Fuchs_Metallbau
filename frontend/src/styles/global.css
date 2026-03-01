@@ -164,3 +164,38 @@ a:hover {
 .shadow {
   box-shadow: 0 1px 3px 0 var(--shadow);
 }
+
+/* ========== Responsive Breakpoints ========== */
+
+/* Tablet */
+@media (max-width: 768px) {
+  :root {
+    --sidebar-width: 0px;
+    --sidebar-collapsed-width: 0px;
+    --header-height: 50px;
+  }
+}
+
+/* Large screens (1920px+) */
+@media (min-width: 1920px) {
+  :root {
+    --sidebar-width: 280px;
+    --header-height: 64px;
+  }
+
+  body {
+    font-size: 16px;
+  }
+}
+
+/* 4K screens (2560px+) */
+@media (min-width: 2560px) {
+  :root {
+    --sidebar-width: 320px;
+    --header-height: 72px;
+  }
+
+  body {
+    font-size: 18px;
+  }
+}

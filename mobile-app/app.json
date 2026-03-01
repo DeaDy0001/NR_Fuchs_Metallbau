@@ -7,21 +7,28 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "splash": {
-      "backgroundColor": "#1a1a2e"
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#1a1a2e"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
       },
       "package": "com.fuchsmetallbau.app",
       "permissions": [
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
+        "READ_MEDIA_IMAGES",
         "ACCESS_NETWORK_STATE",
-        "INTERNET"
+        "INTERNET",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
       ]
     },
+    "scheme": "com.fuchsmetallbau.app",
     "plugins": [
       [
         "expo-camera",
@@ -35,6 +42,12 @@
           "photosPermission": "Erlaubt der App, auf deine Fotos zuzugreifen.",
           "savePhotosPermission": "Erlaubt der App, Fotos zu speichern.",
           "isAccessMediaLocationEnabled": true
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Erlaubt der App, deinen Standort für die Foto-Dokumentation zu verwenden."
         }
       ]
     ]

@@ -1,177 +1,405 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, FlatList } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { registerDevice } from '../services/api';
-import { getSetting } from '../services/database';
+import { setSetting, getDriveConnections, addDriveConnection, setActiveDriveConnection, removeDriveConnection, updateDriveConnectionFolders } from '../services/database';
+import { verifyConnection, findOrCreateFolder } from '../services/driveService';
 
 export default function ConnectScreen() {
-  const { connect } = useApp();
+  const { isGoogleAuthed, onSetupComplete, onDriveConnect, logout, userEmail } = useApp();
   const [permission, requestPermission] = useCameraPermissions();
+  const [connections, setConnections] = useState([]);
+  const [showScanner, setShowScanner] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [userName, setUserName] = useState('');
-  const [showNameInput, setShowNameInput] = useState(false);
-  const [scannedData, setScannedData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // In setup mode (no Google auth yet), go straight to scanner
+  const isSetupMode = !isGoogleAuthed;
 
   useEffect(() => {
-    loadUserName();
+    if (isSetupMode) {
+      setShowScanner(true);
+      setLoading(false);
+    } else {
+      loadConnections();
+    }
   }, []);
 
-  // No need for navigation redirect here - App.js handles
-  // the screen swap automatically when isConnected changes
-
-  const loadUserName = async () => {
-    const name = await getSetting('userName', '');
-    if (name) setUserName(name);
+  const loadConnections = async () => {
+    try {
+      const conns = await getDriveConnections();
+      setConnections(conns);
+    } catch (e) {
+      console.error('[Fuchs] Failed to load connections:', e);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const parseQrData = (data) => {
-    // Format 1 (new): URL like http://192.168.x.x:3001/api/mobile/connect/{token}
-    const urlMatch = data.match(/^(https?:\/\/[^/]+)\/api\/mobile\/connect\/([a-f0-9]+)$/);
-    if (urlMatch) {
-      return { serverUrl: urlMatch[1], token: urlMatch[2] };
-    }
-
-    // Format 2 (legacy): JSON { token, serverUrl }
+    // Format 1: JSON (from desktop software)
+    // {"type":"fuchs_drive","googleClientId":"...","rootFolderId":"...","name":"..."}
     try {
       const parsed = JSON.parse(data);
-      if (parsed.token && parsed.serverUrl) {
-        return parsed;
+      if (parsed.type === 'fuchs_drive' && parsed.rootFolderId) {
+        return {
+          name: parsed.name || 'Drive-Verbindung',
+          rootFolderId: parsed.rootFolderId,
+          googleClientId: parsed.googleClientId || null,
+          serverUrl: parsed.serverUrl || null,
+        };
+      }
+    } catch {}
+
+    // Format 2: URL with folder ID as parameter
+    // fuchs://drive?name=Firma&root=FOLDER_ID
+    try {
+      if (data.startsWith('fuchs://')) {
+        const url = new URL(data);
+        const rootId = url.searchParams.get('root');
+        const name = url.searchParams.get('name') || 'Drive-Verbindung';
+        const clientId = url.searchParams.get('clientId') || null;
+        const serverUrl = url.searchParams.get('serverUrl') || null;
+        if (rootId) return { name, rootFolderId: rootId, googleClientId: clientId, serverUrl };
+      }
+    } catch {}
+
+    // Format 3: Plain Google Drive folder URL
+    // https://drive.google.com/drive/folders/FOLDER_ID
+    try {
+      const match = data.match(/drive\.google\.com\/drive\/folders\/([a-zA-Z0-9_-]+)/);
+      if (match) {
+        return { name: 'Google Drive', rootFolderId: match[1], googleClientId: null, serverUrl: null };
       }
     } catch {}
 
     return null;
   };
 
-  const handleBarCodeScanned = ({ data }) => {
+  const handleBarCodeScanned = async ({ data }) => {
     if (scanned) return;
     setScanned(true);
 
     const parsed = parseQrData(data);
-    if (parsed) {
-      setScannedData(parsed);
-      setShowNameInput(true);
-    } else {
-      Alert.alert('Ungültiger QR-Code', 'Dieser QR-Code ist nicht gültig.');
+    if (!parsed) {
+      Alert.alert('Ungültiger QR-Code', 'Dieser QR-Code enthält keine gültige Drive-Verbindung.');
       setScanned(false);
-    }
-  };
-
-  const handleConnect = async () => {
-    if (!userName.trim()) {
-      Alert.alert('Name erforderlich', 'Bitte gib deinen Namen ein.');
       return;
     }
 
     setConnecting(true);
-    try {
-      const deviceId = `device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const result = await registerDevice(
-        scannedData.serverUrl,
-        scannedData.token,
-        deviceId,
-        `Android ${Platform.Version || ''}`.trim(),
-        userName.trim()
-      );
 
-      // connect() sets isConnected=true which triggers App.js to show MainTabs
-      await connect(scannedData.serverUrl, result.authToken, userName.trim());
+    if (isSetupMode) {
+      // SETUP MODE: Store client ID + connection, don't verify yet (no auth)
+      try {
+        if (parsed.googleClientId) {
+          await setSetting('googleClientId', parsed.googleClientId);
+        } else {
+          Alert.alert(
+            'QR-Code unvollständig',
+            'Der QR-Code enthält keine Google Client ID. Bitte erstelle einen neuen QR-Code in der Desktop-Software.'
+          );
+          setScanned(false);
+          setConnecting(false);
+          return;
+        }
+
+        // Store server URL for OAuth proxy
+        if (parsed.serverUrl) {
+          await setSetting('serverUrl', parsed.serverUrl);
+        }
+
+        // Save the Drive connection (without meta/inbox folders - will be created after Google Sign-In)
+        await addDriveConnection(parsed.name, parsed.rootFolderId);
+
+        Alert.alert(
+          'Einrichtung erfolgreich!',
+          `Drive-Ordner "${parsed.name}" wurde gespeichert.\n\nMelde dich jetzt mit deinem Google-Konto an.`
+        );
+
+        // Transition to LoginScreen
+        onSetupComplete();
+      } catch (error) {
+        Alert.alert('Fehler', error.message);
+        setScanned(false);
+      } finally {
+        setConnecting(false);
+      }
+    } else {
+      // CONNECT MODE: Already authenticated, verify and activate
+      try {
+        const folderName = await verifyConnection(parsed.rootFolderId);
+        if (!folderName) {
+          Alert.alert(
+            'Zugriff verweigert',
+            `Der Drive-Ordner ist nicht für dein Google-Konto freigegeben.${userEmail ? `\n\nAngemeldet als: ${userEmail}` : ''}\n\nMögliche Lösungen:\n• Mit anderem Konto anmelden (unten "Konto wechseln")\n• Administrator bitten, den Ordner mit deinem Google-Konto zu teilen`,
+            [
+              { text: 'OK', style: 'cancel' },
+              {
+                text: 'Konto wechseln',
+                onPress: () => logout(),
+              },
+            ]
+          );
+          setScanned(false);
+          setConnecting(false);
+          return;
+        }
+
+        const connectionName = parsed.name !== 'Google Drive' ? parsed.name : folderName;
+
+        // Find or create NR_Fuchs_Meta folder
+        const metaFolder = await findOrCreateFolder(parsed.rootFolderId, 'NR_Fuchs_Meta');
+        const inboxFolder = await findOrCreateFolder(metaFolder.id, 'inbox');
+
+        // Save connection
+        await addDriveConnection(connectionName, parsed.rootFolderId, metaFolder.id, inboxFolder.id);
+
+        // Update client ID if provided
+        if (parsed.googleClientId) {
+          await setSetting('googleClientId', parsed.googleClientId);
+        }
+
+        // Update server URL if provided
+        if (parsed.serverUrl) {
+          await setSetting('serverUrl', parsed.serverUrl);
+        }
+
+        Alert.alert('Verbunden!', `"${connectionName}" wurde verbunden.`);
+        setShowScanner(false);
+
+        // Activate this connection
+        const conns = await getDriveConnections();
+        const active = conns.find(c => c.is_active === 1);
+        if (active) {
+          onDriveConnect(active);
+        }
+      } catch (error) {
+        Alert.alert('Fehler', error.message);
+        setScanned(false);
+      } finally {
+        setConnecting(false);
+      }
+    }
+  };
+
+  const handleSelectConnection = async (connection) => {
+    setConnecting(true);
+    try {
+      const accessible = await verifyConnection(connection.root_folder_id);
+      if (!accessible) {
+        Alert.alert('Nicht erreichbar', 'Der Drive-Ordner ist nicht mehr zugänglich.');
+        setConnecting(false);
+        return;
+      }
+
+      if (!connection.meta_folder_id || !connection.inbox_folder_id) {
+        const metaFolder = await findOrCreateFolder(connection.root_folder_id, 'NR_Fuchs_Meta');
+        const inboxFolder = await findOrCreateFolder(metaFolder.id, 'inbox');
+        await updateDriveConnectionFolders(connection.id, metaFolder.id, inboxFolder.id);
+        connection.meta_folder_id = metaFolder.id;
+        connection.inbox_folder_id = inboxFolder.id;
+      }
+
+      await setActiveDriveConnection(connection.id);
+      onDriveConnect(connection);
     } catch (error) {
-      Alert.alert('Verbindung fehlgeschlagen', error.message);
-      setScanned(false);
-      setShowNameInput(false);
+      Alert.alert('Fehler', error.message);
     } finally {
       setConnecting(false);
     }
   };
 
-  if (!permission) {
-    return <View style={styles.container}><ActivityIndicator color={colors.accent} /></View>;
-  }
-
-  if (!permission.granted) {
-    return (
-      <View style={styles.container}>
-        <Ionicons name="camera-outline" size={64} color={colors.textTertiary} />
-        <Text style={styles.title}>Kamera-Zugriff benötigt</Text>
-        <Text style={styles.subtitle}>Um den QR-Code zu scannen, benötigt die App Zugriff auf die Kamera.</Text>
-        <TouchableOpacity style={styles.button} onPress={requestPermission}>
-          <Text style={styles.buttonText}>Kamera erlauben</Text>
-        </TouchableOpacity>
-      </View>
+  const handleDeleteConnection = (connection) => {
+    Alert.alert(
+      'Verbindung entfernen?',
+      `"${connection.name}" wird entfernt. Du kannst sie jederzeit erneut per QR-Code hinzufügen.`,
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        {
+          text: 'Entfernen',
+          style: 'destructive',
+          onPress: async () => {
+            await removeDriveConnection(connection.id);
+            await loadConnections();
+          },
+        },
+      ]
     );
-  }
+  };
 
-  if (showNameInput) {
-    return (
-      <View style={styles.container}>
-        <Ionicons name="checkmark-circle" size={64} color={colors.success} />
-        <Text style={styles.title}>QR-Code erkannt!</Text>
-        <Text style={styles.subtitle}>Server: {scannedData?.serverUrl}</Text>
+  // QR Scanner view
+  if (showScanner) {
+    if (!permission) {
+      return <View style={styles.container}><ActivityIndicator color={colors.accent} /></View>;
+    }
 
-        <View style={styles.inputContainer}>
-          <Text style={styles.inputLabel}>Dein Name</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="z.B. Max Mustermann"
-            placeholderTextColor={colors.textTertiary}
-            value={userName}
-            onChangeText={setUserName}
-            autoFocus
-          />
-          <Text style={styles.inputHint}>
-            Wird bei deinen Fotos gespeichert, damit man weiß wer sie gemacht hat.
-          </Text>
-        </View>
-
-        <TouchableOpacity
-          style={[styles.button, connecting && styles.buttonDisabled]}
-          onPress={handleConnect}
-          disabled={connecting}
-        >
-          {connecting ? (
-            <ActivityIndicator color="white" />
-          ) : (
-            <Text style={styles.buttonText}>Verbinden</Text>
+    if (!permission.granted) {
+      return (
+        <View style={styles.container}>
+          <Ionicons name="camera-outline" size={64} color={colors.textTertiary} />
+          <Text style={styles.title}>Kamera-Zugriff benötigt</Text>
+          <Text style={styles.subtitle}>Um den QR-Code zu scannen, benötigt die App Zugriff auf die Kamera.</Text>
+          <TouchableOpacity style={styles.primaryButton} onPress={requestPermission}>
+            <Text style={styles.primaryButtonText}>Kamera erlauben</Text>
+          </TouchableOpacity>
+          {!isSetupMode && (
+            <TouchableOpacity style={styles.linkButton} onPress={() => setShowScanner(false)}>
+              <Text style={styles.linkText}>Zurück</Text>
+            </TouchableOpacity>
           )}
-        </TouchableOpacity>
+        </View>
+      );
+    }
 
-        <TouchableOpacity
-          style={styles.linkButton}
-          onPress={() => { setScanned(false); setShowNameInput(false); }}
-        >
-          <Text style={styles.linkText}>Erneut scannen</Text>
-        </TouchableOpacity>
+    return (
+      <View style={styles.container}>
+        {connecting ? (
+          <>
+            <ActivityIndicator size="large" color={colors.accent} />
+            <Text style={styles.subtitle}>
+              {isSetupMode ? 'Einrichtung läuft...' : 'Verbindung wird hergestellt...'}
+            </Text>
+          </>
+        ) : (
+          <>
+            {isSetupMode ? (
+              <>
+                <View style={styles.iconCircle}>
+                  <Ionicons name="construct" size={36} color={colors.accent} />
+                </View>
+                <Text style={styles.title}>Fuchs Metallbau</Text>
+                <Text style={styles.subtitle}>
+                  Scanne den QR-Code aus der Desktop-Software{'\n'}(Einstellungen → Handy App)
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.title}>Drive-Ordner verbinden</Text>
+                <Text style={styles.subtitle}>
+                  Scanne den QR-Code aus der Desktop-Software{'\n'}(Einstellungen → Handy App)
+                </Text>
+              </>
+            )}
+
+            <View style={styles.cameraContainer}>
+              <CameraView
+                style={styles.camera}
+                barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+              />
+              <View style={styles.overlay}>
+                <View style={styles.scanArea} />
+              </View>
+            </View>
+
+            {!isSetupMode && (
+              <TouchableOpacity style={styles.linkButton} onPress={() => { setShowScanner(false); setScanned(false); }}>
+                <Text style={styles.linkText}>Zurück zur Auswahl</Text>
+              </TouchableOpacity>
+            )}
+          </>
+        )}
       </View>
     );
   }
 
+  // Main connection selection view (only when authenticated)
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Mit Server verbinden</Text>
-      <Text style={styles.subtitle}>
-        Scanne den QR-Code aus der Desktop-Software{'\n'}(Einstellungen → Handy App)
-      </Text>
-
-      <View style={styles.cameraContainer}>
-        <CameraView
-          style={styles.camera}
-          barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-          onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
-        />
-        <View style={styles.overlay}>
-          <View style={styles.scanArea} />
+      <View style={styles.header}>
+        <View style={styles.iconCircle}>
+          <Ionicons name="cloud" size={36} color={colors.accent} />
         </View>
+        <Text style={styles.title}>Google Drive verbinden</Text>
+        <Text style={styles.subtitle}>
+          Wähle einen bestehenden Drive-Ordner oder scanne einen neuen QR-Code.
+        </Text>
       </View>
 
-      {scanned && (
-        <TouchableOpacity style={styles.linkButton} onPress={() => setScanned(false)}>
-          <Text style={styles.linkText}>Erneut scannen</Text>
-        </TouchableOpacity>
+      {loading ? (
+        <ActivityIndicator color={colors.accent} style={{ marginVertical: 24 }} />
+      ) : connections.length > 0 ? (
+        <FlatList
+          data={connections}
+          keyExtractor={c => String(c.id)}
+          style={styles.connectionList}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={[styles.connectionCard, item.is_active === 1 && styles.connectionCardActive]}
+              onPress={() => handleSelectConnection(item)}
+              onLongPress={() => handleDeleteConnection(item)}
+              disabled={connecting}
+            >
+              <View style={styles.connectionIcon}>
+                <Ionicons
+                  name={item.is_active === 1 ? 'folder' : 'folder-outline'}
+                  size={24}
+                  color={item.is_active === 1 ? colors.accent : colors.textTertiary}
+                />
+              </View>
+              <View style={styles.connectionInfo}>
+                <Text style={styles.connectionName}>{item.name}</Text>
+                <Text style={styles.connectionMeta}>
+                  Erstellt am {new Date(item.created_at).toLocaleDateString('de-DE')}
+                </Text>
+              </View>
+              {connecting ? (
+                <ActivityIndicator size="small" color={colors.accent} />
+              ) : (
+                <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
+              )}
+            </TouchableOpacity>
+          )}
+          ListFooterComponent={
+            <Text style={styles.hintText}>
+              Lange drücken um eine Verbindung zu entfernen
+            </Text>
+          }
+        />
+      ) : (
+        <View style={styles.emptyState}>
+          <Ionicons name="qr-code-outline" size={48} color={colors.textTertiary} />
+          <Text style={styles.emptyText}>
+            Noch keine Verbindung vorhanden.{'\n'}Scanne einen QR-Code, um zu starten.
+          </Text>
+        </View>
       )}
+
+      <TouchableOpacity
+        style={styles.primaryButton}
+        onPress={() => { setShowScanner(true); setScanned(false); }}
+      >
+        <Ionicons name="qr-code" size={20} color="white" />
+        <Text style={styles.primaryButtonText}>QR-Code scannen</Text>
+      </TouchableOpacity>
+
+      {userEmail ? (
+        <View style={styles.accountInfo}>
+          <Ionicons name="person-circle-outline" size={16} color={colors.textTertiary} />
+          <Text style={styles.accountEmail} numberOfLines={1}>{userEmail}</Text>
+        </View>
+      ) : null}
+
+      <TouchableOpacity
+        style={styles.switchAccountButton}
+        onPress={() => {
+          Alert.alert(
+            'Konto wechseln?',
+            'Du wirst abgemeldet und kannst dich mit einem anderen Google-Konto anmelden.',
+            [
+              { text: 'Abbrechen', style: 'cancel' },
+              { text: 'Abmelden', style: 'destructive', onPress: () => logout() },
+            ]
+          );
+        }}
+      >
+        <Ionicons name="swap-horizontal" size={16} color={colors.textTertiary} />
+        <Text style={styles.switchAccountText}>Konto wechseln</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -183,6 +411,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
+  },
+  header: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  iconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
   },
   title: {
     fontSize: 24,
@@ -196,8 +437,61 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
     marginTop: 8,
-    marginBottom: 24,
+    marginBottom: 16,
     lineHeight: 22,
+  },
+  connectionList: {
+    width: '100%',
+    maxHeight: 300,
+    marginBottom: 16,
+  },
+  connectionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.cardBg,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  connectionCardActive: {
+    borderColor: colors.accent,
+    backgroundColor: 'rgba(59, 130, 246, 0.08)',
+  },
+  connectionIcon: {
+    marginRight: 14,
+  },
+  connectionInfo: {
+    flex: 1,
+  },
+  connectionName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  connectionMeta: {
+    fontSize: 12,
+    color: colors.textTertiary,
+    marginTop: 2,
+  },
+  hintText: {
+    fontSize: 12,
+    color: colors.textTertiary,
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 16,
+  },
+  emptyState: {
+    alignItems: 'center',
+    padding: 32,
+    gap: 12,
+  },
+  emptyText: {
+    color: colors.textTertiary,
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
   },
   cameraContainer: {
     width: 280,
@@ -206,6 +500,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 2,
     borderColor: colors.accent,
+    marginBottom: 16,
   },
   camera: {
     flex: 1,
@@ -222,42 +517,18 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(59, 130, 246, 0.5)',
     borderRadius: 8,
   },
-  inputContainer: {
-    width: '100%',
-    marginBottom: 16,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.textSecondary,
-    marginBottom: 8,
-  },
-  input: {
-    backgroundColor: colors.inputBg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    padding: 14,
-    fontSize: 16,
-    color: colors.textPrimary,
-  },
-  inputHint: {
-    fontSize: 12,
-    color: colors.textTertiary,
-    marginTop: 6,
-  },
-  button: {
+  primaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
     backgroundColor: colors.accent,
     paddingHorizontal: 32,
     paddingVertical: 14,
     borderRadius: 10,
     width: '100%',
-    alignItems: 'center',
   },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonText: {
+  primaryButtonText: {
     color: 'white',
     fontSize: 16,
     fontWeight: '600',
@@ -269,5 +540,26 @@ const styles = StyleSheet.create({
   linkText: {
     color: colors.accent,
     fontSize: 14,
+  },
+  accountInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 16,
+  },
+  accountEmail: {
+    fontSize: 13,
+    color: colors.textTertiary,
+  },
+  switchAccountButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 12,
+    padding: 8,
+  },
+  switchAccountText: {
+    fontSize: 13,
+    color: colors.textTertiary,
   },
 });

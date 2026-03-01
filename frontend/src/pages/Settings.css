@@ -116,19 +116,28 @@
   background-color: #b91c1c;
 }
 
-.theme-info {
+/* Logo + Favicon side-by-side */
+.logo-favicon-row {
   display: flex;
-  gap: 0.5rem;
+  gap: 1.5rem;
 }
 
-.theme-badge {
-  background-color: var(--bg-tertiary);
-  color: var(--accent-primary);
-  padding: 0.5rem 1rem;
-  border-radius: 0.375rem;
-  font-size: 0.9rem;
-  font-weight: 500;
-  border: 1px solid var(--accent-primary);
+.logo-favicon-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.logo-favicon-col h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+}
+
+@media (max-width: 768px) {
+  .logo-favicon-row {
+    flex-direction: column;
+  }
 }
 
 /* Input groups */

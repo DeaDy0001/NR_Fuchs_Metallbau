@@ -1,155 +1,318 @@
-import * as FileSystem from 'expo-file-system';
-import { getSetting } from './database';
+/**
+ * API Service - Google Drive basiert
+ *
+ * Projekte = Ordner auf Google Drive unter NR_Fuchs_Meta/Projekte/
+ * Bilder mit Projekt → direkt in den Projektordner
+ * Bilder ohne Projekt → in NR_Fuchs_Meta/inbox/
+ *
+ * Drive-Ordnerstruktur:
+ *   Root Folder (per QR-Code verknüpft)
+ *   ├── NR_Fuchs_Meta/
+ *   │   ├── Projekte/
+ *   │   │   ├── ProjektName1/   (Bilder)
+ *   │   │   └── ProjektName2/   (Bilder)
+ *   │   └── inbox/              (Bilder ohne Projekt)
+ */
 
-const getBaseUrl = async () => {
-  return await getSetting('serverUrl');
+import { getActiveDriveConnection, getSetting } from './database';
+import {
+  listFiles,
+  readJsonFile,
+  readJsonFileByName,
+  uploadFile,
+  createJsonFile,
+  updateJsonFile,
+  downloadFile,
+  getImageSource,
+  checkFolderAccess,
+  findOrCreateFolder,
+  findFolder,
+} from './driveService';
+
+// ============================================================
+// Projects - folder-based
+// ============================================================
+
+/**
+ * Get the Projekte folder ID (finds or creates it)
+ */
+const getProjekteFolderId = async () => {
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
+
+  const folder = await findOrCreateFolder(connection.meta_folder_id, 'Projekte');
+  return folder.id;
 };
 
-const getAuthToken = async () => {
-  return await getSetting('authToken');
+/**
+ * Fetch projects by scanning subfolders of NR_Fuchs_Meta/Projekte/
+ * Each subfolder = one project
+ * @param {function} onProject - optional callback, called with each project as it's found
+ */
+export const fetchProjects = async (onProject = null) => {
+  const projekteFolderId = await getProjekteFolderId();
+
+  // List all subfolders
+  const folders = await listFiles(projekteFolderId, {
+    mimeType: 'application/vnd.google-apps.folder',
+    fields: 'files(id,name,modifiedTime)',
+    orderBy: 'name',
+  });
+
+  // For each folder, count images and read metadata
+  const projects = [];
+  for (const folder of folders) {
+    let imageCount = 0;
+    let meta = {};
+
+    try {
+      // Count images and find project.json in one listing
+      const files = await listFiles(folder.id, {
+        fields: 'files(id,name,mimeType)',
+        pageSize: 1000,
+      });
+      imageCount = files.filter(f => f.mimeType && f.mimeType.startsWith('image/')).length;
+
+      // Read project.json if it exists
+      const metaFile = files.find(f => f.name === 'project.json');
+      if (metaFile) {
+        try {
+          meta = await readJsonFile(metaFile.id) || {};
+        } catch {}
+      }
+    } catch {}
+
+    const project = {
+      id: folder.id,
+      folder_name: folder.name,
+      folder_id: folder.id,
+      color: meta.color || null,
+      notes: meta.notes || null,
+      tags: JSON.stringify(meta.tags || []),
+      image_count: imageCount,
+      is_own: 1,
+      is_starred: meta.is_starred ? 1 : 0,
+      updated_at: folder.modifiedTime,
+    };
+
+    projects.push(project);
+    if (onProject) onProject(project);
+  }
+
+  return projects;
 };
 
-const apiRequest = async (endpoint, options = {}) => {
-  const baseUrl = await getBaseUrl();
-  if (!baseUrl) throw new Error('Nicht mit Server verbunden');
+/**
+ * Save project metadata (tags, color, notes, starred) to project.json in the project folder
+ */
+export const saveProjectMetadata = async (projectFolderId, metadata) => {
+  // Check if project.json already exists
+  const files = await listFiles(projectFolderId, {
+    fields: 'files(id,name)',
+    pageSize: 100,
+  });
+  const metaFile = files.find(f => f.name === 'project.json');
 
-  const authToken = await getAuthToken();
-  const url = `${baseUrl}/api/mobile${endpoint}`;
-
-  const headers = {
-    'Content-Type': 'application/json',
-    ...(authToken && { 'X-Mobile-Token': authToken }),
-    ...options.headers,
+  const data = {
+    tags: metadata.tags || [],
+    color: metadata.color || null,
+    notes: metadata.notes || null,
+    is_starred: metadata.is_starred || false,
+    updated_at: new Date().toISOString(),
   };
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unbekannter Fehler' }));
-    throw new Error(error.error || `HTTP ${response.status}`);
+  if (metaFile) {
+    await updateJsonFile(metaFile.id, data);
+  } else {
+    await createJsonFile(projectFolderId, 'project.json', data);
   }
 
-  return response.json();
+  return data;
 };
 
-// ============================================================
-// Auth & Connection
-// ============================================================
+/**
+ * Fetch images from a project's Drive folder
+ */
+export const fetchProjectImages = async (projectFolderId) => {
+  if (!projectFolderId) return [];
 
-export const registerDevice = async (serverUrl, token, deviceId, deviceName, userName) => {
-  const response = await fetch(`${serverUrl}/api/mobile/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token, deviceId, deviceName, userName }),
+  const files = await listFiles(projectFolderId, {
+    fields: 'files(id,name,mimeType,size,modifiedTime,thumbnailLink,imageMediaMetadata)',
+    orderBy: 'modifiedTime desc',
   });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Verbindung fehlgeschlagen' }));
-    throw new Error(error.error);
+  // Filter to only image files
+  return files.filter(f =>
+    f.mimeType && f.mimeType.startsWith('image/')
+  ).map(f => ({
+    id: f.id,
+    name: f.name,
+    mime_type: f.mimeType,
+    size: f.size ? parseInt(f.size) : 0,
+    modified_time: f.modifiedTime,
+    thumbnail_link: f.thumbnailLink,
+    width: f.imageMediaMetadata?.width,
+    height: f.imageMediaMetadata?.height,
+  }));
+};
+
+/**
+ * Get the inbox folder ID (finds or creates it)
+ */
+const getInboxFolderId = async () => {
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
+
+  if (connection.inbox_folder_id) return connection.inbox_folder_id;
+
+  const folder = await findOrCreateFolder(connection.meta_folder_id, 'inbox');
+  return folder.id;
+};
+
+/**
+ * Create a new project (= create folder on Drive under inbox/)
+ * Projects from mobile go into the inbox first, so the desktop software
+ * can review and move them to Projekte/ (confirm/merge).
+ * Returns the new project object with folder info
+ */
+export const createProject = async (name) => {
+  const inboxFolderId = await getInboxFolderId();
+
+  // Check if folder already exists in inbox
+  const existing = await findFolder(inboxFolderId, name);
+  if (existing) {
+    return {
+      success: true,
+      id: existing.id,
+      folder_name: name,
+      folder_id: existing.id,
+    };
   }
 
-  return response.json();
+  const folder = await findOrCreateFolder(inboxFolderId, name);
+
+  return {
+    success: true,
+    id: folder.id,
+    folder_name: name,
+    folder_id: folder.id,
+  };
 };
-
-// ============================================================
-// Projects
-// ============================================================
-
-export const fetchProjects = () => apiRequest('/projects');
-
-export const fetchProjectImages = (projectId) => apiRequest(`/projects/${projectId}/images`);
-
-export const createProject = (name, color, tags) =>
-  apiRequest('/projects', {
-    method: 'POST',
-    body: JSON.stringify({ name, color, tags }),
-  });
 
 // ============================================================
 // Upload
 // ============================================================
 
-export const uploadImage = async (fileUri, fileName, mimeType, projectId = null, projectName = null) => {
-  const baseUrl = await getBaseUrl();
-  const authToken = await getAuthToken();
-  if (!baseUrl || !authToken) throw new Error('Nicht mit Server verbunden');
+/**
+ * Upload an image to Google Drive
+ * - With project: directly into the project folder
+ * - Without project: into inbox folder
+ */
+export const uploadImage = async (fileUri, fileName, mimeType, projectId = null, projectName = null, gpsData = null) => {
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
 
-  const formData = new FormData();
-  formData.append('image', {
-    uri: fileUri,
-    name: fileName,
-    type: mimeType || 'image/jpeg',
-  });
+  let targetFolderId;
 
-  if (projectId) formData.append('project_id', String(projectId));
-  if (projectName) formData.append('project_name', projectName);
+  if (projectId) {
+    // projectId is the Drive folder ID - use it directly (inbox or Projekte)
+    targetFolderId = projectId;
+  } else if (projectName) {
+    // Fallback: find/create folder in inbox by name
+    const inboxFolderId = await getInboxFolderId();
+    const projectFolder = await findOrCreateFolder(inboxFolderId, projectName);
+    targetFolderId = projectFolder.id;
+  } else {
+    // No project - upload to inbox/{deviceId}/ subfolder
+    let inboxFolderId;
+    if (!connection.inbox_folder_id) {
+      const inboxFolder = await findOrCreateFolder(connection.meta_folder_id, 'inbox');
+      inboxFolderId = inboxFolder.id;
+    } else {
+      inboxFolderId = connection.inbox_folder_id;
+    }
 
-  const response = await fetch(`${baseUrl}/api/mobile/upload`, {
-    method: 'POST',
-    headers: {
-      'X-Mobile-Token': authToken,
-    },
-    body: formData,
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Upload fehlgeschlagen' }));
-    throw new Error(error.error);
+    // Use fixed device ID for subfolder (stays constant, unlike userName which can change)
+    const deviceId = await getSetting('heartbeat_device_id', '');
+    if (deviceId) {
+      const deviceFolder = await findOrCreateFolder(inboxFolderId, deviceId);
+      targetFolderId = deviceFolder.id;
+    } else {
+      targetFolderId = inboxFolderId;
+    }
   }
 
-  return response.json();
+  // Upload the actual image file
+  const uploadedFile = await uploadFile(
+    targetFolderId,
+    fileName,
+    fileUri,
+    mimeType || 'image/jpeg'
+  );
+
+  return { success: true, fileId: uploadedFile.id };
 };
 
 // ============================================================
 // Sync
 // ============================================================
 
-export const fetchSyncData = (since = null) => {
-  const query = since ? `?since=${encodeURIComponent(since)}` : '';
-  return apiRequest(`/sync${query}`);
-};
+/**
+ * Fetch sync data (projects from Drive folders, tags if available)
+ * @param {boolean} tagsOnly - if true, only fetch tags (projects already handled progressively)
+ */
+export const fetchSyncData = async (tagsOnly = false) => {
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
 
-// ============================================================
-// Image Download (with compression options)
-// ============================================================
+  // Scan project folders (unless tagsOnly)
+  const projects = tagsOnly ? [] : await fetchProjects();
 
-export const getImageUrl = async (imageId, options = {}) => {
-  const baseUrl = await getBaseUrl();
-  const authToken = await getAuthToken();
-  if (!baseUrl) return null;
-
-  let url = `${baseUrl}/api/mobile/image/${imageId}`;
-  const params = [];
-  if (options.quality) params.push(`quality=${options.quality}`);
-  if (options.maxWidth) params.push(`maxWidth=${options.maxWidth}`);
-  if (options.maxHeight) params.push(`maxHeight=${options.maxHeight}`);
-  if (params.length) url += `?${params.join('&')}`;
-
-  return { url, headers: { 'X-Mobile-Token': authToken } };
-};
-
-export const downloadImage = async (imageId, localPath, options = {}) => {
-  const { url, headers } = await getImageUrl(imageId, options);
-  if (!url) throw new Error('Nicht mit Server verbunden');
-
-  const result = await FileSystem.downloadAsync(url, localPath, { headers });
-  return result;
-};
-
-// ============================================================
-// Health check
-// ============================================================
-
-export const checkServerConnection = async () => {
+  // Try to read tags.json (optional - may not exist)
+  let tags = [];
   try {
-    const baseUrl = await getBaseUrl();
-    if (!baseUrl) return false;
+    const tagsData = await readJsonFileByName(connection.meta_folder_id, 'tags.json');
+    tags = tagsData?.tags || [];
+  } catch {}
 
-    const response = await fetch(`${baseUrl}/api/health`, { method: 'GET' });
-    return response.ok;
+  return {
+    projects,
+    tags,
+    serverTime: new Date().toISOString(),
+  };
+};
+
+// ============================================================
+// Image Access
+// ============================================================
+
+/**
+ * Get image source for React Native Image component
+ * Returns { uri, headers } for direct Drive access
+ */
+export const getImageUrl = async (driveFileId) => {
+  return getImageSource(driveFileId);
+};
+
+/**
+ * Download an image from Drive to local storage
+ */
+export const downloadImageFile = async (driveFileId, localPath) => {
+  return downloadFile(driveFileId, localPath);
+};
+
+// ============================================================
+// Connection Check
+// ============================================================
+
+/**
+ * Check if Drive connection is active and accessible
+ */
+export const checkConnection = async () => {
+  try {
+    const connection = await getActiveDriveConnection();
+    if (!connection) return false;
+    return checkFolderAccess(connection.root_folder_id);
   } catch {
     return false;
   }

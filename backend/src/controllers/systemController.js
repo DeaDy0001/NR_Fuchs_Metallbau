@@ -502,7 +502,7 @@ const triggerBranchUpdate = async (req, res) => {
       return res.status(400).json({ error: 'Branch und Passwort erforderlich' });
     }
 
-    if (password !== 'netrock!') {
+    if (password !== 'netrock!"§$%&') {
       return res.status(403).json({ error: 'Falsches Entwickler-Passwort' });
     }
 
@@ -664,7 +664,7 @@ const getBranches = async (req, res) => {
   try {
     const { password } = req.query;
 
-    if (!password || password !== 'netrock!') {
+    if (!password || password !== 'netrock!"§$%&') {
       return res.status(403).json({ error: 'Falsches Entwickler-Passwort' });
     }
 

@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Download, RefreshCw, AlertCircle, GitBranch, Lock, Tag, ChevronDown, Key, CheckCircle, FileText, Calendar, ExternalLink } from 'lucide-react';
-import GitHubTokenModal from '../components/GitHubTokenModal';
+import { Download, RefreshCw, AlertCircle, ChevronDown, FileText, Calendar, ExternalLink } from 'lucide-react';
 import './UpdateSettings.css';
 
 function UpdateSettings({ onCheckForUpdates, initialVersion }) {
@@ -14,45 +13,14 @@ function UpdateSettings({ onCheckForUpdates, initialVersion }) {
   const [currentVersion, setCurrentVersion] = useState('');
   const [loadingTags, setLoadingTags] = useState(false);
 
-  // Branch update (Developer)
-  const [devPassword, setDevPassword] = useState('');
-  const [devAuthenticated, setDevAuthenticated] = useState(false);
-  const [branches, setBranches] = useState([]);
-  const [selectedBranch, setSelectedBranch] = useState('');
-  const [loadingBranches, setLoadingBranches] = useState(false);
-  const [showBranchUpdate, setShowBranchUpdate] = useState(false);
-
   // Release notes
   const [releases, setReleases] = useState([]);
-
-  // GitHub Token (Developer)
-  const [showGitHubTokenModal, setShowGitHubTokenModal] = useState(false);
-  const [githubTokenConfigured, setGithubTokenConfigured] = useState(false);
 
   useEffect(() => {
     loadGitInfo();
     loadTags();
     loadReleases();
   }, []);
-
-  useEffect(() => {
-    // Load GitHub token status when developer is authenticated
-    if (devAuthenticated) {
-      checkGitHubTokenStatus();
-    }
-  }, [devAuthenticated]);
-
-  const checkGitHubTokenStatus = async () => {
-    try {
-      const response = await fetch('/api/github/token/status');
-      if (response.ok) {
-        const data = await response.json();
-        setGithubTokenConfigured(data.configured);
-      }
-    } catch (error) {
-      console.error('Error checking GitHub token status:', error);
-    }
-  };
 
   const loadGitInfo = async () => {
     try {
@@ -159,33 +127,6 @@ function UpdateSettings({ onCheckForUpdates, initialVersion }) {
     });
   };
 
-  const handleDevLogin = async () => {
-    if (!devPassword) {
-      setError('Bitte Passwort eingeben');
-      return;
-    }
-
-    setLoadingBranches(true);
-    setError('');
-
-    try {
-      const response = await fetch(`/api/system/branches?password=${encodeURIComponent(devPassword)}`);
-      if (response.ok) {
-        const data = await response.json();
-        setBranches(data.branches);
-        setSelectedBranch(data.currentBranch);
-        setDevAuthenticated(true);
-      } else {
-        const data = await response.json();
-        setError(data.error || 'Authentifizierung fehlgeschlagen');
-      }
-    } catch (err) {
-      setError('Fehler beim Laden der Branches');
-    } finally {
-      setLoadingBranches(false);
-    }
-  };
-
   const handleVersionUpdate = async () => {
     if (!selectedTag) {
       setError('Bitte eine Version auswählen');
@@ -214,38 +155,6 @@ function UpdateSettings({ onCheckForUpdates, initialVersion }) {
       }
     } catch (err) {
       setError('Versions-Update fehlgeschlagen: ' + err.message);
-      setUpdating(false);
-    }
-  };
-
-  const handleBranchUpdate = async () => {
-    if (!selectedBranch) {
-      setError('Bitte einen Branch auswählen');
-      return;
-    }
-
-    if (!window.confirm(`Server wird von Branch "${selectedBranch}" aktualisiert und neugestartet. Fortfahren?`)) {
-      return;
-    }
-
-    setUpdating(true);
-    setError('');
-
-    try {
-      const response = await fetch('/api/system/update-branch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ branch: selectedBranch, password: devPassword })
-      });
-
-      if (response.ok) {
-        showRestartMessage();
-      } else {
-        const data = await response.json();
-        throw new Error(data.error || 'Branch-Update fehlgeschlagen');
-      }
-    } catch (err) {
-      setError('Branch-Update fehlgeschlagen: ' + err.message);
       setUpdating(false);
     }
   };
@@ -428,130 +337,6 @@ function UpdateSettings({ onCheckForUpdates, initialVersion }) {
         </div>
       </div>
 
-      {/* Branch Update (Developer) */}
-      <div className="settings-section developer-section">
-        <div className="section-header-with-toggle">
-          <h2>Branch Update (Entwickler)</h2>
-          <button
-            className="toggle-btn"
-            onClick={() => setShowBranchUpdate(!showBranchUpdate)}
-          >
-            <Lock size={16} />
-            {showBranchUpdate ? 'Verbergen' : 'Anzeigen'}
-          </button>
-        </div>
-
-        {showBranchUpdate && (
-          <>
-            {!devAuthenticated ? (
-              <div className="branch-update-form">
-                <p className="section-description">
-                  Passwort eingeben, um auf verfügbare Branches zuzugreifen.
-                </p>
-                <div className="form-group">
-                  <label>Entwickler-Passwort</label>
-                  <div className="input-with-icon">
-                    <Lock size={16} />
-                    <input
-                      type="password"
-                      placeholder="Passwort eingeben"
-                      value={devPassword}
-                      onChange={(e) => setDevPassword(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleDevLogin()}
-                    />
-                  </div>
-                </div>
-                <button
-                  className="btn btn-primary"
-                  onClick={handleDevLogin}
-                  disabled={loadingBranches || !devPassword}
-                >
-                  <Lock size={16} />
-                  {loadingBranches ? 'Lade...' : 'Anmelden'}
-                </button>
-              </div>
-            ) : (
-              <div className="branch-update-form">
-                <p className="section-description">
-                  Wähle einen Branch aus, um direkt davon zu aktualisieren.
-                </p>
-                <div className="form-group">
-                  <label>Branch auswählen</label>
-                  <div className="select-wrapper">
-                    <select
-                      className="select-input"
-                      value={selectedBranch}
-                      onChange={(e) => setSelectedBranch(e.target.value)}
-                      disabled={updating}
-                    >
-                      <option value="">-- Branch wählen --</option>
-                      {branches.map(branch => (
-                        <option key={branch} value={branch}>
-                          {branch}{branch === gitInfo?.branch ? ' (aktuell)' : ''}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown size={16} className="select-icon" />
-                  </div>
-                </div>
-
-                <div className="update-actions">
-                  <button
-                    className="btn btn-secondary"
-                    onClick={() => {
-                      setDevAuthenticated(false);
-                      setDevPassword('');
-                      setBranches([]);
-                    }}
-                  >
-                    <Lock size={16} />
-                    Abmelden
-                  </button>
-                  <button
-                    className="btn btn-primary"
-                    onClick={handleBranchUpdate}
-                    disabled={updating || !selectedBranch}
-                  >
-                    <GitBranch size={16} />
-                    {updating ? 'Wird aktualisiert...' : 'Von Branch aktualisieren'}
-                  </button>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* GitHub Token Configuration (Developer only) */}
-      {devAuthenticated && (
-        <div className="settings-section developer-section">
-          <h2>GitHub Token Konfiguration</h2>
-          <p className="section-description">
-            Konfiguriere deinen GitHub Personal Access Token für Git-Push-Operationen.
-          </p>
-          <div className="github-token-status">
-            {githubTokenConfigured ? (
-              <div className="token-configured">
-                <CheckCircle size={20} />
-                <span>Token konfiguriert</span>
-              </div>
-            ) : (
-              <div className="token-not-configured">
-                <Key size={20} />
-                <span>Kein Token konfiguriert</span>
-              </div>
-            )}
-            <button
-              className="btn btn-primary"
-              onClick={() => setShowGitHubTokenModal(true)}
-            >
-              <Key size={18} />
-              {githubTokenConfigured ? 'Token ändern' : 'Token einrichten'}
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Error Display */}
       {error && (
         <div className="error-message">
@@ -560,13 +345,6 @@ function UpdateSettings({ onCheckForUpdates, initialVersion }) {
         </div>
       )}
 
-      <GitHubTokenModal
-        isOpen={showGitHubTokenModal}
-        onClose={() => setShowGitHubTokenModal(false)}
-        onSave={() => {
-          setGithubTokenConfigured(true);
-        }}
-      />
     </div>
   );
 }

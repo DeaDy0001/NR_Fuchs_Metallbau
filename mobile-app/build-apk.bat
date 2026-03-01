@@ -108,68 +108,59 @@ echo  [OK] Abhaengigkeiten installiert
 
 :: ── 6. Output-Ordner ──
 if not exist android mkdir android
+set "APK_DEST=%CD%\android\app.apk"
+
+:: Alte APK loeschen damit wir sicher wissen ob der neue Build geklappt hat
+if exist "%APK_DEST%" del "%APK_DEST%"
 
 :: ── 7. APK bauen ──
 echo.
 echo  ========================================
 echo   Starte APK Build in der Expo Cloud...
 echo   (Das dauert ca. 5-15 Minuten)
+echo   Die APK wird danach automatisch geladen.
 echo  ========================================
 echo.
 echo   Beim ersten Mal wirst du gefragt ob ein
 echo   Keystore generiert werden soll - waehle Yes.
 echo.
 
-:: Build starten (interaktiv, damit Keystore-Erstellung funktioniert)
-call eas build -p android --profile preview
-set BUILD_EXIT=%ERRORLEVEL%
+:: Build starten (non-interactive verhindert Emulator-Frage)
+call eas build -p android --profile preview --non-interactive
 
-if %BUILD_EXIT% neq 0 goto :BUILD_FAILED
-
-:: ── 8. Download-Link ueber EAS API holen ──
+:: ── 8. APK herunterladen ──
 echo.
 echo  [..] Suche Download-Link...
 
-set "APK_URL="
-set "APK_DEST=%CD%\android\app.apk"
+:: JSON Output in Temp-Datei speichern (for/f kann kein mehrzeiliges JSON)
+set "TEMP_JSON=%TEMP%\eas_build_result.json"
+call eas build:list --platform android --limit 1 --status finished --json > "%TEMP_JSON%" 2>nul
 
-:: Letzten erfolgreichen Build per JSON abfragen
-for /f "usebackq tokens=*" %%a in (`eas build:list --platform android --limit 1 --status finished --json 2^>nul`) do (
-    set "JSON_OUT=%%a"
-)
+:: PowerShell liest JSON-Datei, extrahiert URL und laedt APK herunter
+powershell -Command ^
+  "$json = Get-Content '%TEMP_JSON%' -Raw -ErrorAction SilentlyContinue; " ^
+  "if (-not $json) { Write-Host '  [FEHLER] Keine Build-Daten gefunden'; exit 1 }; " ^
+  "$url = ($json | ConvertFrom-Json)[0].artifacts.buildUrl; " ^
+  "if (-not $url) { Write-Host '  [FEHLER] Kein Download-Link im Build gefunden'; exit 1 }; " ^
+  "Write-Host '  [OK] Download-Link:' $url; " ^
+  "Write-Host '  [..] Lade APK herunter...'; " ^
+  "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; " ^
+  "Invoke-WebRequest -Uri $url -OutFile '%APK_DEST%' -UseBasicParsing; " ^
+  "Write-Host '  [OK] Download abgeschlossen'"
 
-:: URL aus JSON extrahieren (artifacts.buildUrl)
-if defined JSON_OUT (
-    for /f "tokens=*" %%u in ('powershell -Command "try { ($env:JSON_OUT | ConvertFrom-Json)[0].artifacts.buildUrl } catch { '' }" 2^>nul') do (
-        if not "%%u"=="" set "APK_URL=%%u"
-    )
-)
+if exist "%TEMP_JSON%" del "%TEMP_JSON%"
 
-if not defined APK_URL goto :NO_URL
+:: Pruefen ob APK heruntergeladen wurde
+if exist "%APK_DEST%" goto :BUILD_SUCCESS
+goto :NO_URL
 
-:: ── 9. APK herunterladen ──
-echo  [OK] Download-Link gefunden
-echo  [..] Lade APK herunter...
-echo       %APK_URL%
-echo.
-
-:: curl ist auf Windows 10/11 vorinstalliert
-curl -L -o "%APK_DEST%" "%APK_URL%" 2>nul
-if not exist "%APK_DEST%" goto :TRY_POWERSHELL
-goto :CHECK_DOWNLOAD
-
-:TRY_POWERSHELL
-powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%APK_URL%' -OutFile '%APK_DEST%'" 2>nul
-
-:CHECK_DOWNLOAD
-if not exist "%APK_DEST%" goto :DOWNLOAD_FAIL
-
+:BUILD_SUCCESS
 for %%F in ("%APK_DEST%") do set "APK_SIZE=%%~zF"
 set /a APK_MB=!APK_SIZE! / 1048576
 
 echo.
 echo  ========================================
-echo    APK erfolgreich erstellt!
+echo    APK erfolgreich erstellt und geladen!
 echo  ========================================
 echo.
 echo  Datei:   %APK_DEST%
@@ -179,12 +170,6 @@ echo  Die APK ist jetzt verfuegbar:
 echo   - Desktop: Einstellungen ^> Handy App
 echo   - Handy:   QR-Code scannen ^> Download
 echo.
-goto :CLEANUP
-
-:BUILD_FAILED
-echo.
-echo  [FEHLER] Build fehlgeschlagen!
-echo  Pruefe die Ausgabe oben fuer Details.
 goto :CLEANUP
 
 :NO_URL
@@ -198,13 +183,6 @@ echo   lade die APK manuell herunter.
 echo   Speichere sie als:
 echo   %APK_DEST%
 echo  ========================================
-goto :CLEANUP
-
-:DOWNLOAD_FAIL
-echo  [FEHLER] Download fehlgeschlagen.
-echo  Bitte lade manuell herunter:
-echo  %APK_URL%
-echo  Speichere als: %APK_DEST%
 goto :CLEANUP
 
 :CLEANUP

@@ -1,6 +1,6 @@
-import * as FileSystem from 'expo-file-system';
-import { getSetting, setSetting, cacheProjects, cacheTags } from './database';
-import { fetchSyncData, downloadImage } from './api';
+import * as FileSystem from 'expo-file-system/legacy';
+import { getSetting, setSetting, cacheProjects, cacheTags, cacheProject, clearCachedProjects } from './database';
+import { fetchSyncData, fetchProjects, downloadImageFile } from './api';
 
 const IMAGE_CACHE_DIR = FileSystem.documentDirectory + 'image_cache/';
 const THUMBNAIL_CACHE_DIR = FileSystem.documentDirectory + 'thumbnail_cache/';
@@ -14,22 +14,43 @@ const ensureCacheDirs = async () => {
 };
 
 /**
- * Sync project and tag data from server
+ * Sync project and tag data from Google Drive
+ * @param {function} onProjectFound - optional callback for progressive loading, called per project
  */
-export const syncMetadata = async () => {
+export const syncMetadata = async (onProjectFound = null) => {
   try {
-    const lastSync = await getSetting('lastMetadataSync');
-    const data = await fetchSyncData(lastSync);
+    if (onProjectFound) {
+      // Progressive sync: clear old data, then stream projects one by one
+      await clearCachedProjects();
+      const projects = await fetchProjects(async (project) => {
+        await cacheProject(project);
+        onProjectFound(project);
+      });
 
-    if (data.projects) await cacheProjects(data.projects);
-    if (data.tags) await cacheTags(data.tags);
+      // Also sync tags
+      const data = await fetchSyncData(true); // tagsOnly
+      if (data.tags) await cacheTags(data.tags);
 
-    await setSetting('lastMetadataSync', data.serverTime);
+      await setSetting('lastMetadataSync', new Date().toISOString());
 
-    return {
-      projectCount: data.projects?.length || 0,
-      tagCount: data.tags?.length || 0,
-    };
+      return {
+        projectCount: projects.length,
+        tagCount: data.tags?.length || 0,
+      };
+    } else {
+      // Batch sync (old behavior)
+      const data = await fetchSyncData();
+
+      if (data.projects) await cacheProjects(data.projects);
+      if (data.tags) await cacheTags(data.tags);
+
+      await setSetting('lastMetadataSync', data.serverTime);
+
+      return {
+        projectCount: data.projects?.length || 0,
+        tagCount: data.tags?.length || 0,
+      };
+    }
   } catch (error) {
     console.error('Metadata sync failed:', error);
     throw error;
@@ -37,29 +58,20 @@ export const syncMetadata = async () => {
 };
 
 /**
- * Download a project's images with compression
+ * Download a project's thumbnail images from Drive
  */
 export const downloadProjectImages = async (projectId, images, onProgress) => {
   await ensureCacheDirs();
-
-  // Get compression settings
-  const maxSize = parseInt(await getSetting('maxImageSizeKB', '1024'));
-  const maxRes = parseInt(await getSetting('maxImageResolution', '1920'));
-  const quality = parseInt(await getSetting('imageQuality', '80'));
 
   let downloaded = 0;
 
   for (const img of images) {
     try {
-      const localPath = THUMBNAIL_CACHE_DIR + `thumb_${img.id}.webp`;
+      const localPath = THUMBNAIL_CACHE_DIR + `thumb_${img.id}.jpg`;
       const existing = await FileSystem.getInfoAsync(localPath);
 
       if (!existing.exists) {
-        await downloadImage(img.id, localPath, {
-          quality: 60,
-          maxWidth: 300,
-          maxHeight: 300,
-        });
+        await downloadImageFile(img.id, localPath);
       }
 
       downloaded++;
@@ -73,35 +85,29 @@ export const downloadProjectImages = async (projectId, images, onProgress) => {
 };
 
 /**
- * Download full-resolution image (on demand when viewing)
+ * Download full-resolution image from Drive (on demand)
  */
-export const downloadFullImage = async (imageId) => {
+export const downloadFullImage = async (driveFileId) => {
   await ensureCacheDirs();
 
-  const maxRes = parseInt(await getSetting('maxImageResolution', '1920'));
-  const quality = parseInt(await getSetting('imageQuality', '80'));
-  const maxSizeKB = parseInt(await getSetting('maxImageSizeKB', '1024'));
-
-  const localPath = IMAGE_CACHE_DIR + `full_${imageId}.webp`;
+  const localPath = IMAGE_CACHE_DIR + `full_${driveFileId}.jpg`;
   const existing = await FileSystem.getInfoAsync(localPath);
 
   if (existing.exists) {
-    // Check if within size limit
-    if (maxSizeKB > 0 && existing.size > maxSizeKB * 1024) {
-      // Re-download with lower quality
-      await FileSystem.deleteAsync(localPath, { idempotent: true });
-    } else {
-      return localPath;
-    }
+    return localPath;
   }
 
-  await downloadImage(imageId, localPath, {
-    quality,
-    maxWidth: maxRes,
-    maxHeight: maxRes,
-  });
-
+  await downloadImageFile(driveFileId, localPath);
   return localPath;
+};
+
+/**
+ * Get local thumbnail path if cached
+ */
+export const getLocalThumbnailPath = async (driveFileId) => {
+  const localPath = THUMBNAIL_CACHE_DIR + `thumb_${driveFileId}.jpg`;
+  const info = await FileSystem.getInfoAsync(localPath);
+  return info.exists ? localPath : null;
 };
 
 /**

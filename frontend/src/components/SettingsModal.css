@@ -15,8 +15,7 @@
   border-radius: 0.75rem;
   width: 100%;
   max-width: 950px;
-  height: 85vh;
-  max-height: 750px;
+  max-height: 95vh;
   position: relative;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
   display: flex;
@@ -102,6 +101,30 @@
   font-weight: 600;
 }
 
+/* Spacer pushes dev tab to bottom */
+.settings-modal-nav-spacer {
+  flex: 1;
+}
+
+.settings-modal-nav-bottom {
+  border-top: 1px solid var(--border-color);
+  padding-top: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.settings-modal-tab-dev {
+  opacity: 0.7;
+  font-size: 0.8125rem !important;
+}
+
+.settings-modal-tab-dev:hover {
+  opacity: 1;
+}
+
+.settings-modal-tab-dev.active {
+  opacity: 1;
+}
+
 /* Right content area */
 .settings-modal-content {
   flex: 1;
@@ -117,7 +140,8 @@
 .settings-modal-content .settings-page,
 .settings-modal-content .drive-settings-page,
 .settings-modal-content .projects-settings-page,
-.settings-modal-content .update-settings-page {
+.settings-modal-content .update-settings-page,
+.settings-modal-content .dev-settings-page {
   max-width: 100%;
 }
 

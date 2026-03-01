@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { X, Settings as SettingsIcon, Image, FolderKanban, Download, Smartphone } from 'lucide-react';
+import { X, Settings as SettingsIcon, Image, FolderKanban, Download, Smartphone, Code } from 'lucide-react';
 import SettingsGeneral from '../pages/Settings';
 import DriveSettings from '../pages/DriveSettings';
 import ProjectsSettings from '../pages/ProjectsSettings';
 import UpdateSettings from '../pages/UpdateSettings';
 import MobileAppSettings from '../pages/MobileAppSettings';
+import DevSettings from '../pages/DevSettings';
 import './SettingsModal.css';
 
 const tabs = [
@@ -14,6 +15,8 @@ const tabs = [
   { id: 'mobile', label: 'Handy App', icon: Smartphone },
   { id: 'update', label: 'Update', icon: Download },
 ];
+
+const devTab = { id: 'dev', label: 'Dev', icon: Code };
 
 function SettingsModal({ isOpen, onClose, initialTab, initialVersion, settings, updateSettings, onSettingsChange, onCheckForUpdates }) {
   const [activeTab, setActiveTab] = useState(initialTab || 'general');
@@ -68,6 +71,16 @@ function SettingsModal({ isOpen, onClose, initialTab, initialVersion, settings, 
                 );
               })}
             </nav>
+            <div className="settings-modal-nav-spacer" />
+            <nav className="settings-modal-nav settings-modal-nav-bottom">
+              <button
+                className={`settings-modal-tab settings-modal-tab-dev ${activeTab === 'dev' ? 'active' : ''}`}
+                onClick={() => setActiveTab('dev')}
+              >
+                <Code size={18} />
+                <span>Dev</span>
+              </button>
+            </nav>
           </div>
 
           {/* Right content area */}
@@ -88,6 +101,7 @@ function SettingsModal({ isOpen, onClose, initialTab, initialVersion, settings, 
                 initialVersion={initialVersion}
               />
             )}
+            {activeTab === 'dev' && <DevSettings />}
           </div>
         </div>
       </div>

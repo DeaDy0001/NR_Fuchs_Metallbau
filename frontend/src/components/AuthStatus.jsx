@@ -1,13 +1,11 @@
 import { useState, useEffect } from 'react';
-import { LogIn, LogOut, CheckCircle, AlertCircle, Settings as SettingsIcon } from 'lucide-react';
-import CredentialsModal from './CredentialsModal';
+import { LogIn, LogOut, CheckCircle, AlertCircle, Code } from 'lucide-react';
 import './AuthStatus.css';
 
 function AuthStatus() {
   const [authStatus, setAuthStatus] = useState(null);
   const [credentialsConfigured, setCredentialsConfigured] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [showCredentialsModal, setShowCredentialsModal] = useState(false);
 
   useEffect(() => {
     checkCredentials();
@@ -83,11 +81,6 @@ function AuthStatus() {
     }
   };
 
-  const handleCredentialsSaved = () => {
-    setCredentialsConfigured(true);
-    checkAuthStatus();
-  };
-
   if (loading || credentialsConfigured === null) {
     return (
       <div className="auth-status-card auth-status-loading">
@@ -97,38 +90,24 @@ function AuthStatus() {
     );
   }
 
-  // Show credentials configuration if not configured
+  // Show hint to configure credentials in Dev tab
   if (!credentialsConfigured) {
     return (
-      <>
-        <div className="auth-status-card auth-status-error">
-          <div className="auth-status-icon">
-            <AlertCircle size={24} />
-          </div>
-          <div className="auth-status-content">
-            <h3>⚠️ Google Credentials fehlen</h3>
-            <p>
-              Um die Google Drive Synchronisation zu nutzen, müssen zuerst OAuth 2.0 Credentials konfiguriert werden.
-            </p>
-            <p className="auth-note">
-              <strong>Hinweis:</strong> Dies ist nur einmalig bei der ersten Installation notwendig!
-            </p>
-          </div>
-          <button
-            className="btn btn-primary"
-            onClick={() => setShowCredentialsModal(true)}
-          >
-            <SettingsIcon size={18} />
-            Credentials konfigurieren
-          </button>
+      <div className="auth-status-card auth-status-error">
+        <div className="auth-status-icon">
+          <AlertCircle size={24} />
         </div>
-
-        <CredentialsModal
-          isOpen={showCredentialsModal}
-          onClose={() => setShowCredentialsModal(false)}
-          onSave={handleCredentialsSaved}
-        />
-      </>
+        <div className="auth-status-content">
+          <h3>Google Credentials fehlen</h3>
+          <p>
+            Um die Google Drive Synchronisation zu nutzen, müssen zuerst OAuth 2.0 Credentials konfiguriert werden.
+          </p>
+          <p className="auth-note">
+            <Code size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />
+            <strong>Credentials können im Dev-Tab</strong> (links unten in den Einstellungen) konfiguriert werden.
+          </p>
+        </div>
+      </div>
     );
   }
 
@@ -143,69 +122,41 @@ function AuthStatus() {
           <CheckCircle size={24} />
         </div>
         <div className="auth-status-content">
-          <h3>✅ Mit Google angemeldet</h3>
+          <h3>Mit Google angemeldet</h3>
           <p>{authStatus.message}</p>
           {authStatus.expiresIn && (
             <p className="auth-expires">Token läuft ab in {authStatus.expiresIn} Minuten</p>
           )}
         </div>
         <div className="auth-status-actions">
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={() => setShowCredentialsModal(true)}
-            title="Credentials ändern"
-          >
-            <SettingsIcon size={16} />
-          </button>
           <button className="btn btn-secondary btn-sm" onClick={handleLogout}>
             <LogOut size={16} />
             Abmelden
           </button>
         </div>
-
-        <CredentialsModal
-          isOpen={showCredentialsModal}
-          onClose={() => setShowCredentialsModal(false)}
-          onSave={handleCredentialsSaved}
-        />
       </div>
     );
   }
 
   return (
-    <>
-      <div className="auth-status-card auth-status-warning">
-        <div className="auth-status-icon">
-          <AlertCircle size={24} />
-        </div>
-        <div className="auth-status-content">
-          <h3>🔐 Google Login erforderlich</h3>
-          <p>Melde dich mit deinem Google-Konto an, um Drive zu synchronisieren.</p>
-          <p className="auth-note">
-            <strong>Hinweis:</strong> Du musst nur einmal anmelden. Deine Anmeldung bleibt dauerhaft gespeichert!
-          </p>
-        </div>
-        <div className="auth-status-actions">
-          <button
-            className="btn btn-secondary"
-            onClick={() => setShowCredentialsModal(true)}
-            title="Credentials ändern"
-          >
-            <SettingsIcon size={18} />
-          </button>
-          <button className="btn btn-primary" onClick={handleLogin}>
-            <LogIn size={18} />
-            Mit Google anmelden
-          </button>
-        </div>
+    <div className="auth-status-card auth-status-warning">
+      <div className="auth-status-icon">
+        <AlertCircle size={24} />
       </div>
-
-      <CredentialsModal
-        isOpen={showCredentialsModal}
-        onClose={() => setShowCredentialsModal(false)}
-        onSave={handleCredentialsSaved}
-      />
-    </>
+      <div className="auth-status-content">
+        <h3>Google Login erforderlich</h3>
+        <p>Melde dich mit deinem Google-Konto an, um Drive zu synchronisieren.</p>
+        <p className="auth-note">
+          <strong>Hinweis:</strong> Du musst nur einmal anmelden. Deine Anmeldung bleibt dauerhaft gespeichert!
+        </p>
+      </div>
+      <div className="auth-status-actions">
+        <button className="btn btn-primary" onClick={handleLogin}>
+          <LogIn size={18} />
+          Mit Google anmelden
+        </button>
+      </div>
+    </div>
   );
 }
 

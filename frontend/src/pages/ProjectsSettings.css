@@ -118,3 +118,47 @@
   font-size: 0.875rem;
   color: var(--text-secondary);
 }
+
+/* Google Drive Sync Result */
+.drive-sync-result {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+}
+
+.drive-sync-result.success {
+  background-color: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: #4ade80;
+}
+
+.drive-sync-result.error {
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #f87171;
+}
+
+.drive-sync-result ul {
+  margin: 0.5rem 0 0 1.25rem;
+  padding: 0;
+}
+
+.drive-sync-result li {
+  margin-bottom: 0.25rem;
+}
+
+.drive-sync-errors {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+.settings-section code {
+  background-color: var(--bg-tertiary);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--accent-primary);
+}

@@ -2,6 +2,27 @@
   max-width: 1000px;
 }
 
+/* Collapse header */
+.collapse-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  color: var(--text-secondary);
+}
+
+.collapse-header h2 {
+  margin-bottom: 0;
+}
+
+.collapse-header:hover {
+  color: var(--text-primary);
+}
+
 /* Notification */
 .notification {
   position: fixed;

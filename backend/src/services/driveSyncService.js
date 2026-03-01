@@ -47,9 +47,26 @@ const syncDrivePath = async (drivePathId) => {
       throw new Error('Invalid Google Drive folder URL');
     }
 
-    // List all files in Drive folder (including subfolders)
+    // List all files in Drive folder (including subfolders, NR_Fuchs_Meta is auto-excluded)
     const driveFiles = await listFilesInFolderRecursive(folderId);
     console.log(`Found ${driveFiles.length} images in Drive folder (including subfolders)`);
+
+    // Clean up any previously synced NR_Fuchs_Meta images (internal inbox system)
+    const metaImages = db.prepare(
+      "SELECT id, local_path, thumbnail_url FROM drive_images WHERE drive_path_id = ? AND subfolder = 'NR_Fuchs_Meta'"
+    ).all(drivePathId);
+    if (metaImages.length > 0) {
+      console.log(`Cleaning up ${metaImages.length} NR_Fuchs_Meta images from previous syncs...`);
+      for (const img of metaImages) {
+        // Delete local files
+        try {
+          if (img.local_path) await fs.remove(path.join(__dirname, '../../..', img.local_path));
+          if (img.thumbnail_url) await fs.remove(path.join(__dirname, '../../..', img.thumbnail_url));
+        } catch (e) { /* ignore file deletion errors */ }
+      }
+      db.prepare("DELETE FROM drive_images WHERE drive_path_id = ? AND subfolder = 'NR_Fuchs_Meta'").run(drivePathId);
+      console.log(`✓ Removed ${metaImages.length} NR_Fuchs_Meta images`);
+    }
 
     // Get existing images in database
     const existingImages = db.prepare(

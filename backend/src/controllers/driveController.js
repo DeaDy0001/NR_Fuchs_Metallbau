@@ -2,7 +2,8 @@ const db = require('../config/database');
 const path = require('path');
 const fs = require('fs-extra');
 const { syncDrivePath, startAutoSync, stopAutoSync } = require('../services/driveSyncService');
-const { deleteFile, compressImage, generateThumbnail } = require('../services/googleDriveService');
+const { deleteFile, compressImage, generateThumbnail, moveFileOnDrive, getFileMetadata, findOrCreateSubfolder, findSubfolder, extractFolderId, createFolderOnDrive, listFoldersInFolder } = require('../services/googleDriveService');
+const { isAuthenticated } = require('../services/authService');
 
 // Get drive settings (all configured paths)
 const getDriveSettings = (req, res) => {
@@ -254,7 +255,8 @@ const getImages = (req, res) => {
 
     let query = 'SELECT DISTINCT di.* FROM drive_images di';
     const params = [];
-    const whereClauses = [];
+    // Always exclude NR_Fuchs_Meta (internal inbox/mobile system folder)
+    const whereClauses = ["(di.subfolder IS NULL OR di.subfolder != 'NR_Fuchs_Meta')"];
 
     // Filter by projects
     if (projectIds) {
@@ -371,7 +373,7 @@ const getImages = (req, res) => {
     // Get total count
     let countQuery = 'SELECT COUNT(DISTINCT di.id) as count FROM drive_images di';
     const countParams = [];
-    const countWhereClauses = [];
+    const countWhereClauses = ["(di.subfolder IS NULL OR di.subfolder != 'NR_Fuchs_Meta')"];
 
     // Same filters for count
     if (projectIds) {
@@ -443,8 +445,8 @@ const getImages = (req, res) => {
     const countStmt = db.prepare(countQuery);
     const countResult = countStmt.get(...countParams);
 
-    // Get all unique subfolders (not limited by pagination)
-    const subfoldersStmt = db.prepare('SELECT DISTINCT subfolder FROM drive_images WHERE subfolder IS NOT NULL ORDER BY subfolder ASC');
+    // Get all unique subfolders (not limited by pagination, excluding internal NR_Fuchs_Meta)
+    const subfoldersStmt = db.prepare("SELECT DISTINCT subfolder FROM drive_images WHERE subfolder IS NOT NULL AND subfolder != 'NR_Fuchs_Meta' ORDER BY subfolder ASC");
     const allSubfolders = subfoldersStmt.all().map(row => row.subfolder);
 
     res.json({
@@ -610,13 +612,21 @@ const deleteImage = async (req, res) => {
     }
 
     // Delete from Google Drive if requested (only if image is from Drive)
+    let driveFileNotFound = false;
     if (deleteFromDrive === 'true' && image.drive_file_id) {
       try {
         await deleteFile(image.drive_file_id);
         console.log(`✓ Deleted file from Google Drive: ${image.name}`);
       } catch (err) {
-        console.error('Error deleting from Google Drive:', err);
-        return res.status(500).json({ error: 'Failed to delete from Google Drive' });
+        // If the file doesn't exist on Drive anymore, continue with local deletion
+        const msg = err.message || '';
+        if (msg.includes('nicht gefunden') || msg.includes('File not found') || msg.includes('Not Found') || err.code === 404 || err.code === '404') {
+          console.warn(`⚠️ File not found on Google Drive (already deleted?): ${image.name}`);
+          driveFileNotFound = true;
+        } else {
+          console.error('Error deleting from Google Drive:', err);
+          return res.status(500).json({ error: 'Failed to delete from Google Drive' });
+        }
       }
     } else if (deleteFromDrive !== 'true' && image.drive_file_id) {
       // Soft delete: Add to ignored_files so it won't be re-downloaded
@@ -673,7 +683,8 @@ const deleteImage = async (req, res) => {
 
     res.json({
       success: true,
-      deletedFromDrive: deleteFromDrive === 'true' && !!image.drive_file_id,
+      deletedFromDrive: deleteFromDrive === 'true' && !!image.drive_file_id && !driveFileNotFound,
+      driveFileNotFound: driveFileNotFound,
       deletedFromProjects: deleteFromProjects === 'true',
       message: message
     });
@@ -804,10 +815,52 @@ const assignImageToProject = async (req, res) => {
       ).run(imageId, projectId);
     }
 
+    // Move file on Google Drive if it has a drive_file_id
+    let driveMovedSuccess = false;
+    if (image.drive_file_id && await isAuthenticated()) {
+      try {
+        // Find or create NR_Fuchs_Meta/Projekte/<ProjectName> on Drive
+        const allPaths = db.prepare('SELECT path FROM drive_paths').all();
+        let metaFolder = null;
+        let rootFolderId = null;
+
+        for (const dp of allPaths) {
+          const fid = extractFolderId(dp.path);
+          if (!fid) continue;
+          rootFolderId = fid;
+          metaFolder = await findSubfolder(fid, 'NR_Fuchs_Meta');
+          if (metaFolder) break;
+        }
+
+        if (!metaFolder && rootFolderId) {
+          metaFolder = await createFolderOnDrive('NR_Fuchs_Meta', rootFolderId);
+        }
+
+        if (metaFolder) {
+          const projekteFolder = await findOrCreateSubfolder(metaFolder.id, 'Projekte');
+          const projectDriveFolder = await findOrCreateSubfolder(projekteFolder.id, project.folder_name);
+
+          // Get current file parents
+          const fileMeta = await getFileMetadata(image.drive_file_id);
+          if (fileMeta && fileMeta.parents && fileMeta.parents.length > 0) {
+            // Only move if not already in the project folder
+            if (!fileMeta.parents.includes(projectDriveFolder.id)) {
+              await moveFileOnDrive(image.drive_file_id, projectDriveFolder.id, fileMeta.parents[0]);
+              driveMovedSuccess = true;
+              console.log(`📦 Moved "${image.name}" to Drive folder: ${project.folder_name}`);
+            }
+          }
+        }
+      } catch (driveError) {
+        console.error('Drive move failed (local copy still succeeded):', driveError.message);
+      }
+    }
+
     res.json({
       message: 'Image assigned to project successfully',
       projectName: project.folder_name,
-      destinationPath: destPath
+      destinationPath: destPath,
+      driveMovedSuccess,
     });
   } catch (error) {
     console.error('Error assigning image to project:', error);

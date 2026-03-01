@@ -33,11 +33,14 @@ function DriveImages() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false); // Delete confirmation dialog
   const [deleteFromProjects, setDeleteFromProjects] = useState(false); // Delete from all projects checkbox
   const [showEditor, setShowEditor] = useState(false); // Image editor
+  const [notification, setNotification] = useState(null); // Custom notification popup
   const [panPosition, setPanPosition] = useState({ x: 0, y: 0 }); // Pan position for zoomed image
-  const [initialZoomLevel, setInitialZoomLevel] = useState(1); // Auto-fit zoom level (for reset)
-  const [initialPanPosition, setInitialPanPosition] = useState({ x: 0, y: 0 }); // Auto-fit pan position (for reset)
-  const [isDragging, setIsDragging] = useState(false); // Is user dragging the image
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 }); // Drag start position
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
+  const isPanningRef = useRef(false);
+  const panStartRef = useRef({ x: 0, y: 0 });
+  const panOriginRef = useRef({ x: 0, y: 0 });
+  const imageContainerRef = useRef(null);
   const [pagination, setPagination] = useState({
     total: 0,
     limit: 50,
@@ -53,7 +56,7 @@ function DriveImages() {
   const [photoDateTo, setPhotoDateTo] = useState(''); // Fotoaufnahme End-Datum
   const [uploadDateFrom, setUploadDateFrom] = useState(''); // Hochlade Start-Datum
   const [uploadDateTo, setUploadDateTo] = useState(''); // Hochlade End-Datum
-  const [showOnlyUnassigned, setShowOnlyUnassigned] = useState(true); // Nur Bilder ohne Projekt
+  const [showOnlyUnassigned, setShowOnlyUnassigned] = useState(false); // Nur Bilder ohne Projekt
   const [showAllImages, setShowAllImages] = useState(false); // Alle Bilder (mit und ohne Projekte)
   const [showOnlyWithProjects, setShowOnlyWithProjects] = useState(false); // Nur Bilder mit Projekten
   const [selectedSubfolders, setSelectedSubfolders] = useState([]); // Ausgewählte Ordner-Badges
@@ -84,6 +87,10 @@ function DriveImages() {
   const [sidebarActiveTab, setSidebarActiveTab] = useState('tags'); // 'tags' oder 'projects'
   const [showOnlyStarredProjects, setShowOnlyStarredProjects] = useState(true); // Nur markierte Projekte im Sidebar anzeigen (Standard)
   const [selectedProjectId, setSelectedProjectId] = useState(null); // Aktives Projekt für Quick-Assign
+
+  // Keep refs in sync for event handlers
+  useEffect(() => { zoomRef.current = zoomLevel; }, [zoomLevel]);
+  useEffect(() => { panRef.current = panPosition; }, [panPosition]);
 
   const TAG_PRESET_COLORS = [
     '#ef4444', '#f97316', '#f59e0b', '#eab308',
@@ -616,69 +623,9 @@ function DriveImages() {
     }
   };
 
-  const handleZoomIn = () => {
-    setZoomLevel(prev => Math.min(prev + 0.25, 3)); // Max 300%
-  };
-
-  const handleZoomOut = () => {
-    setZoomLevel(prev => Math.max(prev - 0.25, initialZoomLevel));
-  };
-
-  const handleZoomReset = () => {
-    setZoomLevel(initialZoomLevel);
-    setPanPosition(initialPanPosition);
-  };
-
-  // Pan/Drag handlers for zoomed image
-  const handleMouseDown = (e) => {
-    // Allow panning with left or middle mouse button at any zoom level
-    if (e.button === 0 || e.button === 1) {
-      setIsDragging(true);
-      setDragStart({
-        x: e.clientX - panPosition.x,
-        y: e.clientY - panPosition.y
-      });
-      e.preventDefault();
-    }
-  };
-
-  const handleMouseMove = (e) => {
-    if (isDragging) {
-      setPanPosition({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y
-      });
-    }
-  };
-
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
-
-  // Shift + Wheel zoom (zoom from mouse position)
-  const handleWheel = (e) => {
-    if (e.shiftKey) {
-      e.preventDefault();
-
-      const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      const newZoomLevel = Math.min(Math.max(zoomLevel + delta, initialZoomLevel), 3);
-
-      // Get mouse position relative to the container
-      const container = e.currentTarget;
-      const rect = container.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-
-      // Calculate zoom ratio
-      const zoomRatio = newZoomLevel / zoomLevel;
-
-      // Adjust pan to keep the point under the mouse fixed
-      const newPanX = mouseX - (mouseX - panPosition.x) * zoomRatio;
-      const newPanY = mouseY - (mouseY - panPosition.y) * zoomRatio;
-
-      setZoomLevel(newZoomLevel);
-      setPanPosition({ x: newPanX, y: newPanY });
-    }
+  const resetImageView = () => {
+    setZoomLevel(1);
+    setPanPosition({ x: 0, y: 0 });
   };
 
   // Open delete confirmation dialog
@@ -686,8 +633,15 @@ function DriveImages() {
     setShowDeleteDialog(true);
   };
 
-  // Assign image to project
+  // Assign image to project (optimistic UI update)
   const handleAssignToProject = async (projectId) => {
+    // Optimistic: update UI immediately
+    const project = projects.find(p => p.id === projectId);
+    const prevProjects = selectedImage.projects ? [...selectedImage.projects] : [];
+    if (project && !prevProjects.some(p => p.id === projectId)) {
+      setSelectedImage({ ...selectedImage, projects: [...prevProjects, project] });
+    }
+
     try {
       const response = await fetch('/api/drive/images/assign-to-project', {
         method: 'POST',
@@ -699,30 +653,29 @@ function DriveImages() {
       });
 
       if (response.ok) {
-        const result = await response.json();
-        // Update selectedImage to reflect the new assignment
-        const updatedProjects = selectedImage.projects ? [...selectedImage.projects] : [];
-        const project = projects.find(p => p.id === projectId);
-        if (project && !updatedProjects.some(p => p.id === projectId)) {
-          updatedProjects.push(project);
-          setSelectedImage({ ...selectedImage, projects: updatedProjects });
-        }
-        // Reload images to get updated project assignments
-        loadImages();
-        console.log(`✅ Bild zu "${result.projectName}" hinzugefügt`);
+        // Reload images in background to sync list
+        loadImages(true);
       } else {
+        // Revert on error
+        setSelectedImage(prev => ({ ...prev, projects: prevProjects }));
         const error = await response.json();
         alert(`Fehler: ${error.error || 'Unbekannter Fehler'}`);
       }
     } catch (error) {
+      // Revert on error
+      setSelectedImage(prev => ({ ...prev, projects: prevProjects }));
       console.error('Error assigning image to project:', error);
       alert(`Fehler beim Zuweisen: ${error.message}`);
     }
   };
 
-  // Unassign image from project
+  // Unassign image from project (optimistic UI update)
   const handleUnassignFromProject = async (projectId, e) => {
     e.stopPropagation(); // Prevent triggering the assign handler
+    // Optimistic: update UI immediately
+    const prevProjects = selectedImage.projects ? [...selectedImage.projects] : [];
+    setSelectedImage(prev => ({ ...prev, projects: prev.projects?.filter(p => p.id !== projectId) || [] }));
+
     try {
       const response = await fetch('/api/drive/images/unassign-from-project', {
         method: 'POST',
@@ -734,21 +687,26 @@ function DriveImages() {
       });
 
       if (response.ok) {
-        const result = await response.json();
-        // Update selectedImage to reflect the removal
-        const updatedProjects = selectedImage.projects?.filter(p => p.id !== projectId) || [];
-        setSelectedImage({ ...selectedImage, projects: updatedProjects });
-        // Reload images to get updated project assignments
-        loadImages();
-        console.log(`✅ Bild von "${result.projectName}" entfernt`);
+        // Reload images in background to sync list
+        loadImages(true);
       } else {
+        // Revert on error
+        setSelectedImage(prev => ({ ...prev, projects: prevProjects }));
         const error = await response.json();
         alert(`Fehler: ${error.error || 'Unbekannter Fehler'}`);
       }
     } catch (error) {
+      // Revert on error
+      setSelectedImage(prev => ({ ...prev, projects: prevProjects }));
       console.error('Error unassigning image from project:', error);
       alert(`Fehler beim Entfernen: ${error.message}`);
     }
+  };
+
+  // Show a custom notification popup
+  const showNotification = (message, type = 'info') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 5000);
   };
 
   // Perform actual delete operation
@@ -767,13 +725,18 @@ function DriveImages() {
         setSelectedImage(null);
         setDeleteFromProjects(false); // Reset checkbox
         loadImages();
+
+        // Show info notification if the file was not found on Drive
+        if (result.driveFileNotFound) {
+          showNotification('Das Bild war nicht mehr auf Google Drive vorhanden. Es wurde aus der Software gelöscht.', 'warning');
+        }
       } else {
         const error = await response.json();
-        alert(`Fehler beim Löschen: ${error.error || 'Unbekannter Fehler'}`);
+        showNotification(`Fehler beim Löschen: ${error.error || 'Unbekannter Fehler'}`, 'error');
       }
     } catch (error) {
       console.error('Error deleting image:', error);
-      alert(`Fehler beim Löschen: ${error.message}`);
+      showNotification(`Fehler beim Löschen: ${error.message}`, 'error');
     }
   };
 
@@ -783,6 +746,7 @@ function DriveImages() {
       const prevImage = images[currentIndex - 1];
       setSelectedImage(prevImage);
       setEditingName(prevImage.name);
+      resetImageView();
     }
   };
 
@@ -792,65 +756,82 @@ function DriveImages() {
       const nextImage = images[currentIndex + 1];
       setSelectedImage(nextImage);
       setEditingName(nextImage.name);
+      resetImageView();
     }
   };
 
-  // Auto-fit image to screen when modal opens
+  // Reset zoom/pan when image changes
+  useEffect(() => {
+    if (!selectedImage) return;
+    resetImageView();
+  }, [selectedImage]);
+
+  // Lightbox-style zoom & pan for modal image
   useEffect(() => {
     if (!selectedImage) return;
 
-    // Use image dimensions from backend data if available
-    const imageWidth = selectedImage.width;
-    const imageHeight = selectedImage.height;
+    const handleWheel = (e) => {
+      if (!e.shiftKey) return;
+      const container = imageContainerRef.current;
+      if (!container || !container.contains(e.target)) return;
+      e.preventDefault();
 
-    if (!imageWidth || !imageHeight) {
-      // Fallback: set to 100% if dimensions not available
-      setZoomLevel(1);
-      setPanPosition({ x: 0, y: 0 });
-      setInitialZoomLevel(1);
-      return;
-    }
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left - rect.width / 2;
+      const mouseY = e.clientY - rect.top - rect.height / 2;
 
-    // Use requestAnimationFrame to wait for container to be ready
-    const calculateZoom = () => {
-      const container = modalImageRef.current?.parentElement;
-      if (!container) {
-        requestAnimationFrame(calculateZoom);
-        return;
+      const oldZoom = zoomRef.current;
+      const delta = e.deltaY > 0 ? -0.15 : 0.15;
+      const newZoom = Math.min(Math.max(oldZoom + delta, 0.5), 5);
+
+      if (newZoom <= 1) {
+        setZoomLevel(newZoom);
+        setPanPosition({ x: 0, y: 0 });
+      } else {
+        const scale = newZoom / oldZoom;
+        const cur = panRef.current;
+        setPanPosition({
+          x: mouseX - scale * (mouseX - cur.x),
+          y: mouseY - scale * (mouseY - cur.y)
+        });
+        setZoomLevel(newZoom);
       }
-
-      const containerRect = container.getBoundingClientRect();
-      const containerWidth = containerRect.width;
-      const containerHeight = containerRect.height;
-
-      // Safeguard: ensure container has valid dimensions
-      if (containerWidth === 0 || containerHeight === 0) {
-        requestAnimationFrame(calculateZoom);
-        return;
-      }
-
-      // Calculate zoom level to fit the image in the container with padding
-      const padding = 20; // Padding in pixels
-      const scaleX = (containerWidth - padding * 2) / imageWidth;
-      const scaleY = (containerHeight - padding * 2) / imageHeight;
-      const scale = Math.min(scaleX, scaleY, 1); // Don't zoom in beyond 100%
-
-      // Center the scaled image in the container
-      const scaledWidth = imageWidth * scale;
-      const scaledHeight = imageHeight * scale;
-      const centerX = (containerWidth - scaledWidth) / 2;
-      const centerY = (containerHeight - scaledHeight) / 2;
-
-      setZoomLevel(scale);
-      setPanPosition({ x: centerX, y: centerY });
-      setInitialZoomLevel(scale);
-      setInitialPanPosition({ x: centerX, y: centerY });
     };
 
-    // Start calculation on next frame
-    const rafId = requestAnimationFrame(calculateZoom);
+    const handleMouseDown = (e) => {
+      if (e.button === 1 && zoomRef.current > 1) {
+        const container = imageContainerRef.current;
+        if (!container || !container.contains(e.target)) return;
+        e.preventDefault();
+        isPanningRef.current = true;
+        panStartRef.current = { x: e.clientX, y: e.clientY };
+        panOriginRef.current = { ...panRef.current };
+      }
+    };
 
-    return () => cancelAnimationFrame(rafId);
+    const handleMouseMove = (e) => {
+      if (!isPanningRef.current) return;
+      setPanPosition({
+        x: panOriginRef.current.x + (e.clientX - panStartRef.current.x),
+        y: panOriginRef.current.y + (e.clientY - panStartRef.current.y)
+      });
+    };
+
+    const handleMouseUp = (e) => {
+      if (e.button === 1) isPanningRef.current = false;
+    };
+
+    document.addEventListener('wheel', handleWheel, { passive: false });
+    document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('wheel', handleWheel);
+      document.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
   }, [selectedImage]);
 
   // Keyboard shortcuts for modal
@@ -1800,87 +1781,62 @@ function DriveImages() {
             </button>
 
             <div className="modal-content">
-              {/* Scrollable Image Container (Left) */}
-              <div className="modal-image-container">
-                <div className="zoom-controls">
-                  <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= initialZoomLevel}>
-                    -
-                  </button>
-                  <span className="zoom-level">{Math.round(zoomLevel * 100)}%</span>
-                  <button className="zoom-btn" onClick={handleZoomIn} title="Zoom In" disabled={zoomLevel >= 3}>
-                    +
-                  </button>
-                  <button className="zoom-btn zoom-reset" onClick={handleZoomReset} title="Zoom zurücksetzen (Vollbild)">
-                    Reset
-                  </button>
+              {/* Lightbox Image Area (Left) */}
+              <div
+                ref={imageContainerRef}
+                className="modal-image-container"
+                onMouseDown={e => { if (e.button === 1) e.preventDefault(); }}
+              >
+                <img
+                  ref={modalImageRef}
+                  src={selectedImage.local_path || selectedImage.thumbnail_url}
+                  alt={selectedImage.name}
+                  style={{
+                    transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomLevel})`,
+                    transition: 'transform 0.15s ease',
+                    cursor: zoomLevel > 1 ? 'grab' : 'default'
+                  }}
+                  draggable={false}
+                />
 
+                {/* Nav arrows */}
+                {images.findIndex(img => img.id === selectedImage.id) > 0 && (
+                  <button className="modal-lightbox-nav prev" onClick={handlePreviousImage} title="Vorheriges Bild (←)">
+                    <ChevronLeft size={24} />
+                  </button>
+                )}
+                {images.findIndex(img => img.id === selectedImage.id) < images.length - 1 && (
+                  <button className="modal-lightbox-nav next" onClick={handleNextImage} title="Nächstes Bild (→)">
+                    <ChevronRight size={24} />
+                  </button>
+                )}
+
+                <div className="modal-lightbox-hint">Shift + Mausrad zum Zoomen · Mittlere Maustaste zum Verschieben</div>
+              </div>
+
+              {/* Fixed Sidebar (Right) */}
+              <div className="modal-sidebar">
+                {/* Action buttons */}
+                <div className="modal-sidebar-actions">
                   <button
-                    className="zoom-btn editor-btn"
+                    className="sidebar-action-btn editor-btn"
                     onClick={() => setShowEditor(true)}
                     title="Editor öffnen"
                   >
-                    <Pencil size={18} />
+                    <Pencil size={16} />
                     Editor
                   </button>
-
-                  <div className="zoom-controls-right">
-                    <button
-                      className="zoom-btn nav-btn"
-                      onClick={handlePreviousImage}
-                      title="Vorheriges Bild (←)"
-                      disabled={images.findIndex(img => img.id === selectedImage.id) === 0}
-                    >
-                      <ChevronLeft size={18} />
-                    </button>
-                    <button
-                      className="zoom-btn nav-btn"
-                      onClick={handleNextImage}
-                      title="Nächstes Bild (→)"
-                      disabled={images.findIndex(img => img.id === selectedImage.id) === images.length - 1}
-                    >
-                      <ChevronRight size={18} />
-                    </button>
-                    <button
-                      className="zoom-btn delete-btn"
-                      onClick={handleDelete}
-                      title="Bild löschen (Delete)"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
+                  <button
+                    className="sidebar-action-btn delete-btn"
+                    onClick={handleDelete}
+                    title="Bild löschen (Delete)"
+                  >
+                    <Trash2 size={16} />
+                    Löschen
+                  </button>
                 </div>
-                <div
-                  className="modal-image-scroll"
-                  onMouseDown={handleMouseDown}
-                  onMouseMove={handleMouseMove}
-                  onMouseUp={handleMouseUp}
-                  onMouseLeave={handleMouseUp}
-                  onWheel={handleWheel}
-                  style={{
-                    cursor: isDragging ? 'grabbing' : 'grab'
-                  }}
-                >
-                  <img
-                    ref={modalImageRef}
-                    src={selectedImage.local_path || selectedImage.thumbnail_url}
-                    alt={selectedImage.name}
-                    style={{
-                      transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomLevel})`,
-                      transformOrigin: 'top left',
-                      transition: isDragging ? 'none' : 'transform 0.1s ease-out',
-                      userSelect: 'none',
-                      pointerEvents: 'none',
-                      maxWidth: 'none',
-                      maxHeight: 'none'
-                    }}
-                    draggable={false}
-                  />
-                </div>
-              </div>
 
-              {/* Fixed Sidebar (Right) - Split in two scrollable sections */}
-              <div className="modal-sidebar">
-                {/* Upper section: Image info (65%) */}
+                {/* Upper section: Image info */}
                 <div className="modal-sidebar-upper">
                   <div className="modal-section">
                     <label>Name</label>
@@ -1992,7 +1948,7 @@ function DriveImages() {
                   )}
                 </div>
 
-                {/* Lower section: Project assignment (35%) */}
+                {/* Lower section: Project assignment */}
                 <div className="modal-sidebar-lower">
                   <div className="modal-section projects-section">
                   <label>📁 Projekte</label>
@@ -2224,6 +2180,18 @@ function DriveImages() {
           image={selectedImage}
           onClose={() => setShowEditor(false)}
         />
+      )}
+
+      {/* Custom Notification Popup */}
+      {notification && (
+        <div className={`drive-notification drive-notification-${notification.type}`}>
+          <div className="drive-notification-content">
+            <span>{notification.message}</span>
+            <button className="drive-notification-close" onClick={() => setNotification(null)}>
+              <X size={16} />
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

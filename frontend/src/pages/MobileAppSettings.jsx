@@ -1,97 +1,71 @@
-import { useState, useEffect, useRef } from 'react';
-import { Smartphone, QrCode, RefreshCw, Trash2, Download, CheckCircle, XCircle, Wifi, Clock, Globe } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Smartphone, QrCode, RefreshCw, Trash2, CheckCircle, XCircle, Wifi, Clock, FolderOpen } from 'lucide-react';
 import './MobileAppSettings.css';
 
 function MobileAppSettings() {
   const [qrData, setQrData] = useState(null);
   const [qrLoading, setQrLoading] = useState(false);
+  const [qrError, setQrError] = useState(null);
   const [devices, setDevices] = useState([]);
-  const [inbox, setInbox] = useState([]);
   const [notification, setNotification] = useState(null);
+  const [drivePaths, setDrivePaths] = useState([]);
+  const [selectedDrivePathId, setSelectedDrivePathId] = useState(null);
   const [networkAddresses, setNetworkAddresses] = useState([]);
-  const [selectedServerUrl, setSelectedServerUrl] = useState('');
-  const qrTimerRef = useRef(null);
+  const [selectedAddress, setSelectedAddress] = useState(null);
 
   useEffect(() => {
     loadDevices();
-    loadInbox();
-    loadNetworkInfo();
-    return () => {
-      if (qrTimerRef.current) clearInterval(qrTimerRef.current);
-    };
+    loadConnectInfo();
+
+    // Auto-refresh devices every 30 seconds for online status
+    const interval = setInterval(loadDevices, 30000);
+    return () => clearInterval(interval);
   }, []);
+
+  const loadConnectInfo = async () => {
+    try {
+      const response = await fetch('/api/mobile/connect-info');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.networkAddresses) setNetworkAddresses(data.networkAddresses);
+        if (data.drivePaths) setDrivePaths(data.drivePaths);
+      }
+    } catch (error) {
+      console.error('Failed to load connect info:', error);
+    }
+  };
 
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
   };
 
-  const loadNetworkInfo = async () => {
-    try {
-      // Load network interfaces and saved setting in parallel
-      const [networkRes, settingsRes] = await Promise.all([
-        fetch('/api/system/network-info'),
-        fetch('/api/settings')
-      ]);
-      const networkData = await networkRes.json();
-      const settingsData = await settingsRes.json();
-
-      const addresses = networkData.addresses || [];
-      setNetworkAddresses(addresses);
-
-      // Use saved URL from DB, or first non-localhost address, or first address
-      const savedUrl = settingsData.mobile_server_url;
-      if (savedUrl && addresses.some(a => a.url === savedUrl)) {
-        setSelectedServerUrl(savedUrl);
-      } else if (addresses.length > 1) {
-        // Pick first non-localhost
-        setSelectedServerUrl(addresses[1].url);
-      } else if (addresses.length > 0) {
-        setSelectedServerUrl(addresses[0].url);
-      }
-    } catch (error) {
-      console.error('Failed to load network info:', error);
-    }
-  };
-
-  const handleServerUrlChange = async (url) => {
-    setSelectedServerUrl(url);
-    // Save to DB
-    try {
-      await fetch('/api/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mobile_server_url: url })
-      });
-    } catch (error) {
-      console.error('Failed to save server URL:', error);
-    }
-    // Reset QR code since URL changed
-    setQrData(null);
-  };
-
   const generateQR = async () => {
-    if (!selectedServerUrl) {
-      showNotification('Bitte zuerst eine Netzwerkadresse auswählen', 'error');
-      return;
-    }
     setQrLoading(true);
+    setQrError(null);
     try {
       const response = await fetch('/api/mobile/connect-token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverUrl: selectedServerUrl })
+        body: JSON.stringify({ drivePathId: selectedDrivePathId, networkAddress: selectedAddress })
       });
       const data = await response.json();
-      setQrData(data);
 
-      // Auto-expire after 5 minutes
-      if (qrTimerRef.current) clearInterval(qrTimerRef.current);
-      qrTimerRef.current = setTimeout(() => {
-        setQrData(null);
-      }, 5 * 60 * 1000);
+      if (!response.ok) {
+        setQrError(data.error);
+        setQrLoading(false);
+        return;
+      }
+
+      setQrData(data);
+      if (data.drivePaths) {
+        setDrivePaths(data.drivePaths);
+      }
+      if (data.networkAddresses) {
+        setNetworkAddresses(data.networkAddresses);
+      }
     } catch (error) {
-      showNotification('Fehler beim Erstellen des QR-Codes', 'error');
+      setQrError('Fehler beim Erstellen des QR-Codes');
     } finally {
       setQrLoading(false);
     }
@@ -104,16 +78,6 @@ function MobileAppSettings() {
       setDevices(data);
     } catch (error) {
       console.error('Failed to load devices:', error);
-    }
-  };
-
-  const loadInbox = async () => {
-    try {
-      const response = await fetch('/api/mobile/inbox');
-      const data = await response.json();
-      setInbox(data.filter(i => i.status === 'new_project' || i.status === 'pending'));
-    } catch (error) {
-      console.error('Failed to load inbox:', error);
     }
   };
 
@@ -143,8 +107,6 @@ function MobileAppSettings() {
 
   // Generate a simple QR code as SVG (no external dependency needed)
   const QRCodeSVG = ({ data, size = 200 }) => {
-    // Simple QR code using a data URI for a QR code API
-    // For production, use a proper QR library
     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(data)}&bgcolor=1a1a2e&color=e2e8f0&format=svg`;
 
     return (
@@ -173,43 +135,76 @@ function MobileAppSettings() {
           <div>
             <h2>Gerät verbinden</h2>
             <p className="section-description">
-              Scanne den QR-Code mit der Handy-App, um das Gerät mit diesem Server zu verbinden.
+              Scanne den QR-Code mit der Handy-App, um das Gerät mit dem Google Drive Ordner zu verbinden.
+              Der QR-Code enthält die Google-Anmeldedaten und den Drive-Ordner.
             </p>
           </div>
         </div>
 
-        {/* Network address selector */}
-        <div className="network-selector">
-          <label className="network-selector-label">
-            <Globe size={16} />
-            Server-Adresse für die App
-          </label>
-          <div className="network-options">
-            {networkAddresses.map(addr => (
-              <button
-                key={addr.url}
-                className={`network-option ${selectedServerUrl === addr.url ? 'active' : ''}`}
-                onClick={() => handleServerUrlChange(addr.url)}
-              >
-                <div className="network-option-name">{addr.name}</div>
-                <div className="network-option-url">{addr.url}</div>
-              </button>
-            ))}
+        {/* Drive path selector */}
+        {drivePaths.length >= 1 && (
+          <div className="network-selector">
+            <label className="network-selector-label">
+              <FolderOpen size={16} />
+              Drive-Ordner für die App
+            </label>
+            <div className="network-options">
+              {drivePaths.map(dp => (
+                <button
+                  key={dp.id}
+                  className={`network-option ${selectedDrivePathId === dp.id ? 'active' : ''}`}
+                  onClick={() => { setSelectedDrivePathId(dp.id); setQrData(null); }}
+                >
+                  <div className="network-option-name">{dp.name}</div>
+                </button>
+              ))}
+            </div>
           </div>
-          {networkAddresses.length === 0 && (
-            <p className="network-loading">Netzwerk-Adressen werden geladen...</p>
-          )}
-        </div>
+        )}
+
+        {/* Network address selector */}
+        {networkAddresses.length >= 1 && (
+          <div className="network-selector">
+            <label className="network-selector-label">
+              <Wifi size={16} />
+              Server-Adresse für die App
+            </label>
+            <div className="network-options">
+              {networkAddresses.map(addr => (
+                <button
+                  key={addr.address}
+                  className={`network-option ${(selectedAddress || networkAddresses[0]?.address) === addr.address ? 'active' : ''}`}
+                  onClick={() => { setSelectedAddress(addr.address); setQrData(null); }}
+                >
+                  <div className="network-option-name">{addr.address}</div>
+                  <div className="network-option-detail">{addr.name}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="qr-section">
+          {qrError && (
+            <div className="qr-error" style={{
+              background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+              borderRadius: 10, padding: 16, marginBottom: 16, display: 'flex',
+              alignItems: 'center', gap: 10, color: '#f87171', fontSize: 14
+            }}>
+              <XCircle size={20} />
+              <p style={{ margin: 0 }}>{qrError}</p>
+            </div>
+          )}
+
           {qrData ? (
             <div className="qr-display">
-              <QRCodeSVG data={qrData.connectUrl} size={220} />
+              <QRCodeSVG data={qrData.qrData} size={220} />
               <div className="qr-info">
+                <p className="qr-server">Drive-Ordner: <strong>{qrData.name}</strong></p>
                 <p className="qr-server">Server: <strong>{qrData.serverUrl}</strong></p>
                 <p className="qr-expires">
-                  <Clock size={14} />
-                  Gültig für 5 Minuten
+                  <FolderOpen size={14} />
+                  QR-Code bleibt gültig bis die App neu verbunden wird
                 </p>
               </div>
               <button className="btn btn-secondary" onClick={generateQR}>
@@ -224,7 +219,7 @@ function MobileAppSettings() {
               <button
                 className="btn btn-primary"
                 onClick={generateQR}
-                disabled={qrLoading || !selectedServerUrl}
+                disabled={qrLoading}
               >
                 {qrLoading ? (
                   <><RefreshCw size={16} className="spinning" /> Wird erstellt...</>
@@ -235,27 +230,27 @@ function MobileAppSettings() {
             </div>
           )}
         </div>
-      </div>
 
-      {/* APK Download */}
-      <div className="settings-section">
-        <h2>App herunterladen</h2>
-        <p className="section-description">
-          Lade die APK-Datei herunter und installiere sie auf deinem Android-Gerät.
-        </p>
-        <div className="apk-download">
-          <div className="apk-info">
-            <Smartphone size={24} />
-            <div>
-              <strong>Fuchs Metallbau App</strong>
-              <span>Android (APK)</span>
+        {/* Setup instructions */}
+        {qrData && (
+          <div className="info-box" style={{ marginTop: 16 }}>
+            <p className="label" style={{ marginBottom: 12, fontSize: 13, fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>So verbindest du ein Gerät:</p>
+            <div style={{ textAlign: 'left' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 14 }}>
+                <span style={{ width: 26, height: 26, borderRadius: '50%', background: '#2a2a4a', color: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>1</span>
+                <span style={{ fontSize: 14, color: '#cbd5e1', lineHeight: 1.4, paddingTop: 2 }}>Installiere die Fuchs Metallbau App (APK unten)</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 14 }}>
+                <span style={{ width: 26, height: 26, borderRadius: '50%', background: '#2a2a4a', color: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>2</span>
+                <span style={{ fontSize: 14, color: '#cbd5e1', lineHeight: 1.4, paddingTop: 2 }}>Öffne die App und scanne diesen QR-Code</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                <span style={{ width: 26, height: 26, borderRadius: '50%', background: '#2a2a4a', color: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>3</span>
+                <span style={{ fontSize: 14, color: '#cbd5e1', lineHeight: 1.4, paddingTop: 2 }}>Melde dich in der App mit deinem Google-Konto an</span>
+              </div>
             </div>
           </div>
-          <a href="/api/mobile/app.apk" className="btn btn-primary" download>
-            <Download size={16} />
-            APK herunterladen
-          </a>
-        </div>
+        )}
       </div>
 
       {/* Connected Devices */}
@@ -264,7 +259,7 @@ function MobileAppSettings() {
           <div>
             <h2>Verbundene Geräte</h2>
             <p className="section-description">
-              Alle Geräte, die mit diesem Server verbunden sind.
+              Alle registrierten Geräte, die sich über den QR-Code angemeldet haben.
             </p>
           </div>
           <button className="btn btn-secondary" onClick={loadDevices}>
@@ -282,15 +277,21 @@ function MobileAppSettings() {
             </div>
           ) : (
             devices.map(device => (
-              <div key={device.device_id} className="device-item">
-                <div className="device-icon">
+              <div key={device.device_id} className={`device-item ${device.is_online ? 'device-online' : 'device-offline'}`}>
+                <div className={`device-icon ${device.is_online ? 'device-icon-online' : ''}`}>
                   <Smartphone size={20} />
                 </div>
                 <div className="device-info">
-                  <div className="device-name">{device.user_name}</div>
+                  <div className="device-name">
+                    {device.user_name}
+                    <span className={`device-status-badge ${device.is_online ? 'status-online' : 'status-offline'}`}>
+                      <span className={`status-dot ${device.is_online ? 'dot-online' : 'dot-offline'}`} />
+                      {device.is_online ? 'Im Netzwerk' : 'Offline'}
+                    </span>
+                  </div>
                   <div className="device-meta">
                     <span>
-                      <Wifi size={12} />
+                      <Smartphone size={12} />
                       {device.device_name || 'Unbekannt'}
                     </span>
                     <span>
@@ -311,31 +312,6 @@ function MobileAppSettings() {
           )}
         </div>
       </div>
-
-      {/* Inbox */}
-      {inbox.length > 0 && (
-        <div className="settings-section">
-          <h2>Inbox</h2>
-          <p className="section-description">
-            Neue Uploads und Projekte von der Handy-App.
-          </p>
-          <div className="inbox-list">
-            {inbox.map(item => (
-              <div key={item.id} className="inbox-item">
-                <div className="inbox-icon">
-                  {item.status === 'new_project' ? '📁' : '🖼️'}
-                </div>
-                <div className="inbox-info">
-                  <div className="inbox-name">{item.original_name || item.file_name}</div>
-                  <div className="inbox-meta">
-                    von {item.device_user || item.user_name} &middot; {formatDate(item.uploaded_at)}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

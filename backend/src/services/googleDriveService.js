@@ -127,9 +127,10 @@ const listFilesInFolderRecursive = async (folderId, parentSubfolder = null) => {
       });
     });
 
-    // Find subfolders
+    // Find subfolders (skip NR_Fuchs_Meta - used internally for inbox/mobile system)
     const subfolders = items.filter(item =>
-      item.mimeType === 'application/vnd.google-apps.folder'
+      item.mimeType === 'application/vnd.google-apps.folder' &&
+      item.name !== 'NR_Fuchs_Meta'
     );
 
     // Recursively process subfolders
@@ -298,7 +299,7 @@ const deleteFileFromDrive = async (fileId) => {
   } catch (error) {
     console.error('Error deleting file from Drive:', error.message);
 
-    if (error.code === 404) {
+    if (error.code === 404 || error.code === '404' || error.response?.status === 404 || (error.message && error.message.includes('File not found'))) {
       throw new Error('Datei nicht gefunden auf Google Drive.');
     }
 
@@ -310,13 +311,231 @@ const deleteFileFromDrive = async (fileId) => {
   }
 };
 
+/**
+ * List subfolders in a Google Drive folder (not recursive, folders only)
+ */
+const listFoldersInFolder = async (folderId) => {
+  try {
+    if (!await isAuthenticated()) {
+      throw new Error('Not authenticated');
+    }
+
+    const drive = await getDriveClient();
+    const response = await drive.files.list({
+      q: `'${folderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed=false`,
+      fields: 'files(id,name,modifiedTime)',
+      pageSize: 1000,
+      orderBy: 'name'
+    });
+
+    return response.data.files || [];
+  } catch (error) {
+    console.error('Error listing folders:', error.message);
+    throw error;
+  }
+};
+
+/**
+ * List all files (not just images) in a folder
+ */
+const listAllFilesInFolder = async (folderId) => {
+  try {
+    if (!await isAuthenticated()) {
+      throw new Error('Not authenticated');
+    }
+
+    const drive = await getDriveClient();
+    const response = await drive.files.list({
+      q: `'${folderId}' in parents and trashed=false`,
+      fields: 'files(id,name,mimeType,size,thumbnailLink,imageMediaMetadata)',
+      pageSize: 1000
+    });
+
+    return response.data.files || [];
+  } catch (error) {
+    console.error('Error listing all files:', error.message);
+    throw error;
+  }
+};
+
+/**
+ * Find a subfolder by name inside a parent folder
+ */
+const findSubfolder = async (parentFolderId, folderName) => {
+  try {
+    if (!await isAuthenticated()) return null;
+
+    const drive = await getDriveClient();
+    const response = await drive.files.list({
+      q: `'${parentFolderId}' in parents and name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed=false`,
+      fields: 'files(id,name)',
+      pageSize: 1
+    });
+
+    return response.data.files?.length > 0 ? response.data.files[0] : null;
+  } catch (error) {
+    console.error('Error finding subfolder:', error.message);
+    return null;
+  }
+};
+
+/**
+ * Create a folder on Google Drive
+ * @param {string} name - Folder name
+ * @param {string} parentFolderId - Parent folder ID
+ * @returns {Object} Created folder { id, name }
+ */
+const createFolderOnDrive = async (name, parentFolderId) => {
+  try {
+    if (!await isAuthenticated()) {
+      throw new Error('Not authenticated');
+    }
+
+    const drive = await getDriveClient();
+    const response = await drive.files.create({
+      requestBody: {
+        name,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: [parentFolderId],
+      },
+      fields: 'id, name',
+    });
+
+    console.log(`📁 Created folder on Drive: ${name} (${response.data.id})`);
+    return response.data;
+  } catch (error) {
+    console.error('Error creating folder on Drive:', error.message);
+    throw error;
+  }
+};
+
+/**
+ * Move a file on Google Drive (change parent folder)
+ * @param {string} fileId - File to move
+ * @param {string} newParentId - New parent folder ID
+ * @param {string} oldParentId - Current parent folder ID (to remove from)
+ * @returns {Object} Updated file metadata
+ */
+const moveFileOnDrive = async (fileId, newParentId, oldParentId) => {
+  try {
+    if (!await isAuthenticated()) {
+      throw new Error('Not authenticated');
+    }
+
+    const drive = await getDriveClient();
+    const response = await drive.files.update({
+      fileId,
+      addParents: newParentId,
+      removeParents: oldParentId,
+      fields: 'id, name, parents',
+    });
+
+    console.log(`📦 Moved file on Drive: ${response.data.name} → ${newParentId}`);
+    return response.data;
+  } catch (error) {
+    console.error('Error moving file on Drive:', error.message);
+    throw error;
+  }
+};
+
+/**
+ * Get file metadata including parents
+ * @param {string} fileId - File ID
+ * @returns {Object} File metadata with parents
+ */
+const getFileMetadata = async (fileId) => {
+  try {
+    if (!await isAuthenticated()) {
+      throw new Error('Not authenticated');
+    }
+
+    const drive = await getDriveClient();
+    const response = await drive.files.get({
+      fileId,
+      fields: 'id, name, parents, mimeType',
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error('Error getting file metadata:', error.message);
+    throw error;
+  }
+};
+
+/**
+ * Find or create a subfolder inside a parent folder
+ * @param {string} parentFolderId - Parent folder ID
+ * @param {string} folderName - Subfolder name
+ * @returns {Object} Folder { id, name }
+ */
+const findOrCreateSubfolder = async (parentFolderId, folderName) => {
+  const existing = await findSubfolder(parentFolderId, folderName);
+  if (existing) return existing;
+  return await createFolderOnDrive(folderName, parentFolderId);
+};
+
+/**
+ * Upload a local file to Google Drive
+ * @param {string} localFilePath - Full path to the local file
+ * @param {string} parentFolderId - Drive folder to upload into
+ * @param {string} [fileName] - Optional name override (defaults to basename)
+ * @returns {Object} Uploaded file { id, name }
+ */
+const uploadFileToDrive = async (localFilePath, parentFolderId, fileName) => {
+  try {
+    if (!await isAuthenticated()) {
+      throw new Error('Not authenticated');
+    }
+
+    const drive = await getDriveClient();
+    const name = fileName || path.basename(localFilePath);
+
+    // Detect mime type from extension
+    const ext = path.extname(localFilePath).toLowerCase();
+    const mimeTypes = {
+      '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+      '.png': 'image/png', '.webp': 'image/webp',
+      '.gif': 'image/gif', '.bmp': 'image/bmp',
+      '.tiff': 'image/tiff', '.tif': 'image/tiff',
+      '.heic': 'image/heic', '.heif': 'image/heif',
+    };
+    const mimeType = mimeTypes[ext] || 'application/octet-stream';
+
+    const response = await drive.files.create({
+      requestBody: {
+        name,
+        parents: [parentFolderId],
+      },
+      media: {
+        mimeType,
+        body: fs.createReadStream(localFilePath),
+      },
+      fields: 'id, name',
+    });
+
+    console.log(`⬆️ Uploaded to Drive: ${name} (${response.data.id})`);
+    return response.data;
+  } catch (error) {
+    console.error('Error uploading file to Drive:', error.message);
+    throw error;
+  }
+};
+
 module.exports = {
   extractFolderId,
   listFilesInFolder,
   listFilesInFolderRecursive,
+  listFoldersInFolder,
+  listAllFilesInFolder,
+  findSubfolder,
   downloadFile,
   compressImage,
   generateThumbnail,
   deleteFileFromDrive,
-  deleteFile: deleteFileFromDrive // Alias for consistency
+  deleteFile: deleteFileFromDrive,
+  createFolderOnDrive,
+  moveFileOnDrive,
+  getFileMetadata,
+  findOrCreateSubfolder,
+  uploadFileToDrive,
 };

@@ -8,6 +8,7 @@ const {
   checkCredentials,
   saveCredentials
 } = require('../services/authService');
+const { handleMobilePcCallback } = require('../controllers/mobileController');
 
 /**
  * Auth Routes
@@ -86,7 +87,22 @@ router.get('/google', (req, res) => {
 
 // OAuth callback
 router.get('/google/callback', async (req, res) => {
-  const { code, error } = req.query;
+  const { code, error, state } = req.query;
+
+  // Check if this is a mobile PC-login callback (state starts with "mobile_login:")
+  if (state && state.startsWith('mobile_login:')) {
+    const sessionId = state.replace('mobile_login:', '');
+    if (error) {
+      return res.send(`
+        <!DOCTYPE html><html><head><meta charset="utf-8"><title>Login abgebrochen</title>
+        <style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#1a1a2e;color:#fff}
+        .box{background:#16213e;padding:40px;border-radius:12px;text-align:center;max-width:400px}
+        h1{color:#e74c3c}p{color:#94a3b8}</style></head>
+        <body><div class="box"><h1>Login abgebrochen</h1><p>Du hast die Anmeldung abgebrochen. Versuche es erneut in der Handy-App.</p></div></body></html>
+      `);
+    }
+    return handleMobilePcCallback(req, res, code, sessionId);
+  }
 
   // User denied access
   if (error) {
