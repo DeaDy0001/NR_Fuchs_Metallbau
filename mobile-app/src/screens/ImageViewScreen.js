@@ -9,7 +9,9 @@ import { downloadFullImage } from '../services/syncService';
 import { getImageUrl } from '../services/api';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const IMAGE_HEIGHT = SCREEN_HEIGHT - 110;
+const HEADER_HEIGHT = 60;
+const FOOTER_HEIGHT = 64;
+const IMAGE_HEIGHT = SCREEN_HEIGHT - HEADER_HEIGHT - FOOTER_HEIGHT;
 
 // Calculate distance between two touch points
 function getDistance(touches) {
@@ -18,7 +20,15 @@ function getDistance(touches) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-// Single zoomable image using PanResponder + Animated (works on Android & iOS)
+// Get midpoint between two touch points
+function getMidpoint(touches) {
+  return {
+    x: (touches[0].pageX + touches[1].pageX) / 2,
+    y: (touches[0].pageY + touches[1].pageY) / 2,
+  };
+}
+
+// Single zoomable image using PanResponder + Animated
 function ZoomableImage({ imageId, localUri, isActive }) {
   const [imageUri, setImageUri] = useState(localUri || null);
   const [imageHeaders, setImageHeaders] = useState(null);
@@ -34,8 +44,11 @@ function ZoomableImage({ imageId, localUri, isActive }) {
   const currentTranslateY = useRef(0);
   const initialPinchDistance = useRef(0);
   const pinchStartScale = useRef(1);
+  const pinchMidpoint = useRef({ x: 0, y: 0 });
+  const pinchStartTranslate = useRef({ x: 0, y: 0 });
   const lastTapTime = useRef(0);
   const isPinching = useRef(false);
+  const wasPinching = useRef(false);
   const panStartX = useRef(0);
   const panStartY = useRef(0);
 
@@ -45,9 +58,9 @@ function ZoomableImage({ imageId, localUri, isActive }) {
     }
   }, [isActive]);
 
-  // Reset zoom when becoming inactive
+  // Reset zoom only when becoming inactive (swiping away)
   useEffect(() => {
-    if (isActive) {
+    if (!isActive) {
       resetZoom(false);
     }
   }, [isActive]);
@@ -100,20 +113,36 @@ function ZoomableImage({ imageId, localUri, isActive }) {
     ]).start();
   };
 
+  const clampTranslation = (tx, ty, scale) => {
+    const maxTransX = (SCREEN_WIDTH * (scale - 1)) / 2;
+    const maxTransY = (IMAGE_HEIGHT * (scale - 1)) / 2;
+    return {
+      x: Math.max(-maxTransX, Math.min(maxTransX, tx)),
+      y: Math.max(-maxTransY, Math.min(maxTransY, ty)),
+    };
+  };
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        // Only claim the gesture if zoomed in (for panning) or if 2 fingers (for pinching)
-        return currentScale.current > 1 || Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2;
+        // Claim gesture if zoomed in (for panning) or if any movement detected (for pinching)
+        if (currentScale.current > 1) return true;
+        return Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2;
       },
 
       onPanResponderGrant: (evt) => {
         const touches = evt.nativeEvent.touches;
         if (touches.length === 2) {
           isPinching.current = true;
+          wasPinching.current = true;
           initialPinchDistance.current = getDistance(touches);
           pinchStartScale.current = currentScale.current;
+          pinchMidpoint.current = getMidpoint(touches);
+          pinchStartTranslate.current = {
+            x: currentTranslateX.current,
+            y: currentTranslateY.current,
+          };
         } else {
           isPinching.current = false;
           panStartX.current = currentTranslateX.current;
@@ -125,11 +154,17 @@ function ZoomableImage({ imageId, localUri, isActive }) {
         const touches = evt.nativeEvent.touches;
 
         if (touches.length === 2) {
-          // Pinch zoom
+          // Pinch zoom with focal point tracking
           if (!isPinching.current) {
             isPinching.current = true;
+            wasPinching.current = true;
             initialPinchDistance.current = getDistance(touches);
             pinchStartScale.current = currentScale.current;
+            pinchMidpoint.current = getMidpoint(touches);
+            pinchStartTranslate.current = {
+              x: currentTranslateX.current,
+              y: currentTranslateY.current,
+            };
             return;
           }
 
@@ -137,10 +172,22 @@ function ZoomableImage({ imageId, localUri, isActive }) {
           const pinchRatio = currentDistance / initialPinchDistance.current;
           const newScale = Math.max(1, Math.min(pinchStartScale.current * pinchRatio, 6));
 
+          // Calculate focal point offset to zoom toward the pinch center
+          const mid = getMidpoint(touches);
+          const focalX = mid.x - SCREEN_WIDTH / 2;
+          const focalY = mid.y - HEADER_HEIGHT - IMAGE_HEIGHT / 2;
+          const scaleRatio = newScale / pinchStartScale.current;
+          const newTx = pinchStartTranslate.current.x + focalX * (1 - scaleRatio);
+          const newTy = pinchStartTranslate.current.y + focalY * (1 - scaleRatio);
+
           currentScale.current = newScale;
+          currentTranslateX.current = newTx;
+          currentTranslateY.current = newTy;
           scaleVal.setValue(newScale);
+          translateXVal.setValue(newTx);
+          translateYVal.setValue(newTy);
         } else if (currentScale.current > 1 && !isPinching.current) {
-          // Pan when zoomed in
+          // Pan when zoomed in with single finger
           const newX = panStartX.current + gestureState.dx;
           const newY = panStartY.current + gestureState.dy;
 
@@ -152,18 +199,40 @@ function ZoomableImage({ imageId, localUri, isActive }) {
       },
 
       onPanResponderRelease: (evt) => {
+        const wasJustPinching = isPinching.current || wasPinching.current;
         isPinching.current = false;
 
-        // Snap back to 1 if barely zoomed
-        if (currentScale.current < 1.15) {
+        // If scale dropped below 1 during pinch-out, snap to 1
+        if (currentScale.current <= 1) {
           resetZoom(true);
+          wasPinching.current = false;
           return;
         }
 
-        // Double tap detection
+        // After a pinch, clamp translation and clear pinch flag
+        if (wasJustPinching) {
+          const clamped = clampTranslation(
+            currentTranslateX.current,
+            currentTranslateY.current,
+            currentScale.current
+          );
+          if (clamped.x !== currentTranslateX.current || clamped.y !== currentTranslateY.current) {
+            currentTranslateX.current = clamped.x;
+            currentTranslateY.current = clamped.y;
+            Animated.parallel([
+              Animated.timing(translateXVal, { toValue: clamped.x, duration: 150, useNativeDriver: true }),
+              Animated.timing(translateYVal, { toValue: clamped.y, duration: 150, useNativeDriver: true }),
+            ]).start();
+          }
+          // Reset wasPinching after a short delay to avoid double-tap false positive
+          setTimeout(() => { wasPinching.current = false; }, 350);
+          return;
+        }
+
+        // Double tap detection (only when NOT pinching)
         const now = Date.now();
         const touches = evt.nativeEvent.changedTouches;
-        if (touches.length === 1 && Math.abs(evt.nativeEvent.locationX) < SCREEN_WIDTH) {
+        if (touches.length === 1) {
           if (now - lastTapTime.current < 300) {
             // Double tap
             if (currentScale.current > 1.5) {
@@ -178,17 +247,17 @@ function ZoomableImage({ imageId, localUri, isActive }) {
         }
 
         // Clamp translation so image doesn't fly off screen
-        const maxTransX = (SCREEN_WIDTH * (currentScale.current - 1)) / 2;
-        const maxTransY = (IMAGE_HEIGHT * (currentScale.current - 1)) / 2;
-        let clampedX = Math.max(-maxTransX, Math.min(maxTransX, currentTranslateX.current));
-        let clampedY = Math.max(-maxTransY, Math.min(maxTransY, currentTranslateY.current));
-
-        if (clampedX !== currentTranslateX.current || clampedY !== currentTranslateY.current) {
-          currentTranslateX.current = clampedX;
-          currentTranslateY.current = clampedY;
+        const clamped = clampTranslation(
+          currentTranslateX.current,
+          currentTranslateY.current,
+          currentScale.current
+        );
+        if (clamped.x !== currentTranslateX.current || clamped.y !== currentTranslateY.current) {
+          currentTranslateX.current = clamped.x;
+          currentTranslateY.current = clamped.y;
           Animated.parallel([
-            Animated.timing(translateXVal, { toValue: clampedX, duration: 150, useNativeDriver: true }),
-            Animated.timing(translateYVal, { toValue: clampedY, duration: 150, useNativeDriver: true }),
+            Animated.timing(translateXVal, { toValue: clamped.x, duration: 150, useNativeDriver: true }),
+            Animated.timing(translateYVal, { toValue: clamped.y, duration: 150, useNativeDriver: true }),
           ]).start();
         }
       },
@@ -261,11 +330,8 @@ export default function ImageViewScreen({ route, navigation }) {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* Header - Image name and counter */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.headerBtn} onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={24} color="white" />
-        </TouchableOpacity>
         <View style={styles.headerInfo}>
           <Text style={styles.headerTitle} numberOfLines={1}>{currentImage?.name || 'Bild'}</Text>
           <Text style={styles.headerSubtitle}>
@@ -301,6 +367,14 @@ export default function ImageViewScreen({ route, navigation }) {
           )}
         />
       )}
+
+      {/* Footer - Back button */}
+      <View style={styles.footer}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+          <Ionicons name="arrow-back" size={20} color="white" />
+          <Text style={styles.backBtnText}>Zurück</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -309,10 +383,10 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: 'black' },
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingTop: 48, paddingHorizontal: 16, paddingBottom: 12,
+    paddingTop: 48, paddingHorizontal: 16, paddingBottom: 8,
     backgroundColor: 'rgba(0,0,0,0.8)', gap: 12, zIndex: 10,
+    height: HEADER_HEIGHT + 38,
   },
-  headerBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   headerInfo: { flex: 1 },
   headerTitle: { color: 'white', fontSize: 16, fontWeight: '600' },
   headerSubtitle: { color: colors.textTertiary, fontSize: 13, marginTop: 2 },
@@ -323,4 +397,29 @@ const styles = StyleSheet.create({
   },
   image: { width: SCREEN_WIDTH, height: IMAGE_HEIGHT },
   loadingText: { color: colors.textTertiary, fontSize: 14 },
+  footer: {
+    height: FOOTER_HEIGHT,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+  },
+  backBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  backBtnText: {
+    color: 'white',
+    fontSize: 15,
+    fontWeight: '600',
+  },
 });
