@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, Image, Dimensions, TouchableOpacity,
-  ActivityIndicator, FlatList, Animated, PanResponder,
+  ActivityIndicator, FlatList, Animated, PanResponder, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as FileSystem from 'expo-file-system';
 import { colors } from '../theme/colors';
 import { downloadFullImage } from '../services/syncService';
 import { getImageUrl } from '../services/api';
+import { deleteRecentPhoto } from '../services/database';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const HEADER_HEIGHT = 60;
@@ -308,14 +310,63 @@ function ZoomableImage({ imageId, localUri, isActive }) {
 }
 
 export default function ImageViewScreen({ route, navigation }) {
-  const { imageId, imageName, projectName, images, initialIndex, localUri } = route.params;
+  const { imageId, imageName, projectName, images, initialIndex, localUri, onDelete } = route.params;
   const [currentIndex, setCurrentIndex] = useState(initialIndex || 0);
+  const [deletedIds, setDeletedIds] = useState(new Set());
   const insets = useSafeAreaInsets();
   const flatListRef = useRef(null);
 
-  // Single image mode (no images array)
-  const imageList = images || [{ id: imageId, name: imageName, localUri }];
+  // Single image mode (no images array), filter out deleted
+  const allImages = images || [{ id: imageId, name: imageName, localUri }];
+  const imageList = allImages.filter(img => !deletedIds.has(img.id));
   const currentImage = imageList[currentIndex] || imageList[0];
+
+  const handleDeleteCurrent = useCallback(() => {
+    if (!currentImage) return;
+
+    Alert.alert(
+      'Foto löschen',
+      `"${currentImage.name}" vom Handy löschen?`,
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        {
+          text: 'Löschen',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Delete from database
+              if (currentImage.id) {
+                await deleteRecentPhoto(currentImage.id);
+              }
+              // Delete local file
+              if (currentImage.localUri) {
+                try {
+                  await FileSystem.deleteAsync(currentImage.localUri, { idempotent: true });
+                } catch {}
+              }
+
+              // Mark as deleted
+              setDeletedIds(prev => new Set([...prev, currentImage.id]));
+
+              // If all images are deleted, go back
+              const remaining = imageList.length - 1;
+              if (remaining <= 0) {
+                navigation.goBack();
+                return;
+              }
+
+              // Adjust index if needed
+              if (currentIndex >= remaining) {
+                setCurrentIndex(remaining - 1);
+              }
+            } catch (error) {
+              Alert.alert('Fehler', 'Foto konnte nicht gelöscht werden.');
+            }
+          },
+        },
+      ]
+    );
+  }, [currentImage, currentIndex, imageList.length, navigation]);
 
   const onViewableItemsChanged = useCallback(({ viewableItems }) => {
     if (viewableItems.length > 0 && viewableItems[0].index != null) {
@@ -388,11 +439,15 @@ export default function ImageViewScreen({ route, navigation }) {
         />
       )}
 
-      {/* Footer - Back button + navigation */}
+      {/* Footer - Back button + delete + navigation */}
       <View style={[styles.footer, { paddingBottom: insets.bottom || 4 }]}>
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={20} color="white" />
           <Text style={styles.backBtnText}>Zurück</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.deleteBtn} onPress={handleDeleteCurrent}>
+          <Ionicons name="trash-outline" size={20} color="#ef4444" />
         </TouchableOpacity>
 
         {imageList.length > 1 && (
@@ -461,6 +516,14 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 15,
     fontWeight: '600',
+  },
+  deleteBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.3)',
   },
   navButtons: {
     flexDirection: 'row',

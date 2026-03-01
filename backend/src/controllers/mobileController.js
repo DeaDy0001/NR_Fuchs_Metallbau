@@ -1247,6 +1247,48 @@ const mergeSelectedInboxImages = async (req, res) => {
 };
 
 /**
+ * Delete specific images from inbox
+ * POST /api/mobile/inbox/delete-images
+ * Body: { fileIds: string[] }
+ */
+const deleteInboxImages = async (req, res) => {
+  try {
+    const { fileIds } = req.body;
+    if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
+      return res.status(400).json({ error: 'fileIds (Array) ist erforderlich' });
+    }
+
+    let deletedCount = 0;
+    const errors = [];
+
+    for (const fileId of fileIds) {
+      try {
+        // Delete from Google Drive
+        await deleteFileFromDrive(fileId);
+
+        // Delete from local database if exists
+        try {
+          db.prepare('DELETE FROM drive_images WHERE drive_id = ?').run(fileId);
+        } catch {}
+
+        deletedCount++;
+      } catch (error) {
+        errors.push({ fileId, error: error.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      deletedCount,
+      errors: errors.length > 0 ? errors : undefined,
+    });
+  } catch (error) {
+    console.error('Error deleting inbox images:', error);
+    res.status(500).json({ error: 'Löschen fehlgeschlagen: ' + error.message });
+  }
+};
+
+/**
  * Delete/reject an inbox project - delete folder from inbox/ on Google Drive
  * DELETE /api/mobile/inbox/:folderId
  */
@@ -2102,6 +2144,7 @@ module.exports = {
   addToLibrary,
   mergeInboxProject,
   mergeSelectedInboxImages,
+  deleteInboxImages,
   deleteInboxProject,
   mobileGoogleAuth,
   mobileGoogleCallback,

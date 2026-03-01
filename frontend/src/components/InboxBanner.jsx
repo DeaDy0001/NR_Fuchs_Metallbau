@@ -229,6 +229,8 @@ function InboxModal({ projects, onClose, onRefresh }) {
   const [lightbox, setLightbox] = useState(null);
   // Track selected images per folder (for user inbox selective merge)
   const [selectedImages, setSelectedImages] = useState({});
+  // Track images marked for deletion per folder (red entries)
+  const [markedForDeletion, setMarkedForDeletion] = useState({});
   const hasChangesRef = useRef(false);
 
   const handleClose = useCallback(() => {
@@ -299,6 +301,16 @@ function InboxModal({ projects, onClose, onRefresh }) {
       }
       return { ...prev, [folderId]: current };
     });
+    // Remove from deletion marks if selecting
+    setMarkedForDeletion(prev => {
+      const current = prev[folderId];
+      if (current && current.has(imageId)) {
+        const next = new Set(current);
+        next.delete(imageId);
+        return { ...prev, [folderId]: next };
+      }
+      return prev;
+    });
   };
 
   const selectAllImages = (folderId) => {
@@ -307,6 +319,8 @@ function InboxModal({ projects, onClose, onRefresh }) {
       ...prev,
       [folderId]: new Set(folderImages.map(img => img.id)),
     }));
+    // Clear all deletion marks when selecting all
+    setMarkedForDeletion(prev => ({ ...prev, [folderId]: new Set() }));
   };
 
   const deselectAllImages = (folderId) => {
@@ -318,6 +332,62 @@ function InboxModal({ projects, onClose, onRefresh }) {
 
   const getSelectedCount = (folderId) => {
     return selectedImages[folderId]?.size || 0;
+  };
+
+  const toggleDeleteMark = (folderId, imageId) => {
+    setMarkedForDeletion(prev => {
+      const current = new Set(prev[folderId] || []);
+      if (current.has(imageId)) {
+        current.delete(imageId);
+      } else {
+        current.add(imageId);
+      }
+      return { ...prev, [folderId]: current };
+    });
+    // Remove from selection if marking for deletion
+    setSelectedImages(prev => {
+      const current = prev[folderId];
+      if (current && current.has(imageId)) {
+        const next = new Set(current);
+        next.delete(imageId);
+        return { ...prev, [folderId]: next };
+      }
+      return prev;
+    });
+  };
+
+  const getDeleteMarkedCount = (folderId) => {
+    return markedForDeletion[folderId]?.size || 0;
+  };
+
+  const handleDeleteMarked = async (folderId, project) => {
+    const marked = markedForDeletion[folderId];
+    if (!marked || marked.size === 0) return;
+    if (!window.confirm(`${marked.size} Bild(er) endgültig von Google Drive und lokal löschen?`)) return;
+    setProcessing(prev => ({ ...prev, [project.id]: 'deleting' }));
+    try {
+      const response = await fetch('/api/mobile/inbox/delete-images', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileIds: [...marked] }),
+      });
+      if (response.ok) {
+        hasChangesRef.current = true;
+        const data = await response.json();
+        showNotification(`${data.deletedCount} Bilder gelöscht`);
+        setMarkedForDeletion(prev => { const next = { ...prev }; delete next[folderId]; return next; });
+        setImages(prev => { const next = { ...prev }; delete next[folderId]; return next; });
+        setSelectedImages(prev => { const next = { ...prev }; delete next[folderId]; return next; });
+        await onRefresh();
+      } else {
+        const data = await response.json();
+        showNotification(data.error || 'Fehler beim Löschen', 'error');
+      }
+    } catch (e) {
+      showNotification('Fehler: ' + e.message, 'error');
+    } finally {
+      setProcessing(prev => ({ ...prev, [project.id]: null }));
+    }
   };
 
   /** Confirm for named projects: move folder to Projekte/ on Drive */
@@ -508,7 +578,9 @@ function InboxModal({ projects, onClose, onRefresh }) {
     const folderId = project.drive_folder_id;
     const folderImages = images[folderId] || [];
     const selected = selectedImages[folderId] || new Set();
+    const deleteMarked = markedForDeletion[folderId] || new Set();
     const selectedCount = selected.size;
+    const deleteCount = deleteMarked.size;
     const totalCount = folderImages.length;
     const isExpanded = expandedProject === folderId || isUserInbox;
 
@@ -654,31 +726,50 @@ function InboxModal({ projects, onClose, onRefresh }) {
               </div>
             ) : folderImages.length > 0 ? (
               <>
-                {isUserInbox && (
+                {(isUserInbox || deleteCount > 0) && (
                   <div className="pending-images-toolbar">
-                    <button
-                      className="btn-select-all"
-                      onClick={() => selectedCount === totalCount ? deselectAllImages(folderId) : selectAllImages(folderId)}
-                    >
-                      {selectedCount === totalCount ? <CheckSquare size={14} /> : <Square size={14} />}
-                      {selectedCount === totalCount ? 'Alle abwählen' : 'Alle auswählen'}
-                    </button>
+                    {isUserInbox && (
+                      <button
+                        className="btn-select-all"
+                        onClick={() => selectedCount === totalCount ? deselectAllImages(folderId) : selectAllImages(folderId)}
+                      >
+                        {selectedCount === totalCount ? <CheckSquare size={14} /> : <Square size={14} />}
+                        {selectedCount === totalCount ? 'Alle abwählen' : 'Alle auswählen'}
+                      </button>
+                    )}
                     <span className="pending-images-count">
-                      {selectedCount} / {totalCount} ausgewählt
+                      {isUserInbox && <>{selectedCount} / {totalCount} ausgewählt</>}
+                      {deleteCount > 0 && isUserInbox && ' · '}
+                      {deleteCount > 0 && <span className="delete-count-label">{deleteCount} zum Löschen</span>}
                     </span>
+                    {deleteCount > 0 && (
+                      <button
+                        className="btn-delete-marked"
+                        onClick={() => handleDeleteMarked(folderId, project)}
+                      >
+                        <Trash2 size={14} />
+                        Löschen bestätigen
+                      </button>
+                    )}
                   </div>
                 )}
                 <div className="pending-images-grid">
                   {folderImages.map((img, idx) => {
                     const isSelected = selected.has(img.id);
+                    const isMarkedDelete = deleteMarked.has(img.id);
+                    const cardClass = isMarkedDelete
+                      ? `pending-image-card marked-delete${isUserInbox ? ' selectable' : ''}`
+                      : `pending-image-card ${isUserInbox ? (isSelected ? 'selectable selected' : 'selectable') : ''}`;
                     return (
                       <div
                         key={img.id}
-                        className={`pending-image-card ${isUserInbox ? (isSelected ? 'selectable selected' : 'selectable') : ''}`}
+                        className={cardClass}
                         title={img.name}
-                        onClick={isUserInbox
-                          ? () => toggleImageSelection(folderId, img.id)
-                          : () => openLightbox(folderId, idx)
+                        onClick={isMarkedDelete
+                          ? () => toggleDeleteMark(folderId, img.id)
+                          : isUserInbox
+                            ? () => toggleImageSelection(folderId, img.id)
+                            : () => openLightbox(folderId, idx)
                         }
                       >
                         {img.id ? (
@@ -688,13 +779,25 @@ function InboxModal({ projects, onClose, onRefresh }) {
                             <Image size={24} />
                           </div>
                         )}
-                        {isUserInbox && (
+                        {isUserInbox && !isMarkedDelete && (
                           <div className={`pending-image-checkbox ${isSelected ? 'checked' : ''}`}>
                             {isSelected ? <CheckSquare size={18} /> : <Square size={18} />}
                           </div>
                         )}
-                        <div className="pending-image-name">{img.name}</div>
-                        {isUserInbox && (
+                        {isMarkedDelete && (
+                          <div className="pending-image-delete-badge">
+                            <Trash2 size={16} />
+                          </div>
+                        )}
+                        <div className={`pending-image-name${isMarkedDelete ? ' delete-name' : ''}`}>{img.name}</div>
+                        <button
+                          className={`pending-image-delete-toggle ${isMarkedDelete ? 'active' : ''}`}
+                          onClick={(e) => { e.stopPropagation(); toggleDeleteMark(folderId, img.id); }}
+                          title={isMarkedDelete ? 'Löschen aufheben' : 'Zum Löschen markieren'}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                        {isUserInbox && !isMarkedDelete && (
                           <button
                             className="pending-image-zoom"
                             onClick={(e) => { e.stopPropagation(); openLightbox(folderId, idx); }}

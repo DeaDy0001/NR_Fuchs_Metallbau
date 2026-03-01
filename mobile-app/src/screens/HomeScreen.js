@@ -7,9 +7,10 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { getRecentPhotos, getCachedProjects, addToUploadQueue, updateRecentPhotoProject, cacheProject } from '../services/database';
+import { getRecentPhotos, getCachedProjects, addToUploadQueue, updateRecentPhotoProject, cacheProject, deleteRecentPhotos } from '../services/database';
 import { createProject } from '../services/api';
 import { syncMetadata } from '../services/syncService';
+import * as FileSystem from 'expo-file-system';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const PHOTO_COLUMNS = 3;
@@ -139,6 +140,54 @@ export default function HomeScreen({ navigation }) {
     setSelectedIds(new Set(recentPhotos.map(p => p.id)));
   };
 
+  // Delete selected photos
+  const handleDeleteSelected = () => {
+    const count = selectedIds.size;
+    if (count === 0) return;
+
+    Alert.alert(
+      'Fotos löschen',
+      `${count} ${count === 1 ? 'Foto' : 'Fotos'} vom Handy löschen?`,
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        {
+          text: 'Löschen',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const selectedPhotos = recentPhotos.filter(p => selectedIds.has(p.id));
+
+              // Delete local files
+              for (const photo of selectedPhotos) {
+                if (photo.file_uri) {
+                  try {
+                    await FileSystem.deleteAsync(photo.file_uri, { idempotent: true });
+                  } catch {}
+                }
+                if (photo.thumbnail_uri && photo.thumbnail_uri !== photo.file_uri) {
+                  try {
+                    await FileSystem.deleteAsync(photo.thumbnail_uri, { idempotent: true });
+                  } catch {}
+                }
+              }
+
+              // Delete from database
+              await deleteRecentPhotos([...selectedIds]);
+
+              // Refresh and exit selection
+              await loadData();
+              setSelectionMode(false);
+              setSelectedIds(new Set());
+            } catch (error) {
+              console.error('Failed to delete photos:', error);
+              Alert.alert('Fehler', 'Fotos konnten nicht gelöscht werden.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   // Project assignment
   const openProjectPicker = async () => {
     try {
@@ -259,6 +308,13 @@ export default function HomeScreen({ navigation }) {
           </Text>
           <TouchableOpacity onPress={selectAll} style={styles.selectionBtn}>
             <Text style={styles.selectAllText}>Alle</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleDeleteSelected}
+            style={[styles.deleteBtnBar, selectedIds.size === 0 && styles.assignBtnDisabled]}
+            disabled={selectedIds.size === 0}
+          >
+            <Ionicons name="trash-outline" size={18} color="white" />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={openProjectPicker}
@@ -468,6 +524,12 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 13,
     fontWeight: '600',
+  },
+  deleteBtnBar: {
+    backgroundColor: 'rgba(239, 68, 68, 0.3)',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
   },
   assignBtn: {
     flexDirection: 'row',

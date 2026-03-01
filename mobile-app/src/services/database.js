@@ -394,6 +394,18 @@ export const updateRecentPhotoProject = async (photoId, projectId, projectName) 
   );
 };
 
+export const deleteRecentPhoto = async (photoId) => {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM recent_photos WHERE id = ?', [photoId]);
+};
+
+export const deleteRecentPhotos = async (photoIds) => {
+  if (!photoIds || photoIds.length === 0) return;
+  const db = await getDb();
+  const placeholders = photoIds.map(() => '?').join(',');
+  await db.runAsync(`DELETE FROM recent_photos WHERE id IN (${placeholders})`, photoIds);
+};
+
 // ============================================================
 // Pending Projects (created on mobile, waiting for desktop confirmation)
 // ============================================================

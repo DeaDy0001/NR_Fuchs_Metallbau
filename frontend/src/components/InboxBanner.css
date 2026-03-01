@@ -505,6 +505,107 @@
   text-overflow: ellipsis;
 }
 
+/* ========== Marked for Deletion (red) ========== */
+.pending-image-card.marked-delete {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.3), 0 4px 12px rgba(239, 68, 68, 0.15);
+}
+
+.pending-image-card.marked-delete img {
+  opacity: 0.4;
+}
+
+.pending-image-card.marked-delete::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(239, 68, 68, 0.12);
+  pointer-events: none;
+  border-radius: 6px;
+}
+
+.pending-image-delete-badge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #ef4444;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+.pending-image-delete-toggle {
+  position: absolute;
+  bottom: 22px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  border: none;
+  border-radius: 4px;
+  color: #a0a0a0;
+  cursor: pointer;
+  z-index: 3;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+
+.pending-image-card:hover .pending-image-delete-toggle {
+  opacity: 1;
+}
+
+.pending-image-delete-toggle:hover {
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.3);
+}
+
+.pending-image-delete-toggle.active {
+  opacity: 1;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.3);
+}
+
+.pending-image-name.delete-name {
+  background: rgba(239, 68, 68, 0.8);
+}
+
+.delete-count-label {
+  color: #f87171;
+  font-weight: 500;
+}
+
+.btn-delete-marked {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-delete-marked:hover {
+  background: rgba(239, 68, 68, 0.25);
+  color: #ef4444;
+}
+
 .pending-images-empty {
   text-align: center;
   color: #707070;
