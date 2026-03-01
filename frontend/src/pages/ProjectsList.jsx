@@ -50,12 +50,10 @@ function ProjectsList() {
   const [editingName, setEditingName] = useState('');
   const [zoomLevel, setZoomLevel] = useState(1);
   const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [showEditor, setShowEditor] = useState(false);
-  const [initialZoomLevel, setInitialZoomLevel] = useState(1);
-  const [initialPanPosition, setInitialPanPosition] = useState({ x: 0, y: 0 });
   const modalImageRef = useRef(null);
+  const [showAllProjectsInSidebar, setShowAllProjectsInSidebar] = useState(false);
+  const [sidebarProjectSearch, setSidebarProjectSearch] = useState('');
 
   useEffect(() => {
     loadProjects();
@@ -316,59 +314,22 @@ function ProjectsList() {
   }, []);
 
   const handleZoomIn = () => {
-    setZoomLevel(prev => Math.min(prev + 0.25, 3)); // Max 300%
+    setZoomLevel(prev => Math.min(prev + 0.25, 5));
   };
 
   const handleZoomOut = () => {
-    setZoomLevel(prev => Math.max(prev - 0.25, initialZoomLevel));
+    setZoomLevel(prev => {
+      const newZoom = Math.max(prev - 0.25, 0.5);
+      if (newZoom <= 1) {
+        setPanPosition({ x: 0, y: 0 });
+      }
+      return newZoom;
+    });
   };
 
   const handleZoomReset = () => {
-    setZoomLevel(initialZoomLevel);
-    setPanPosition(initialPanPosition);
-  };
-
-  const handleMouseDown = (e) => {
-    // Allow panning with left or middle mouse button at any zoom level
-    if (e.button === 0 || e.button === 1) {
-      setIsPanning(true);
-      setPanStart({ x: e.clientX - panPosition.x, y: e.clientY - panPosition.y });
-      e.preventDefault();
-    }
-  };
-
-  const handleMouseMove = (e) => {
-    if (isPanning) {
-      setPanPosition({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
-    }
-  };
-
-  const handleMouseUp = () => setIsPanning(false);
-
-  // Shift + Wheel zoom (zoom from mouse position)
-  const handleWheel = (e) => {
-    if (e.shiftKey) {
-      e.preventDefault();
-
-      const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      const newZoomLevel = Math.min(Math.max(zoomLevel + delta, initialZoomLevel), 3);
-
-      // Get mouse position relative to the container
-      const container = e.currentTarget;
-      const rect = container.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-
-      // Calculate zoom ratio
-      const zoomRatio = newZoomLevel / zoomLevel;
-
-      // Adjust pan to keep the point under the mouse fixed
-      const newPanX = mouseX - (mouseX - panPosition.x) * zoomRatio;
-      const newPanY = mouseY - (mouseY - panPosition.y) * zoomRatio;
-
-      setZoomLevel(newZoomLevel);
-      setPanPosition({ x: newPanX, y: newPanY });
-    }
+    setZoomLevel(1);
+    setPanPosition({ x: 0, y: 0 });
   };
 
   const navigateImage = useCallback((direction) => {
@@ -567,59 +528,9 @@ function ProjectsList() {
   // Auto-fit image to screen when modal opens
   useEffect(() => {
     if (!selectedImage) return;
-
-    // Use image dimensions from backend data if available
-    const imageWidth = selectedImage.width;
-    const imageHeight = selectedImage.height;
-
-    if (!imageWidth || !imageHeight) {
-      // Fallback: set to 100% if dimensions not available
-      setZoomLevel(1);
-      setPanPosition({ x: 0, y: 0 });
-      setInitialZoomLevel(1);
-      return;
-    }
-
-    // Use requestAnimationFrame to wait for container to be ready
-    const calculateZoom = () => {
-      const container = modalImageRef.current?.parentElement;
-      if (!container) {
-        requestAnimationFrame(calculateZoom);
-        return;
-      }
-
-      const containerRect = container.getBoundingClientRect();
-      const containerWidth = containerRect.width;
-      const containerHeight = containerRect.height;
-
-      // Safeguard: ensure container has valid dimensions
-      if (containerWidth === 0 || containerHeight === 0) {
-        requestAnimationFrame(calculateZoom);
-        return;
-      }
-
-      // Calculate zoom level to fit the image in the container with padding
-      const padding = 20; // Padding in pixels
-      const scaleX = (containerWidth - padding * 2) / imageWidth;
-      const scaleY = (containerHeight - padding * 2) / imageHeight;
-      const scale = Math.min(scaleX, scaleY, 1); // Don't zoom in beyond 100%
-
-      // Center the scaled image in the container
-      const scaledWidth = imageWidth * scale;
-      const scaledHeight = imageHeight * scale;
-      const centerX = (containerWidth - scaledWidth) / 2;
-      const centerY = (containerHeight - scaledHeight) / 2;
-
-      setZoomLevel(scale);
-      setPanPosition({ x: centerX, y: centerY });
-      setInitialZoomLevel(scale);
-      setInitialPanPosition({ x: centerX, y: centerY });
-    };
-
-    // Start calculation on next frame
-    const rafId = requestAnimationFrame(calculateZoom);
-
-    return () => cancelAnimationFrame(rafId);
+    // Reset zoom and pan when opening a new image
+    setZoomLevel(1);
+    setPanPosition({ x: 0, y: 0 });
   }, [selectedImage]);
 
   // Gefilterte Projekte basierend auf Markierung
@@ -980,16 +891,20 @@ function ProjectsList() {
       {/* Image Viewer Modal */}
       {selectedImage && !showEditor && (
         <div className="modal-overlay" onClick={closeImageViewer}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-wrapper" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-external-close" onClick={closeImageViewer} title="Schließen">
+              <X size={20} />
+            </button>
+            <div className="modal">
             <div className="modal-content">
-              {/* Scrollable Image Container (Left) */}
+              {/* Lightbox Image Area (Left) */}
               <div className="modal-image-container">
                 <div className="zoom-controls">
-                  <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= initialZoomLevel}>
+                  <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= 0.5}>
                     -
                   </button>
                   <span className="zoom-level">{Math.round(zoomLevel * 100)}%</span>
-                  <button className="zoom-btn" onClick={handleZoomIn} title="Zoom In" disabled={zoomLevel >= 3}>
+                  <button className="zoom-btn" onClick={handleZoomIn} title="Zoom In" disabled={zoomLevel >= 5}>
                     +
                   </button>
                   <button className="zoom-btn zoom-reset" onClick={handleZoomReset} title="Zoom zurücksetzen">
@@ -1013,43 +928,17 @@ function ProjectsList() {
                     >
                       <ChevronRight size={18} />
                     </button>
-                    {selectedImage.id && (
-                      <button
-                        className="zoom-btn delete-btn"
-                        onClick={handleDeleteImage}
-                        title="Bild löschen (Delete)"
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                    )}
-                    <button className="zoom-btn close-btn" onClick={closeImageViewer} title="Schließen">
-                      <X size={18} />
-                    </button>
                   </div>
                 </div>
-                <div
-                  className="modal-image-scroll"
-                  onMouseDown={handleMouseDown}
-                  onMouseMove={handleMouseMove}
-                  onMouseUp={handleMouseUp}
-                  onMouseLeave={handleMouseUp}
-                  onWheel={handleWheel}
-                  style={{
-                    cursor: isPanning ? 'grabbing' : 'grab'
-                  }}
-                >
+                <div className="modal-image-scroll">
                   <img
                     ref={modalImageRef}
                     src={selectedImage.local_path || selectedImage.url}
                     alt={selectedImage.name}
                     style={{
                       transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomLevel})`,
-                      transformOrigin: 'top left',
-                      transition: isPanning ? 'none' : 'transform 0.1s ease-out',
-                      userSelect: 'none',
-                      pointerEvents: 'none',
-                      maxWidth: 'none',
-                      maxHeight: 'none'
+                      transition: 'transform 0.15s ease',
+                      cursor: zoomLevel > 1 ? 'grab' : 'default'
                     }}
                     draggable={false}
                   />
@@ -1164,17 +1053,50 @@ function ProjectsList() {
                 </div>
 
                 {/* Lower section: Project assignment */}
-                <div className="modal-sidebar-lower">
+                <div className={`modal-sidebar-lower ${showAllProjectsInSidebar ? 'expanded' : ''}`}>
                   {selectedImage.id && (
                     <div className="modal-section projects-section">
-                    <label>Projekte</label>
-                    {selectedProjects.length === 0 ? (
-                      <div className="empty-hint">Keine Projekte markiert. Markiere Projekte in der Liste.</div>
-                    ) : (
-                      <div className="project-list">
-                        {projects
-                          .filter(p => selectedProjects.includes(p.id))
-                          .map(project => {
+                    <div className="projects-header">
+                      <label>Projekte</label>
+                      <button
+                        className="all-projects-toggle"
+                        onClick={() => { setShowAllProjectsInSidebar(!showAllProjectsInSidebar); setSidebarProjectSearch(''); }}
+                      >
+                        {showAllProjectsInSidebar ? 'Markierte' : 'Alle Projekte'}
+                      </button>
+                    </div>
+                    {showAllProjectsInSidebar && (
+                      <input
+                        type="text"
+                        className="project-search-input"
+                        placeholder="Projekt oder Tag suchen..."
+                        value={sidebarProjectSearch}
+                        onChange={(e) => setSidebarProjectSearch(e.target.value)}
+                      />
+                    )}
+                    {(() => {
+                      const searchLower = sidebarProjectSearch.toLowerCase();
+                      const projectsToShow = showAllProjectsInSidebar
+                        ? projects.filter(p => {
+                            if (!sidebarProjectSearch) return true;
+                            if (p.folder_name.toLowerCase().includes(searchLower)) return true;
+                            try {
+                              const tags = JSON.parse(p.tags || '[]');
+                              return tags.some(t => {
+                                const tagName = typeof t === 'string' ? t : t.name || '';
+                                return tagName.toLowerCase().includes(searchLower);
+                              });
+                            } catch { return false; }
+                          })
+                        : projects.filter(p => selectedProjects.includes(p.id));
+
+                      if (projectsToShow.length === 0) {
+                        return <div className="empty-hint">{showAllProjectsInSidebar ? 'Keine Projekte gefunden.' : 'Keine Projekte markiert.'}</div>;
+                      }
+
+                      return (
+                        <div className="project-list">
+                          {projectsToShow.map(project => {
                             const isAssigned = selectedImage.projects?.some(p => p.id === project.id);
                             return (
                               <button
@@ -1182,7 +1104,7 @@ function ProjectsList() {
                                 className={`project-item ${isAssigned ? 'project-assigned' : ''}`}
                                 onClick={() => !isAssigned && handleAssignToProject(project.id)}
                                 style={{ borderLeftColor: project.color }}
-                                title={isAssigned ? `✓ Bereits zugeordnet zu "${project.folder_name}"` : `Bild zu "${project.folder_name}" hinzufügen`}
+                                title={isAssigned ? `✓ Bereits zugeordnet` : `Zu "${project.folder_name}" hinzufügen`}
                               >
                                 <span className="project-item-name">
                                   {isAssigned && <span className="checkmark">✓ </span>}
@@ -1192,7 +1114,7 @@ function ProjectsList() {
                                   <button
                                     className="project-unassign-btn"
                                     onClick={(e) => handleUnassignFromProject(project.id, e)}
-                                    title={`Von "${project.folder_name}" entfernen`}
+                                    title={`Entfernen`}
                                   >
                                     <X size={14} />
                                   </button>
@@ -1200,12 +1122,14 @@ function ProjectsList() {
                               </button>
                             );
                           })}
-                      </div>
-                    )}
+                        </div>
+                      );
+                    })()}
                     </div>
                   )}
                 </div>
               </div>
+            </div>
             </div>
           </div>
         </div>

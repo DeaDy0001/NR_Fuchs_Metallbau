@@ -86,6 +86,8 @@ function DriveImages() {
   const [tagFilterSearchQuery, setTagFilterSearchQuery] = useState(''); // Tag-Suchfeld im Filter-Modal
   const [sidebarActiveTab, setSidebarActiveTab] = useState('tags'); // 'tags' oder 'projects'
   const [showOnlyStarredProjects, setShowOnlyStarredProjects] = useState(true); // Nur markierte Projekte im Sidebar anzeigen (Standard)
+  const [showAllProjectsInSidebar, setShowAllProjectsInSidebar] = useState(false); // Alle Projekte in Modal-Sidebar
+  const [sidebarProjectSearch, setSidebarProjectSearch] = useState(''); // Suche in Modal-Sidebar Projekte
   const [selectedProjectId, setSelectedProjectId] = useState(null); // Aktives Projekt für Quick-Assign
 
   // Keep refs in sync for event handlers
@@ -1797,7 +1799,11 @@ function DriveImages() {
 
       {selectedImage && !showDeleteDialog && (
         <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-wrapper" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-external-close" onClick={closeModal} title="Schließen">
+              <X size={20} />
+            </button>
+            <div className="modal">
             <div className="modal-content">
               {/* Lightbox Image Area (Left) */}
               <div
@@ -1829,9 +1835,6 @@ function DriveImages() {
                         <ChevronRight size={18} />
                       </button>
                     )}
-                    <button className="zoom-btn close-btn" onClick={closeModal} title="Schließen">
-                      <X size={18} />
-                    </button>
                   </div>
                 </div>
 
@@ -1976,16 +1979,50 @@ function DriveImages() {
                 </div>
 
                 {/* Lower section: Project assignment */}
-                <div className="modal-sidebar-lower">
+                <div className={`modal-sidebar-lower ${showAllProjectsInSidebar ? 'expanded' : ''}`}>
                   <div className="modal-section projects-section">
-                  <label>📁 Projekte</label>
-                  {selectedProjects.length === 0 ? (
-                    <div className="empty-hint">Keine Projekte markiert. Gehe zum Projekte-Tab und markiere Projekte.</div>
-                  ) : (
-                    <div className="project-list">
-                      {projects
-                        .filter(p => selectedProjects.includes(p.id))
-                        .map(project => {
+                  <div className="projects-header">
+                    <label>Projekte</label>
+                    <button
+                      className="all-projects-toggle"
+                      onClick={() => { setShowAllProjectsInSidebar(!showAllProjectsInSidebar); setSidebarProjectSearch(''); }}
+                    >
+                      {showAllProjectsInSidebar ? 'Markierte' : 'Alle Projekte'}
+                    </button>
+                  </div>
+                  {showAllProjectsInSidebar && (
+                    <input
+                      type="text"
+                      className="project-search-input"
+                      placeholder="Projekt oder Tag suchen..."
+                      value={sidebarProjectSearch}
+                      onChange={(e) => setSidebarProjectSearch(e.target.value)}
+                    />
+                  )}
+                  {(() => {
+                    const searchLower = sidebarProjectSearch.toLowerCase();
+                    const projectsToShow = showAllProjectsInSidebar
+                      ? projects.filter(p => {
+                          if (!sidebarProjectSearch) return true;
+                          if (p.folder_name.toLowerCase().includes(searchLower)) return true;
+                          // Tag-Suche
+                          try {
+                            const tags = JSON.parse(p.tags || '[]');
+                            return tags.some(t => {
+                              const tagName = typeof t === 'string' ? t : t.name || '';
+                              return tagName.toLowerCase().includes(searchLower);
+                            });
+                          } catch { return false; }
+                        })
+                      : projects.filter(p => selectedProjects.includes(p.id));
+
+                    if (projectsToShow.length === 0) {
+                      return <div className="empty-hint">{showAllProjectsInSidebar ? 'Keine Projekte gefunden.' : 'Keine Projekte markiert.'}</div>;
+                    }
+
+                    return (
+                      <div className="project-list">
+                        {projectsToShow.map(project => {
                           const isAssigned = selectedImage.projects?.some(p => p.id === project.id);
                           return (
                             <button
@@ -1993,7 +2030,7 @@ function DriveImages() {
                               className={`project-item ${isAssigned ? 'project-assigned' : ''}`}
                               onClick={() => !isAssigned && handleAssignToProject(project.id)}
                               style={{ borderLeftColor: project.color }}
-                              title={isAssigned ? `✓ Bereits zugeordnet zu "${project.folder_name}"` : `Bild zu "${project.folder_name}" hinzufügen`}
+                              title={isAssigned ? `✓ Bereits zugeordnet` : `Zu "${project.folder_name}" hinzufügen`}
                             >
                               <span className="project-item-name">
                                 {isAssigned && <span className="checkmark">✓ </span>}
@@ -2003,7 +2040,7 @@ function DriveImages() {
                                 <button
                                   className="project-unassign-btn"
                                   onClick={(e) => handleUnassignFromProject(project.id, e)}
-                                  title={`Von "${project.folder_name}" entfernen`}
+                                  title={`Entfernen`}
                                 >
                                   <X size={16} />
                                 </button>
@@ -2011,11 +2048,13 @@ function DriveImages() {
                             </button>
                           );
                         })}
-                    </div>
-                  )}
+                      </div>
+                    );
+                  })()}
                   </div>
                 </div>
               </div>
+            </div>
             </div>
           </div>
         </div>
