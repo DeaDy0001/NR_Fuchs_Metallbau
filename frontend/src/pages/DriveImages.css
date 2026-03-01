@@ -1971,3 +1971,86 @@
     width: 500px;
   }
 }
+
+/* Custom Notification Popup */
+.drive-notification {
+  position: fixed;
+  top: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  max-width: 600px;
+  width: 90%;
+  border-radius: 0.75rem;
+  padding: 1rem 1.25rem;
+  animation: notificationSlideIn 0.3s ease-out;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+@keyframes notificationSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.drive-notification-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.drive-notification-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.drive-notification-close:hover {
+  opacity: 1;
+}
+
+.drive-notification-warning {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #fcd34d;
+}
+
+.drive-notification-warning .drive-notification-close {
+  color: #fcd34d;
+}
+
+.drive-notification-error {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+}
+
+.drive-notification-error .drive-notification-close {
+  color: #fca5a5;
+}
+
+.drive-notification-info {
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  color: #93c5fd;
+}
+
+.drive-notification-info .drive-notification-close {
+  color: #93c5fd;
+}

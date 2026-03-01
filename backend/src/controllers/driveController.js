@@ -612,13 +612,20 @@ const deleteImage = async (req, res) => {
     }
 
     // Delete from Google Drive if requested (only if image is from Drive)
+    let driveFileNotFound = false;
     if (deleteFromDrive === 'true' && image.drive_file_id) {
       try {
         await deleteFile(image.drive_file_id);
         console.log(`✓ Deleted file from Google Drive: ${image.name}`);
       } catch (err) {
-        console.error('Error deleting from Google Drive:', err);
-        return res.status(500).json({ error: 'Failed to delete from Google Drive' });
+        // If the file doesn't exist on Drive anymore, continue with local deletion
+        if (err.message && err.message.includes('nicht gefunden')) {
+          console.warn(`⚠️ File not found on Google Drive (already deleted?): ${image.name}`);
+          driveFileNotFound = true;
+        } else {
+          console.error('Error deleting from Google Drive:', err);
+          return res.status(500).json({ error: 'Failed to delete from Google Drive' });
+        }
       }
     } else if (deleteFromDrive !== 'true' && image.drive_file_id) {
       // Soft delete: Add to ignored_files so it won't be re-downloaded
@@ -675,7 +682,8 @@ const deleteImage = async (req, res) => {
 
     res.json({
       success: true,
-      deletedFromDrive: deleteFromDrive === 'true' && !!image.drive_file_id,
+      deletedFromDrive: deleteFromDrive === 'true' && !!image.drive_file_id && !driveFileNotFound,
+      driveFileNotFound: driveFileNotFound,
       deletedFromProjects: deleteFromProjects === 'true',
       message: message
     });

@@ -33,6 +33,7 @@ function DriveImages() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false); // Delete confirmation dialog
   const [deleteFromProjects, setDeleteFromProjects] = useState(false); // Delete from all projects checkbox
   const [showEditor, setShowEditor] = useState(false); // Image editor
+  const [notification, setNotification] = useState(null); // Custom notification popup
   const [panPosition, setPanPosition] = useState({ x: 0, y: 0 }); // Pan position for zoomed image
   const zoomRef = useRef(1);
   const panRef = useRef({ x: 0, y: 0 });
@@ -702,6 +703,12 @@ function DriveImages() {
     }
   };
 
+  // Show a custom notification popup
+  const showNotification = (message, type = 'info') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 5000);
+  };
+
   // Perform actual delete operation
   const performDelete = async (deleteFromDrive) => {
     setShowDeleteDialog(false);
@@ -718,13 +725,18 @@ function DriveImages() {
         setSelectedImage(null);
         setDeleteFromProjects(false); // Reset checkbox
         loadImages();
+
+        // Show info notification if the file was not found on Drive
+        if (result.driveFileNotFound) {
+          showNotification('Das Bild war nicht mehr auf Google Drive vorhanden. Es wurde aus der Software gelöscht.', 'warning');
+        }
       } else {
         const error = await response.json();
-        alert(`Fehler beim Löschen: ${error.error || 'Unbekannter Fehler'}`);
+        showNotification(`Fehler beim Löschen: ${error.error || 'Unbekannter Fehler'}`, 'error');
       }
     } catch (error) {
       console.error('Error deleting image:', error);
-      alert(`Fehler beim Löschen: ${error.message}`);
+      showNotification(`Fehler beim Löschen: ${error.message}`, 'error');
     }
   };
 
@@ -2168,6 +2180,18 @@ function DriveImages() {
           image={selectedImage}
           onClose={() => setShowEditor(false)}
         />
+      )}
+
+      {/* Custom Notification Popup */}
+      {notification && (
+        <div className={`drive-notification drive-notification-${notification.type}`}>
+          <div className="drive-notification-content">
+            <span>{notification.message}</span>
+            <button className="drive-notification-close" onClick={() => setNotification(null)}>
+              <X size={16} />
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
