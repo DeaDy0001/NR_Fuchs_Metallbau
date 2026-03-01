@@ -628,6 +628,25 @@ function DriveImages() {
     setPanPosition({ x: 0, y: 0 });
   };
 
+  const handleZoomIn = () => {
+    setZoomLevel(prev => Math.min(prev + 0.25, 5));
+  };
+
+  const handleZoomOut = () => {
+    setZoomLevel(prev => {
+      const newZoom = Math.max(prev - 0.25, 0.5);
+      if (newZoom <= 1) {
+        setPanPosition({ x: 0, y: 0 });
+      }
+      return newZoom;
+    });
+  };
+
+  const handleZoomReset = () => {
+    setZoomLevel(1);
+    setPanPosition({ x: 0, y: 0 });
+  };
+
   // Open delete confirmation dialog
   const handleDelete = () => {
     setShowDeleteDialog(true);
@@ -1786,34 +1805,49 @@ function DriveImages() {
                 className="modal-image-container"
                 onMouseDown={e => { if (e.button === 1) e.preventDefault(); }}
               >
-                <button className="modal-close" onClick={closeModal}>
-                  <X size={20} />
-                </button>
-                <img
-                  ref={modalImageRef}
-                  src={selectedImage.local_path || selectedImage.thumbnail_url}
-                  alt={selectedImage.name}
-                  style={{
-                    transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomLevel})`,
-                    transition: 'transform 0.15s ease',
-                    cursor: zoomLevel > 1 ? 'grab' : 'default'
-                  }}
-                  draggable={false}
-                />
-
-                {/* Nav arrows */}
-                {images.findIndex(img => img.id === selectedImage.id) > 0 && (
-                  <button className="modal-lightbox-nav prev" onClick={handlePreviousImage} title="Vorheriges Bild (←)">
-                    <ChevronLeft size={24} />
+                {/* Zoom controls toolbar */}
+                <div className="zoom-controls">
+                  <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= 0.5}>
+                    -
                   </button>
-                )}
-                {images.findIndex(img => img.id === selectedImage.id) < images.length - 1 && (
-                  <button className="modal-lightbox-nav next" onClick={handleNextImage} title="Nächstes Bild (→)">
-                    <ChevronRight size={24} />
+                  <span className="zoom-level">{Math.round(zoomLevel * 100)}%</span>
+                  <button className="zoom-btn" onClick={handleZoomIn} title="Zoom In" disabled={zoomLevel >= 5}>
+                    +
                   </button>
-                )}
+                  <button className="zoom-btn zoom-reset" onClick={handleZoomReset} title="Zoom zurücksetzen">
+                    Reset
+                  </button>
 
-                <div className="modal-lightbox-hint">Shift + Mausrad zum Zoomen · Mittlere Maustaste zum Verschieben</div>
+                  <div className="zoom-controls-right">
+                    {images.findIndex(img => img.id === selectedImage.id) > 0 && (
+                      <button className="zoom-btn nav-btn" onClick={handlePreviousImage} title="Vorheriges Bild (←)">
+                        <ChevronLeft size={18} />
+                      </button>
+                    )}
+                    {images.findIndex(img => img.id === selectedImage.id) < images.length - 1 && (
+                      <button className="zoom-btn nav-btn" onClick={handleNextImage} title="Nächstes Bild (→)">
+                        <ChevronRight size={18} />
+                      </button>
+                    )}
+                    <button className="zoom-btn close-btn" onClick={closeModal} title="Schließen">
+                      <X size={18} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="modal-image-scroll">
+                  <img
+                    ref={modalImageRef}
+                    src={selectedImage.local_path || selectedImage.thumbnail_url}
+                    alt={selectedImage.name}
+                    style={{
+                      transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomLevel})`,
+                      transition: 'transform 0.15s ease',
+                      cursor: zoomLevel > 1 ? 'grab' : 'default'
+                    }}
+                    draggable={false}
+                  />
+                </div>
               </div>
 
               {/* Fixed Sidebar (Right) */}

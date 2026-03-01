@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Search, Plus, Edit2, Save, X, CheckSquare, Square, ZoomIn, ZoomOut, RotateCcw, ChevronLeft, ChevronRight, Trash2, Pencil, RefreshCw } from 'lucide-react';
+import { Search, Plus, Edit2, Save, X, CheckSquare, Square, ChevronLeft, ChevronRight, Trash2, Pencil, RefreshCw } from 'lucide-react';
 import ImageEditor from '../components/ImageEditor';
 import DeleteProjectModal from '../components/DeleteProjectModal';
 import './ProjectsList.css';
@@ -981,10 +981,6 @@ function ProjectsList() {
       {selectedImage && !showEditor && (
         <div className="modal-overlay" onClick={closeImageViewer}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <button className="modal-close" onClick={closeImageViewer}>
-              <X size={24} />
-            </button>
-
             <div className="modal-content">
               {/* Scrollable Image Container (Left) */}
               <div className="modal-image-container">
@@ -998,15 +994,6 @@ function ProjectsList() {
                   </button>
                   <button className="zoom-btn zoom-reset" onClick={handleZoomReset} title="Zoom zurücksetzen">
                     Reset
-                  </button>
-
-                  <button
-                    className="zoom-btn editor-btn"
-                    onClick={() => setShowEditor(true)}
-                    title="Editor öffnen"
-                  >
-                    <Pencil size={18} />
-                    Editor
                   </button>
 
                   <div className="zoom-controls-right">
@@ -1035,6 +1022,9 @@ function ProjectsList() {
                         <Trash2 size={18} />
                       </button>
                     )}
+                    <button className="zoom-btn close-btn" onClick={closeImageViewer} title="Schließen">
+                      <X size={18} />
+                    </button>
                   </div>
                 </div>
                 <div
@@ -1066,9 +1056,31 @@ function ProjectsList() {
                 </div>
               </div>
 
-              {/* Fixed Sidebar (Right) - Split in two scrollable sections */}
+              {/* Fixed Sidebar (Right) - Compact design */}
               <div className="modal-sidebar">
-                {/* Upper section: Image info (65%) */}
+                {/* Action buttons */}
+                <div className="modal-sidebar-actions">
+                  <button
+                    className="sidebar-action-btn editor-btn"
+                    onClick={() => setShowEditor(true)}
+                    title="Editor öffnen"
+                  >
+                    <Pencil size={16} />
+                    Editor
+                  </button>
+                  {selectedImage.id && (
+                    <button
+                      className="sidebar-action-btn delete-btn"
+                      onClick={handleDeleteImage}
+                      title="Bild löschen"
+                    >
+                      <Trash2 size={16} />
+                      Löschen
+                    </button>
+                  )}
+                </div>
+
+                {/* Upper section: Image info */}
                 <div className="modal-sidebar-upper">
                   <div className="modal-section">
                     <label>Name</label>
@@ -1107,7 +1119,7 @@ function ProjectsList() {
 
                   {selectedImage.projects && selectedImage.projects.length > 0 && (
                     <div className="modal-section">
-                      <label>🏷️ Zugeordnete Projekte</label>
+                      <label>Zugeordnete Projekte</label>
                       <div className="project-badges-modal">
                         {selectedImage.projects.map(project => (
                           <div
@@ -1123,48 +1135,39 @@ function ProjectsList() {
                     </div>
                   )}
 
-                  {selectedImage.file_size && (
-                    <div className="modal-section">
-                      <label>Dateigröße</label>
-                      <div className="detail-text">
-                        {(selectedImage.file_size / 1024 / 1024).toFixed(2)} MB
+                  <div className="modal-section modal-meta-grid">
+                    {selectedImage.file_size && (
+                      <div className="meta-item">
+                        <span className="meta-label">Größe</span>
+                        <span className="meta-value">{(selectedImage.file_size / 1024 / 1024).toFixed(2)} MB</span>
                       </div>
-                    </div>
-                  )}
-
-                  {selectedImage.width && selectedImage.height && (
-                    <div className="modal-section">
-                      <label>Auflösung</label>
-                      <div className="detail-text">
-                        {selectedImage.width} x {selectedImage.height} px
+                    )}
+                    {selectedImage.width && selectedImage.height && (
+                      <div className="meta-item">
+                        <span className="meta-label">Auflösung</span>
+                        <span className="meta-value">{selectedImage.width} × {selectedImage.height}</span>
                       </div>
-                    </div>
-                  )}
-
-                  {selectedImage.photo_taken_at && (
-                    <div className="modal-section">
-                      <label>📸 Foto aufgenommen</label>
-                      <div className="detail-text">
-                        {formatSQLiteDate(selectedImage.photo_taken_at)}
+                    )}
+                    {selectedImage.photo_taken_at && (
+                      <div className="meta-item">
+                        <span className="meta-label">Aufgenommen</span>
+                        <span className="meta-value">{formatSQLiteDate(selectedImage.photo_taken_at)}</span>
                       </div>
-                    </div>
-                  )}
-
-                  {selectedImage.created_at && (
-                    <div className="modal-section">
-                      <label>📅 Hochgeladen am</label>
-                      <div className="detail-text">
-                        {formatSQLiteDate(selectedImage.created_at)}
+                    )}
+                    {selectedImage.created_at && (
+                      <div className="meta-item">
+                        <span className="meta-label">Hochgeladen</span>
+                        <span className="meta-value">{formatSQLiteDate(selectedImage.created_at)}</span>
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
 
-                {/* Lower section: Project assignment (35%) */}
+                {/* Lower section: Project assignment */}
                 <div className="modal-sidebar-lower">
                   {selectedImage.id && (
                     <div className="modal-section projects-section">
-                    <label>📁 Projekte</label>
+                    <label>Projekte</label>
                     {selectedProjects.length === 0 ? (
                       <div className="empty-hint">Keine Projekte markiert. Markiere Projekte in der Liste.</div>
                     ) : (
