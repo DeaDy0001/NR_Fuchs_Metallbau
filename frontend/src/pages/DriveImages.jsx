@@ -711,19 +711,22 @@ function DriveImages() {
 
   // Perform actual delete operation
   const performDelete = async (deleteFromDrive) => {
+    const imageToDelete = selectedImage;
+    // Clear both states together to prevent modal flash
     setShowDeleteDialog(false);
+    setSelectedImage(null);
+    setDeleteFromProjects(false);
+
+    if (!imageToDelete) return;
 
     try {
-      const url = `/api/drive/images/${selectedImage.id}?deleteFromDrive=${deleteFromDrive}&deleteFromProjects=${deleteFromProjects}`;
+      const url = `/api/drive/images/${imageToDelete.id}?deleteFromDrive=${deleteFromDrive}&deleteFromProjects=${deleteFromProjects}`;
       const response = await fetch(url, {
         method: 'DELETE'
       });
 
       if (response.ok) {
         const result = await response.json();
-        // Close modal and reload images
-        setSelectedImage(null);
-        setDeleteFromProjects(false); // Reset checkbox
         loadImages();
 
         // Show info notification if the file was not found on Drive
@@ -1776,10 +1779,6 @@ function DriveImages() {
       {selectedImage && !showDeleteDialog && (
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <button className="modal-close" onClick={closeModal}>
-              <X size={24} />
-            </button>
-
             <div className="modal-content">
               {/* Lightbox Image Area (Left) */}
               <div
@@ -1787,6 +1786,9 @@ function DriveImages() {
                 className="modal-image-container"
                 onMouseDown={e => { if (e.button === 1) e.preventDefault(); }}
               >
+                <button className="modal-close" onClick={closeModal}>
+                  <X size={20} />
+                </button>
                 <img
                   ref={modalImageRef}
                   src={selectedImage.local_path || selectedImage.thumbnail_url}
@@ -1911,41 +1913,32 @@ function DriveImages() {
                     </div>
                   )}
 
-                  {selectedImage.file_size && (
-                    <div className="modal-section">
-                      <label>Dateigröße</label>
-                      <div className="detail-text">
-                        {(selectedImage.file_size / 1024 / 1024).toFixed(2)} MB
+                  <div className="modal-section modal-meta-grid">
+                    {selectedImage.file_size && (
+                      <div className="meta-item">
+                        <span className="meta-label">Größe</span>
+                        <span className="meta-value">{(selectedImage.file_size / 1024 / 1024).toFixed(2)} MB</span>
                       </div>
-                    </div>
-                  )}
-
-                  {selectedImage.width && selectedImage.height && (
-                    <div className="modal-section">
-                      <label>Auflösung</label>
-                      <div className="detail-text">
-                        {selectedImage.width} x {selectedImage.height} px
+                    )}
+                    {selectedImage.width && selectedImage.height && (
+                      <div className="meta-item">
+                        <span className="meta-label">Auflösung</span>
+                        <span className="meta-value">{selectedImage.width} × {selectedImage.height}</span>
                       </div>
-                    </div>
-                  )}
-
-                  {selectedImage.photo_taken_at && (
-                    <div className="modal-section">
-                      <label>📸 Foto aufgenommen</label>
-                      <div className="detail-text">
-                        {formatSQLiteDate(selectedImage.photo_taken_at)}
+                    )}
+                    {selectedImage.photo_taken_at && (
+                      <div className="meta-item">
+                        <span className="meta-label">Aufgenommen</span>
+                        <span className="meta-value">{formatSQLiteDate(selectedImage.photo_taken_at)}</span>
                       </div>
-                    </div>
-                  )}
-
-                  {selectedImage.created_at && (
-                    <div className="modal-section">
-                      <label>📅 Hochgeladen am</label>
-                      <div className="detail-text">
-                        {formatSQLiteDate(selectedImage.created_at)}
+                    )}
+                    {selectedImage.created_at && (
+                      <div className="meta-item">
+                        <span className="meta-label">Hochgeladen</span>
+                        <span className="meta-value">{formatSQLiteDate(selectedImage.created_at)}</span>
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
 
                 {/* Lower section: Project assignment */}
