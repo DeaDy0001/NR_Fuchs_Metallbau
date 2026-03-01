@@ -51,6 +51,7 @@ const initTables = async () => {
       project_id TEXT,
       project_name TEXT,
       project_folder_id TEXT,
+      gps_data TEXT,
       status TEXT DEFAULT 'queued',
       retry_count INTEGER DEFAULT 0,
       error TEXT,
@@ -134,6 +135,9 @@ const initTables = async () => {
     { table: 'cached_projects', column: 'image_count', sql: 'ALTER TABLE cached_projects ADD COLUMN image_count INTEGER DEFAULT 0' },
     { table: 'cached_projects', column: 'updated_at', sql: 'ALTER TABLE cached_projects ADD COLUMN updated_at TEXT' },
     { table: 'cached_projects', column: 'synced_at', sql: 'ALTER TABLE cached_projects ADD COLUMN synced_at TEXT' },
+    // upload_queue migrations
+    { table: 'upload_queue', column: 'project_folder_id', sql: 'ALTER TABLE upload_queue ADD COLUMN project_folder_id TEXT' },
+    { table: 'upload_queue', column: 'gps_data', sql: 'ALTER TABLE upload_queue ADD COLUMN gps_data TEXT' },
   ];
 
   for (const m of migrations) {
@@ -190,8 +194,8 @@ export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = 
   } catch {}
 
   return await db.runAsync(
-    'INSERT INTO upload_queue (file_uri, file_name, mime_type, project_id, project_name, project_folder_id) VALUES (?, ?, ?, ?, ?, ?)',
-    [fileUri, fileName, mimeType, projectId, projectName, projectFolderId]
+    'INSERT INTO upload_queue (file_uri, file_name, mime_type, project_id, project_name, project_folder_id, gps_data) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [fileUri, fileName, mimeType, projectId, projectName, projectFolderId, gpsData]
   );
 };
 
