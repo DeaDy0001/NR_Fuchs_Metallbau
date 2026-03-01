@@ -619,7 +619,8 @@ const deleteImage = async (req, res) => {
         console.log(`✓ Deleted file from Google Drive: ${image.name}`);
       } catch (err) {
         // If the file doesn't exist on Drive anymore, continue with local deletion
-        if (err.message && err.message.includes('nicht gefunden')) {
+        const msg = err.message || '';
+        if (msg.includes('nicht gefunden') || msg.includes('File not found') || msg.includes('Not Found') || err.code === 404 || err.code === '404') {
           console.warn(`⚠️ File not found on Google Drive (already deleted?): ${image.name}`);
           driveFileNotFound = true;
         } else {

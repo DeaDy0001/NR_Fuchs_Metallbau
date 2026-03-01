@@ -299,7 +299,7 @@ const deleteFileFromDrive = async (fileId) => {
   } catch (error) {
     console.error('Error deleting file from Drive:', error.message);
 
-    if (error.code === 404) {
+    if (error.code === 404 || error.code === '404' || error.response?.status === 404 || (error.message && error.message.includes('File not found'))) {
       throw new Error('Datei nicht gefunden auf Google Drive.');
     }
 
