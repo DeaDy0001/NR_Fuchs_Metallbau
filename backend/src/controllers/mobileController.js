@@ -936,6 +936,9 @@ const getInbox = async (req, res) => {
 
 /**
  * Confirm an inbox project - move folder from inbox/ to Projekte/ on Google Drive
+ * + create local project folder with Bilder/ subfolder
+ * + download images to local Bilder/ folder
+ * + create project DB entry
  * POST /api/mobile/inbox/confirm
  * Body: { folderId, inboxFolderId, projectName }
  */
@@ -948,7 +951,7 @@ const confirmInboxProject = async (req, res) => {
     }
 
     // Find or create Projekte/ folder
-    const drivePath = db.prepare('SELECT path FROM drive_paths LIMIT 1').get();
+    const drivePath = db.prepare('SELECT * FROM drive_paths LIMIT 1').get();
     if (!drivePath) {
       return res.status(400).json({ error: 'Kein Google Drive Ordner konfiguriert' });
     }
@@ -972,6 +975,62 @@ const confirmInboxProject = async (req, res) => {
 
     await moveFileOnDrive(folderId, projekteFolder.id, sourceParentId);
 
+    // Create local project folder + Bilder subfolder
+    const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    let downloaded = 0;
+    let totalImages = 0;
+
+    if (settings?.project_path) {
+      const projectFolder = path.join(settings.project_path, projectName);
+      const bilderFolder = path.join(projectFolder, 'Bilder');
+      await fs.ensureDir(bilderFolder);
+      console.log(`📁 Created local project folder: ${bilderFolder}`);
+
+      // Download images from Drive to local Bilder folder
+      const files = await listFilesInFolder(folderId);
+      const images = files.filter(f => f.mimeType && f.mimeType.startsWith('image/'));
+      totalImages = images.length;
+
+      for (const img of images) {
+        try {
+          // Download and register in drive_images
+          const imageId = await downloadAndRegisterImage(
+            img.id,
+            img.name,
+            img.mimeType,
+            drivePath.id,
+            drivePath.name
+          );
+
+          // Copy to local project Bilder/ folder
+          if (imageId) {
+            const image = db.prepare('SELECT * FROM drive_images WHERE id = ?').get(imageId);
+            if (image?.local_path) {
+              const sourcePath = path.join(__dirname, '../../..', image.local_path.startsWith('/') ? image.local_path.substring(1) : image.local_path);
+              const destPath = path.join(bilderFolder, img.name);
+              await fs.copy(sourcePath, destPath, { overwrite: false });
+            }
+          }
+
+          downloaded++;
+          console.log(`✓ Downloaded "${img.name}" to project "${projectName}"`);
+        } catch (e) {
+          console.error(`Failed to download ${img.name}:`, e.message);
+        }
+      }
+    }
+
+    // Create project in DB if not exists
+    const existing = db.prepare('SELECT id FROM projects WHERE folder_name = ?').get(projectName);
+    let projectId;
+    if (existing) {
+      projectId = existing.id;
+    } else {
+      const result = db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)')
+        .run(projectName, '#3b82f6', '');
+      projectId = result.lastInsertRowid;
+    }
+
     // Update any related mobile_uploads entries
     try {
       db.prepare(`
@@ -982,7 +1041,10 @@ const confirmInboxProject = async (req, res) => {
       // Non-critical
     }
 
-    res.json({ success: true, message: `Projekt "${projectName}" wurde nach Projekte/ verschoben` });
+    res.json({
+      success: true,
+      message: `Projekt "${projectName}" wurde erstellt (${downloaded}/${totalImages} Bilder heruntergeladen)`,
+    });
   } catch (error) {
     console.error('Error confirming inbox project:', error);
     res.status(500).json({ error: 'Projekt konnte nicht bestätigt werden: ' + error.message });
