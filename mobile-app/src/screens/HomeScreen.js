@@ -69,6 +69,14 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
+  const handleScroll = useCallback((event) => {
+    if (!hasMore || loadingMore) return;
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    if (layoutMeasurement.height + contentOffset.y >= contentSize.height - 200) {
+      loadMore();
+    }
+  }, [hasMore, loadingMore]);
+
   return (
     <View style={styles.container}>
       <FlatList
@@ -77,6 +85,8 @@ export default function HomeScreen({ navigation }) {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleSync} tintColor={colors.accent} />
         }
+        onScroll={handleScroll}
+        scrollEventThrottle={400}
         ListHeaderComponent={
           <>
             {/* Connection Status */}
@@ -129,22 +139,11 @@ export default function HomeScreen({ navigation }) {
                   ))}
                 </View>
 
-                {/* Load More */}
-                {hasMore && (
-                  <TouchableOpacity
-                    style={styles.loadMoreBtn}
-                    onPress={loadMore}
-                    disabled={loadingMore}
-                  >
-                    {loadingMore ? (
-                      <ActivityIndicator size="small" color={colors.accent} />
-                    ) : (
-                      <>
-                        <Ionicons name="chevron-down" size={18} color={colors.accent} />
-                        <Text style={styles.loadMoreText}>Mehr laden</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
+                {/* Loading indicator for infinite scroll */}
+                {loadingMore && (
+                  <View style={styles.loadingMore}>
+                    <ActivityIndicator size="small" color={colors.accent} />
+                  </View>
                 )}
               </View>
             )}
@@ -202,14 +201,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 8, padding: 3,
   },
 
-  // Load more
-  loadMoreBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 8, marginTop: 16, paddingVertical: 12,
-    backgroundColor: colors.cardBg, borderRadius: 10,
-    borderWidth: 1, borderColor: colors.border,
+  // Loading more
+  loadingMore: {
+    alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 16,
   },
-  loadMoreText: { fontSize: 14, color: colors.accent, fontWeight: '600' },
 
   emptyState: { alignItems: 'center', justifyContent: 'center', padding: 48, gap: 12 },
   emptyTitle: { fontSize: 20, fontWeight: '600', color: colors.textPrimary },

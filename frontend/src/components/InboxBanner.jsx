@@ -320,6 +320,7 @@ function InboxModal({ projects, onClose, onRefresh }) {
     return selectedImages[folderId]?.size || 0;
   };
 
+  /** Confirm for named projects: move folder to Projekte/ on Drive */
   const handleConfirm = async (item) => {
     setProcessing(prev => ({ ...prev, [item.id]: 'confirming' }));
     try {
@@ -347,6 +348,42 @@ function InboxModal({ projects, onClose, onRefresh }) {
     }
   };
 
+  /** Add user inbox images to library (no project, goes to root Drive + local download) */
+  const handleAddToLibrary = async (item) => {
+    const folderId = item.drive_folder_id;
+    const selected = selectedImages[folderId];
+    const fileIds = selected && selected.size > 0 ? [...selected] : undefined;
+
+    setProcessing(prev => ({ ...prev, [item.id]: 'confirming' }));
+    try {
+      const response = await fetch('/api/mobile/inbox/add-to-library', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceFolderId: folderId,
+          fileIds,
+        })
+      });
+      if (response.ok) {
+        hasChangesRef.current = true;
+        const data = await response.json();
+        showNotification(`${data.addedCount} Bilder zur Bibliothek hinzugefügt`);
+        // Clear image cache
+        setImages(prev => { const next = { ...prev }; delete next[folderId]; return next; });
+        setSelectedImages(prev => { const next = { ...prev }; delete next[folderId]; return next; });
+        await onRefresh();
+      } else {
+        const data = await response.json();
+        showNotification(data.error || 'Fehler', 'error');
+      }
+    } catch (e) {
+      showNotification('Fehler: ' + e.message, 'error');
+    } finally {
+      setProcessing(prev => ({ ...prev, [item.id]: null }));
+    }
+  };
+
+  /** Merge all files from inbox folder to target project (for named project folders) */
   const handleMerge = async (inboxItem, targetProject) => {
     setProcessing(prev => ({ ...prev, [inboxItem.id]: 'merging' }));
     try {
@@ -355,7 +392,7 @@ function InboxModal({ projects, onClose, onRefresh }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sourceFolderId: inboxItem.drive_folder_id,
-          targetFolderId: targetProject.folder_id || targetProject.id,
+          targetProjectId: targetProject.id,
           inboxFolderId: inboxItem.inbox_folder_id,
           projectName: inboxItem.project_name,
         }),
@@ -392,7 +429,7 @@ function InboxModal({ projects, onClose, onRefresh }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sourceFolderId: inboxItem.drive_folder_id,
-          targetFolderId: targetProject.folder_id || targetProject.id,
+          targetProjectId: targetProject.id,
           fileIds: [...selected],
         }),
       });
@@ -530,8 +567,8 @@ function InboxModal({ projects, onClose, onRefresh }) {
                 {isUserInbox && project.drive_folder_id && (
                   <button
                     className="btn-pending btn-accept"
-                    onClick={(e) => { e.stopPropagation(); handleConfirm(project); }}
-                    title="Alle Bilder als neues Projekt hinzufügen"
+                    onClick={(e) => { e.stopPropagation(); handleAddToLibrary(project); }}
+                    title="Bilder zur Bibliothek hinzufügen (ohne Projekt)"
                   >
                     <Check size={16} />
                     Hinzufügen

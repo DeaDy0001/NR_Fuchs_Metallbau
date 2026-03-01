@@ -72,6 +72,7 @@ router.get('/inbox', mobile.getInbox);
 router.get('/inbox/image-proxy/:fileId', mobile.proxyInboxImage);
 router.get('/inbox/:folderId/images', mobile.getInboxImages);
 router.post('/inbox/confirm', mobile.confirmInboxProject);
+router.post('/inbox/add-to-library', mobile.addToLibrary);
 router.post('/inbox/merge', mobile.mergeInboxProject);
 router.post('/inbox/merge-selected', mobile.mergeSelectedInboxImages);
 router.delete('/inbox/:folderId', mobile.deleteInboxProject);
