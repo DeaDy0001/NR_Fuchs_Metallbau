@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
 import { getRecentPhotos, getCachedProjects, addToUploadQueue, updateRecentPhotoProject } from '../services/database';
+import { createProject } from '../services/api';
 import { syncMetadata } from '../services/syncService';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -153,20 +154,20 @@ export default function HomeScreen({ navigation }) {
       let queuedCount = 0;
 
       for (const photo of selectedPhotos) {
-        // Add to upload queue with project assignment
-        // This will upload the local file to the project folder on Drive
+        // Add to upload queue with project assignment (skip recent_photos insert to avoid duplicates)
         await addToUploadQueue(
           photo.file_uri,
           photo.file_name,
           photo.mime_type || 'image/jpeg',
-          project.folder_id,
+          project.folder_id || project.id,
           project.folder_name,
-          project.folder_id,
-          photo.gps_data
+          project.folder_id || project.id,
+          photo.gps_data,
+          true // skipRecentPhotos - photo already exists in recent_photos
         );
 
-        // Update the recent photos entry to show project badge
-        await updateRecentPhotoProject(photo.id, project.folder_id, project.folder_name);
+        // Update the existing recent photos entry to show project badge
+        await updateRecentPhotoProject(photo.id, project.folder_id || project.id, project.folder_name);
         queuedCount++;
       }
 
@@ -187,6 +188,31 @@ export default function HomeScreen({ navigation }) {
       console.error('Failed to assign photos:', error);
       Alert.alert('Fehler', 'Fotos konnten nicht zugewiesen werden: ' + error.message);
     } finally {
+      setAssigning(false);
+    }
+  };
+
+  const handleCreateNewProject = async () => {
+    if (!projectSearch.trim()) {
+      Alert.alert('Fehler', 'Bitte gib einen Projektnamen ein.');
+      return;
+    }
+
+    setAssigning(true);
+    try {
+      const result = await createProject(projectSearch.trim());
+      if (result.success) {
+        const newProject = {
+          id: result.id,
+          folder_name: result.folder_name,
+          folder_id: result.folder_id,
+          color: '#3b82f6',
+        };
+        await handleAssignToProject(newProject);
+      }
+    } catch (error) {
+      console.error('Failed to create project:', error);
+      Alert.alert('Fehler', 'Projekt konnte nicht erstellt werden: ' + error.message);
       setAssigning(false);
     }
   };
@@ -344,6 +370,18 @@ export default function HomeScreen({ navigation }) {
               />
             </View>
 
+            {/* Create new project button */}
+            <TouchableOpacity
+              style={styles.createProjectBtn}
+              onPress={handleCreateNewProject}
+              disabled={assigning || !projectSearch.trim()}
+            >
+              <Ionicons name="add-circle-outline" size={20} color={colors.accent} />
+              <Text style={styles.createProjectText}>
+                {projectSearch.trim() ? `"${projectSearch.trim()}" erstellen` : 'Projektname eingeben...'}
+              </Text>
+            </TouchableOpacity>
+
             {/* Project list */}
             <ScrollView style={styles.projectList}>
               {filteredProjects.map(project => (
@@ -353,7 +391,7 @@ export default function HomeScreen({ navigation }) {
                   onPress={() => handleAssignToProject(project)}
                   disabled={assigning}
                 >
-                  <View style={[styles.projectColorDot, { backgroundColor: project.color || colors.accent }]} />
+                  <View style={[styles.projectColorBar, { backgroundColor: project.color || colors.accent }]} />
                   <View style={styles.projectInfo}>
                     <Text style={styles.projectName} numberOfLines={1}>{project.folder_name}</Text>
                     <Text style={styles.projectImageCount}>{project.image_count || 0} Bilder</Text>
@@ -363,7 +401,7 @@ export default function HomeScreen({ navigation }) {
                   ) : null}
                 </TouchableOpacity>
               ))}
-              {filteredProjects.length === 0 && (
+              {filteredProjects.length === 0 && !projectSearch.trim() && (
                 <Text style={styles.noProjectsText}>Keine Projekte gefunden</Text>
               )}
             </ScrollView>
@@ -539,6 +577,21 @@ const styles = StyleSheet.create({
   projectList: {
     paddingHorizontal: 16,
   },
+  createProjectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderColor,
+    marginBottom: 4,
+  },
+  createProjectText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.accent,
+  },
   projectItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -547,9 +600,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bgTertiary,
     marginBottom: 8,
     gap: 12,
+    overflow: 'hidden',
   },
-  projectColorDot: {
-    width: 12, height: 12, borderRadius: 6,
+  projectColorBar: {
+    width: 4, alignSelf: 'stretch', borderRadius: 2, marginLeft: -14, marginVertical: -14, marginRight: 4,
   },
   projectInfo: { flex: 1 },
   projectName: {

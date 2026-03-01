@@ -4,6 +4,7 @@ import {
   ActivityIndicator, FlatList, Animated, PanResponder,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import { downloadFullImage } from '../services/syncService';
 import { getImageUrl } from '../services/api';
@@ -309,6 +310,7 @@ function ZoomableImage({ imageId, localUri, isActive }) {
 export default function ImageViewScreen({ route, navigation }) {
   const { imageId, imageName, projectName, images, initialIndex, localUri } = route.params;
   const [currentIndex, setCurrentIndex] = useState(initialIndex || 0);
+  const insets = useSafeAreaInsets();
 
   // Single image mode (no images array)
   const imageList = images || [{ id: imageId, name: imageName, localUri }];
@@ -369,7 +371,7 @@ export default function ImageViewScreen({ route, navigation }) {
       )}
 
       {/* Footer - Back button */}
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={20} color="white" />
           <Text style={styles.backBtnText}>Zurück</Text>
@@ -398,11 +400,11 @@ const styles = StyleSheet.create({
   image: { width: SCREEN_WIDTH, height: IMAGE_HEIGHT },
   loadingText: { color: colors.textTertiary, fontSize: 14 },
   footer: {
-    height: FOOTER_HEIGHT,
     backgroundColor: 'rgba(0,0,0,0.85)',
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
+    paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.1)',
   },
