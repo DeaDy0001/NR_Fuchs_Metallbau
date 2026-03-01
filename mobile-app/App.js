@@ -39,7 +39,7 @@ const TAB_CONFIG = {
   Camera: { icon: 'camera', iconOutline: 'camera-outline', label: 'Foto', isAction: true },
   Gallery: { icon: 'images', iconOutline: 'images-outline', label: 'Galerie', isAction: true },
   Projects: { icon: 'folder', iconOutline: 'folder-outline', label: 'Projekte' },
-  Queue: { icon: 'cloud-upload', iconOutline: 'cloud-upload-outline', label: 'Upload', isAction: true },
+  Queue: { icon: 'cloud-upload', iconOutline: 'cloud-upload-outline', label: 'Upload' },
   Settings: { icon: 'settings', iconOutline: 'settings-outline', label: 'Einstellungen' },
 };
 
@@ -81,8 +81,6 @@ function CustomTabBar({ state, descriptors, navigation }) {
                 navigation.navigate('CameraStack');
               } else if (route.name === 'Gallery') {
                 navigation.navigate('CameraStack', { pickFromGallery: true });
-              } else if (route.name === 'Queue') {
-                navigation.navigate('UploadQueue');
               }
               return;
             }
@@ -150,7 +148,11 @@ function MainTabs() {
         component={ProjectsScreen}
         options={{ title: 'Projekte' }}
       />
-      <Tab.Screen name="Queue" component={DummyScreen} options={{ tabBarLabel: 'Upload' }} />
+      <Tab.Screen
+        name="Queue"
+        component={UploadQueueScreen}
+        options={{ title: 'Upload-Warteschlange' }}
+      />
       <Tab.Screen
         name="Settings"
         component={SettingsScreen}
@@ -219,11 +221,6 @@ function AppNavigator() {
             name="ImageView"
             component={ImageViewScreen}
             options={{ headerShown: false, presentation: 'fullScreenModal' }}
-          />
-          <Stack.Screen
-            name="UploadQueue"
-            component={UploadQueueScreen}
-            options={{ title: 'Upload-Warteschlange' }}
           />
         </>
       )}
