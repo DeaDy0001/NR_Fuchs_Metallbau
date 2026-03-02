@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Search, Plus, Edit2, Save, X, CheckSquare, Square, ChevronLeft, ChevronRight, Trash2, Pencil, RefreshCw } from 'lucide-react';
 import ImageEditor from '../components/ImageEditor';
 import DeleteProjectModal from '../components/DeleteProjectModal';
@@ -22,6 +23,8 @@ const formatSQLiteDate = (dateString) => {
 };
 
 function ProjectsList() {
+  const location = useLocation();
+  const routerNavigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [searchQuery, setSearchQuery] = useState(''); // Kombiniertes Suchfeld für Projekte + Tags
   const [loading, setLoading] = useState(false);
@@ -72,6 +75,19 @@ function ProjectsList() {
   useEffect(() => {
     handleSync();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-open project modal when navigated from InboxBanner "Anzeigen" button
+  useEffect(() => {
+    if (location.state?.openProject && projects.length > 0) {
+      const projectName = location.state.openProject;
+      const project = projects.find(p => p.folder_name === projectName);
+      if (project) {
+        handleViewProject(project);
+      }
+      // Clear the state so it doesn't re-trigger
+      routerNavigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state, projects]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadProjects = async () => {
     setLoading(true);
@@ -702,7 +718,7 @@ function ProjectsList() {
 
       {viewingProject && (
         <div className="modal-overlay" onClick={closeProjectModal}>
-          <div className="modal-wrapper project-modal-wrapper" onClick={(e) => e.stopPropagation()}>
+          <div className="project-modal-wrapper" onClick={(e) => e.stopPropagation()}>
             <button className="modal-external-close" onClick={closeProjectModal} title="Schließen">
               <X size={24} />
             </button>

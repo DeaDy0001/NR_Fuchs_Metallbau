@@ -81,6 +81,12 @@ router.post('/inbox/process-delete', mobile.processDeleteRequests);
 router.post('/inbox/dismiss-delete', mobile.dismissDeleteRequests);
 router.delete('/inbox/:folderId', mobile.deleteInboxProject);
 
+// Project changes (new images uploaded from mobile to existing projects)
+router.get('/project-changes', mobile.getProjectChanges);
+router.get('/project-changes/image-proxy/:fileId', mobile.proxyProjectChangeImage);
+router.post('/project-changes/confirm', mobile.confirmProjectChanges);
+router.post('/project-changes/reject', mobile.rejectProjectChanges);
+
 // Admin: mobile OAuth credentials management (called from desktop settings)
 router.get('/admin/credentials', mobile.getAdminCredentials);
 router.post('/admin/credentials', mobile.saveAdminCredentials);

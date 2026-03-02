@@ -250,6 +250,8 @@
 /* Project modal wrapper - close button outside */
 .project-modal-wrapper {
   position: relative;
+  display: flex;
+  flex-direction: column;
   width: 90vw;
   max-width: 1200px;
   max-height: 90vh;

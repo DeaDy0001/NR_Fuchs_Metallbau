@@ -2412,6 +2412,207 @@ const previewDeleteRequestImage = async (req, res) => {
   }
 };
 
+/**
+ * Scan NR_Fuchs_Meta/Projekte/ for new images not yet downloaded locally.
+ * Compares Drive images with local project Bilder/ folders.
+ * GET /api/mobile/project-changes
+ */
+const getProjectChanges = async (req, res) => {
+  try {
+    const drivePath = db.prepare('SELECT path FROM drive_paths LIMIT 1').get();
+    if (!drivePath) {
+      return res.json({ changes: [] });
+    }
+
+    let rootFolderId = drivePath.path;
+    const urlMatch = drivePath.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    if (urlMatch) rootFolderId = urlMatch[1];
+
+    const metaFolder = await findSubfolder(rootFolderId, 'NR_Fuchs_Meta');
+    if (!metaFolder) {
+      return res.json({ changes: [] });
+    }
+
+    const projekteFolder = await findSubfolder(metaFolder.id, 'Projekte');
+    if (!projekteFolder) {
+      return res.json({ changes: [] });
+    }
+
+    // List all project subfolders in Projekte/
+    const projectFolders = await listFoldersInFolder(projekteFolder.id);
+    if (projectFolders.length === 0) {
+      return res.json({ changes: [] });
+    }
+
+    // Get local project base path
+    const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    const projectBasePath = settings?.project_path;
+
+    const changes = [];
+
+    for (const folder of projectFolders) {
+      try {
+        // List images on Drive in this project folder
+        const driveImages = await listFilesInFolder(folder.id);
+        if (driveImages.length === 0) continue;
+
+        // Get local images for this project
+        let localImageNames = new Set();
+        if (projectBasePath) {
+          const localBilderPath = path.join(projectBasePath, folder.name, 'Bilder');
+          if (await fs.pathExists(localBilderPath)) {
+            const localFiles = await fs.readdir(localBilderPath);
+            localImageNames = new Set(localFiles.map(f => f.toLowerCase()));
+          }
+        }
+
+        // Find new images (on Drive but not local)
+        const newImages = driveImages.filter(img =>
+          !localImageNames.has(img.name.toLowerCase())
+        );
+
+        if (newImages.length > 0) {
+          // Check if project exists in DB
+          const project = db.prepare('SELECT id, folder_name, color FROM projects WHERE folder_name = ?').get(folder.name);
+
+          changes.push({
+            project_name: folder.name,
+            project_id: project?.id || null,
+            project_color: project?.color || '#3b82f6',
+            drive_folder_id: folder.id,
+            new_images: newImages.map(img => ({
+              id: img.id,
+              name: img.name,
+              size: img.size,
+            })),
+            total_drive_images: driveImages.length,
+            total_local_images: localImageNames.size,
+          });
+        }
+      } catch (e) {
+        console.error(`Error scanning project folder "${folder.name}":`, e.message);
+      }
+    }
+
+    res.json({ changes });
+  } catch (error) {
+    console.error('Error getting project changes:', error);
+    res.status(500).json({ error: 'Fehler beim Scannen der Projektänderungen' });
+  }
+};
+
+/**
+ * Proxy image from NR_Fuchs_Meta/Projekte/ for preview in the UI.
+ * GET /api/mobile/project-changes/image-proxy/:fileId
+ */
+const proxyProjectChangeImage = async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    const { getDriveClient } = require('../services/authService');
+    const drive = await getDriveClient();
+
+    const response = await drive.files.get(
+      { fileId, alt: 'media' },
+      { responseType: 'stream' }
+    );
+
+    const contentType = response.headers['content-type'] || 'image/jpeg';
+    res.set('Content-Type', contentType);
+    res.set('Cache-Control', 'public, max-age=3600');
+    response.data.pipe(res);
+  } catch (error) {
+    console.error('Error proxying project change image:', error.message);
+    res.status(404).json({ error: 'Bild nicht gefunden' });
+  }
+};
+
+/**
+ * Confirm project changes: download new images to local project folder.
+ * POST /api/mobile/project-changes/confirm
+ * Body: { projectName, fileIds }
+ */
+const confirmProjectChanges = async (req, res) => {
+  try {
+    const { projectName, fileIds } = req.body;
+
+    if (!projectName || !fileIds || fileIds.length === 0) {
+      return res.status(400).json({ error: 'projectName und fileIds sind erforderlich' });
+    }
+
+    const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    if (!settings?.project_path) {
+      return res.status(400).json({ error: 'Kein Projektpfad konfiguriert' });
+    }
+
+    const bilderFolder = path.join(settings.project_path, projectName, 'Bilder');
+    await fs.ensureDir(bilderFolder);
+
+    let downloaded = 0;
+    for (const fileId of fileIds) {
+      try {
+        const meta = await getFileMetadata(fileId);
+        const destPath = path.join(bilderFolder, meta.name);
+        if (!await fs.pathExists(destPath)) {
+          await downloadFile(fileId, destPath);
+          downloaded++;
+        } else {
+          downloaded++;
+        }
+      } catch (e) {
+        console.error(`Error downloading file ${fileId}:`, e.message);
+      }
+    }
+
+    // Ensure project exists in DB
+    const existing = db.prepare('SELECT id FROM projects WHERE folder_name = ?').get(projectName);
+    if (!existing) {
+      db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)')
+        .run(projectName, '#3b82f6', '');
+    }
+
+    res.json({
+      success: true,
+      message: `${downloaded}/${fileIds.length} Bilder für "${projectName}" heruntergeladen`,
+    });
+  } catch (error) {
+    console.error('Error confirming project changes:', error);
+    res.status(500).json({ error: 'Fehler beim Bestätigen: ' + error.message });
+  }
+};
+
+/**
+ * Reject project changes: delete images from Drive project folder.
+ * POST /api/mobile/project-changes/reject
+ * Body: { projectName, fileIds }
+ */
+const rejectProjectChanges = async (req, res) => {
+  try {
+    const { projectName, fileIds } = req.body;
+
+    if (!fileIds || fileIds.length === 0) {
+      return res.status(400).json({ error: 'fileIds sind erforderlich' });
+    }
+
+    let deleted = 0;
+    for (const fileId of fileIds) {
+      try {
+        await deleteFileFromDrive(fileId);
+        deleted++;
+      } catch (e) {
+        console.error(`Error deleting file ${fileId} from Drive:`, e.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `${deleted}/${fileIds.length} Bilder aus "${projectName}" gelöscht`,
+    });
+  } catch (error) {
+    console.error('Error rejecting project changes:', error);
+    res.status(500).json({ error: 'Fehler beim Ablehnen: ' + error.message });
+  }
+};
+
 module.exports = {
   generateConnectToken,
   getConnectInfo,
@@ -2438,6 +2639,10 @@ module.exports = {
   processDeleteRequests,
   dismissDeleteRequests,
   previewDeleteRequestImage,
+  getProjectChanges,
+  proxyProjectChangeImage,
+  confirmProjectChanges,
+  rejectProjectChanges,
   mobileGoogleAuth,
   mobileGoogleCallback,
   mobileRefreshToken,

@@ -1,28 +1,36 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Inbox, Check, GitMerge, Trash2, X, Search, Image, FolderOpen, Loader, ChevronDown, ChevronUp, Tag, ChevronLeft, ChevronRight, User, CheckSquare, Square } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Inbox, Check, GitMerge, Trash2, X, Search, Image, FolderOpen, Loader, ChevronDown, ChevronUp, Tag, ChevronLeft, ChevronRight, User, CheckSquare, Square, Eye, Plus } from 'lucide-react';
 import './InboxBanner.css';
 
 function InboxBanner() {
   const [inboxItems, setInboxItems] = useState([]);
   const [deleteRequests, setDeleteRequests] = useState([]);
+  const [projectChanges, setProjectChanges] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const navigate = useNavigate();
 
   const loadInbox = useCallback(async () => {
     try {
       setScanning(true);
-      const response = await fetch('/api/mobile/inbox');
-      if (response.ok) {
-        const data = await response.json();
-        // Handle new { projects, deleteRequests } format
+      const [inboxRes, changesRes] = await Promise.all([
+        fetch('/api/mobile/inbox'),
+        fetch('/api/mobile/project-changes'),
+      ]);
+      if (inboxRes.ok) {
+        const data = await inboxRes.json();
         if (data.projects) {
           setInboxItems(data.projects);
           setDeleteRequests(data.deleteRequests || []);
         } else if (Array.isArray(data)) {
-          // Backwards compat with old format
           setInboxItems(data);
           setDeleteRequests([]);
         }
+      }
+      if (changesRes.ok) {
+        const data = await changesRes.json();
+        setProjectChanges(data.changes || []);
       }
     } catch (error) {
       console.error('Error loading inbox:', error);
@@ -37,7 +45,8 @@ function InboxBanner() {
     return () => clearInterval(interval);
   }, [loadInbox]);
 
-  const totalCount = inboxItems.length + (deleteRequests.length > 0 ? 1 : 0);
+  const totalProjectChangeImages = projectChanges.reduce((sum, c) => sum + c.new_images.length, 0);
+  const totalCount = inboxItems.length + (deleteRequests.length > 0 ? 1 : 0) + (projectChanges.length > 0 ? 1 : 0);
   if (totalCount === 0) return null;
 
   const bannerDeleteRequesters = [...new Set(deleteRequests.map(r => r.requested_by).filter(Boolean))];
@@ -48,8 +57,11 @@ function InboxBanner() {
         <div className="inbox-banner-content">
           <Inbox size={18} />
           <span>
-            Neue Uploads von der Handy-App ({inboxItems.length})
-            {deleteRequests.length > 0 && ` · ${deleteRequests.length} ${deleteRequests.length === 1 ? 'Löschanfrage' : 'Löschanfragen'}${bannerDeleteRequesters.length > 0 ? ` von ${bannerDeleteRequesters.join(', ')}` : ''}`}
+            {inboxItems.length > 0 && `Neue Uploads von der Handy-App (${inboxItems.length})`}
+            {inboxItems.length > 0 && (deleteRequests.length > 0 || projectChanges.length > 0) && ' · '}
+            {deleteRequests.length > 0 && `${deleteRequests.length} ${deleteRequests.length === 1 ? 'Löschanfrage' : 'Löschanfragen'}${bannerDeleteRequesters.length > 0 ? ` von ${bannerDeleteRequesters.join(', ')}` : ''}`}
+            {deleteRequests.length > 0 && projectChanges.length > 0 && ' · '}
+            {projectChanges.length > 0 && `${totalProjectChangeImages} neue Bilder in ${projectChanges.length} ${projectChanges.length === 1 ? 'Projekt' : 'Projekten'}`}
           </span>
           {scanning && <Loader size={14} className="spinning" />}
         </div>
@@ -59,8 +71,13 @@ function InboxBanner() {
         <InboxModal
           projects={inboxItems}
           deleteRequests={deleteRequests}
+          projectChanges={projectChanges}
           onClose={() => setShowModal(false)}
           onRefresh={loadInbox}
+          onNavigateToProject={(projectName) => {
+            setShowModal(false);
+            navigate('/projects', { state: { openProject: projectName } });
+          }}
         />
       )}
     </>
@@ -68,7 +85,7 @@ function InboxBanner() {
 }
 
 /* ========== Image Lightbox ========== */
-function ImageLightbox({ images, startIndex, onClose }) {
+function ImageLightbox({ images, startIndex, onClose, imageUrlFn }) {
   const [currentIndex, setCurrentIndex] = useState(startIndex);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -182,7 +199,9 @@ function ImageLightbox({ images, startIndex, onClose }) {
     }
   };
 
-  const proxyUrl = currentImage.id ? `/api/mobile/inbox/image-proxy/${currentImage.id}` : null;
+  const proxyUrl = imageUrlFn
+    ? imageUrlFn(currentImage)
+    : (currentImage.id ? `/api/mobile/inbox/image-proxy/${currentImage.id}` : null);
 
   return (
     <div className="image-lightbox-overlay" onClick={(e) => { e.stopPropagation(); onClose(); }}>
@@ -275,7 +294,7 @@ function DeletePreviewLightbox({ images, startIndex, onClose }) {
 }
 
 /* ========== Inbox Modal ========== */
-function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
+function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClose, onRefresh, onNavigateToProject }) {
   const [expandedProject, setExpandedProject] = useState(null);
   const [images, setImages] = useState({});
   const [loadingImages, setLoadingImages] = useState({});
@@ -296,10 +315,80 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
   const [expandedDeleteGroup, setExpandedDeleteGroup] = useState(null);
   // Track whether the entire delete requests section is expanded (collapsed by default)
   const [deletesSectionExpanded, setDeletesSectionExpanded] = useState(false);
+  // Project changes state
+  const [localProjectChanges, setLocalProjectChanges] = useState(projectChanges);
+  const [projectChangesSectionExpanded, setProjectChangesSectionExpanded] = useState(true);
+  const [expandedProjectChange, setExpandedProjectChange] = useState(null);
+  const [projectChangeLightbox, setProjectChangeLightbox] = useState(null);
   // Track lightbox for delete request images
   const [deletePreviewLightbox, setDeletePreviewLightbox] = useState(null);
 
   useEffect(() => setLocalDeleteRequests(deleteRequests), [deleteRequests]);
+  useEffect(() => setLocalProjectChanges(projectChanges), [projectChanges]);
+
+  /** Confirm project changes: download new images locally */
+  const handleConfirmProjectChanges = async (change) => {
+    const key = `pc_${change.project_name}`;
+    setProcessing(prev => ({ ...prev, [key]: 'confirming' }));
+    try {
+      const fileIds = change.new_images.map(img => img.id);
+      const response = await fetch('/api/mobile/project-changes/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectName: change.project_name, fileIds }),
+      });
+      if (response.ok) {
+        hasChangesRef.current = true;
+        const data = await response.json();
+        showNotification(data.message);
+        setLocalProjectChanges(prev => prev.filter(c => c.project_name !== change.project_name));
+        await onRefresh();
+      } else {
+        const data = await response.json();
+        showNotification(data.error || 'Fehler', 'error');
+      }
+    } catch (e) {
+      showNotification('Fehler: ' + e.message, 'error');
+    } finally {
+      setProcessing(prev => ({ ...prev, [key]: null }));
+    }
+  };
+
+  /** Reject project changes: delete new images from Drive */
+  const handleRejectProjectChanges = async (change) => {
+    if (!window.confirm(`${change.new_images.length} neue Bilder aus "${change.project_name}" wirklich löschen?`)) return;
+    const key = `pc_${change.project_name}`;
+    setProcessing(prev => ({ ...prev, [key]: 'deleting' }));
+    try {
+      const fileIds = change.new_images.map(img => img.id);
+      const response = await fetch('/api/mobile/project-changes/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectName: change.project_name, fileIds }),
+      });
+      if (response.ok) {
+        hasChangesRef.current = true;
+        const data = await response.json();
+        showNotification(data.message);
+        setLocalProjectChanges(prev => prev.filter(c => c.project_name !== change.project_name));
+        await onRefresh();
+      } else {
+        const data = await response.json();
+        showNotification(data.error || 'Fehler', 'error');
+      }
+    } catch (e) {
+      showNotification('Fehler: ' + e.message, 'error');
+    } finally {
+      setProcessing(prev => ({ ...prev, [key]: null }));
+    }
+  };
+
+  /** View project: close modal and navigate to Projekte tab, opening the project modal */
+  const handleViewProject = (change) => {
+    if (onNavigateToProject) {
+      onNavigateToProject(change.project_name);
+    }
+  };
 
   // Group delete requests by project name
   const groupedDeleteRequests = useMemo(() => {
@@ -1110,8 +1199,115 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
             );
           })()}
 
+          {/* Project Changes Section - new images uploaded to existing projects */}
+          {localProjectChanges.length > 0 && (
+            <div className={`project-changes-section ${projectChangesSectionExpanded ? 'expanded' : 'collapsed'}`}>
+              <div
+                className="project-changes-header"
+                onClick={() => setProjectChangesSectionExpanded(!projectChangesSectionExpanded)}
+                style={{ cursor: 'pointer' }}
+              >
+                <Plus size={16} />
+                <span>
+                  {localProjectChanges.reduce((sum, c) => sum + c.new_images.length, 0)} neue Bilder in {localProjectChanges.length} {localProjectChanges.length === 1 ? 'Projekt' : 'Projekten'}
+                </span>
+                {projectChangesSectionExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </div>
+
+              {projectChangesSectionExpanded && (
+                <div className="project-changes-list">
+                  {localProjectChanges.map(change => {
+                    const key = `pc_${change.project_name}`;
+                    const isExpanded = expandedProjectChange === change.project_name;
+                    return (
+                      <div key={change.project_name} className="project-change-card">
+                        <div
+                          className="project-change-card-header"
+                          onClick={() => setExpandedProjectChange(isExpanded ? null : change.project_name)}
+                        >
+                          <div className="project-change-info">
+                            <div
+                              className="project-change-color"
+                              style={{ backgroundColor: change.project_color || '#3b82f6' }}
+                            />
+                            <div>
+                              <div className="project-change-name">{change.project_name}</div>
+                              <div className="project-change-meta">
+                                <Image size={12} />
+                                {change.new_images.length} neue {change.new_images.length === 1 ? 'Bild' : 'Bilder'}
+                                <span className="project-change-existing">
+                                  ({change.total_local_images} lokal / {change.total_drive_images} auf Drive)
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="project-change-actions">
+                            {processing[key] ? (
+                              <Loader size={18} className="spinning" />
+                            ) : (
+                              <>
+                                <button
+                                  className="btn-pending btn-accept"
+                                  onClick={(e) => { e.stopPropagation(); handleConfirmProjectChanges(change); }}
+                                  title="Bilder herunterladen und bestätigen"
+                                >
+                                  <Check size={16} />
+                                  Bestätigen
+                                </button>
+                                <button
+                                  className="btn-pending btn-delete"
+                                  onClick={(e) => { e.stopPropagation(); handleRejectProjectChanges(change); }}
+                                  title="Bilder ablehnen und von Drive löschen"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                                <button
+                                  className="btn-pending btn-view"
+                                  onClick={(e) => { e.stopPropagation(); handleViewProject(change); }}
+                                  title="Projekt anzeigen"
+                                >
+                                  <Eye size={16} />
+                                  Anzeigen
+                                </button>
+                              </>
+                            )}
+                            {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                          </div>
+                        </div>
+
+                        {isExpanded && (
+                          <div className="project-change-images">
+                            <div className="pending-images-grid">
+                              {change.new_images.map((img, idx) => (
+                                <div
+                                  key={img.id}
+                                  className="pending-image-card project-change-image"
+                                  title={img.name}
+                                  onClick={() => setProjectChangeLightbox({
+                                    images: change.new_images,
+                                    startIndex: idx,
+                                  })}
+                                >
+                                  <img
+                                    src={`/api/mobile/project-changes/image-proxy/${img.id}`}
+                                    alt={img.name}
+                                  />
+                                  <div className="pending-image-name">{img.name}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Upload Projects */}
-          {projects.length === 0 && deleteRequests.length === 0 ? (
+          {projects.length === 0 && localDeleteRequests.length === 0 && localProjectChanges.length === 0 ? (
             <div className="pending-empty">
               <Inbox size={48} strokeWidth={1} />
               <p>Keine neuen Uploads in der Inbox</p>
@@ -1135,6 +1331,15 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
           images={deletePreviewLightbox.images}
           startIndex={deletePreviewLightbox.startIndex}
           onClose={() => setDeletePreviewLightbox(null)}
+        />
+      )}
+
+      {projectChangeLightbox && (
+        <ImageLightbox
+          images={projectChangeLightbox.images}
+          startIndex={projectChangeLightbox.startIndex}
+          onClose={() => setProjectChangeLightbox(null)}
+          imageUrlFn={(img) => `/api/mobile/project-changes/image-proxy/${img.id}`}
         />
       )}
     </div>
