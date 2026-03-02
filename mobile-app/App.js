@@ -26,6 +26,7 @@ console.log('[Fuchs] App.js module loaded');
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
+const ProjectsStack = createNativeStackNavigator();
 
 const screenOptions = {
   headerStyle: { backgroundColor: colors.bgSecondary },
@@ -130,6 +131,25 @@ function CustomTabBar({ state, descriptors, navigation }) {
 // Dummy components for action tabs (they navigate away, these are never really shown)
 function DummyScreen() { return <View style={{ flex: 1, backgroundColor: colors.bgPrimary }} />; }
 
+function ProjectsStackScreen() {
+  return (
+    <ProjectsStack.Navigator screenOptions={screenOptions}>
+      <ProjectsStack.Screen
+        name="ProjectsList"
+        component={ProjectsScreen}
+        options={{ title: 'Projekte' }}
+      />
+      <ProjectsStack.Screen
+        name="ProjectDetail"
+        component={ProjectDetailScreen}
+        options={({ route }) => ({
+          title: route.params?.projectName || 'Projekt',
+        })}
+      />
+    </ProjectsStack.Navigator>
+  );
+}
+
 function MainTabs() {
   return (
     <Tab.Navigator
@@ -145,8 +165,8 @@ function MainTabs() {
       <Tab.Screen name="Gallery" component={DummyScreen} options={{ tabBarLabel: 'Galerie' }} />
       <Tab.Screen
         name="Projects"
-        component={ProjectsScreen}
-        options={{ title: 'Projekte' }}
+        component={ProjectsStackScreen}
+        options={{ headerShown: false }}
       />
       <Tab.Screen
         name="Queue"
@@ -209,13 +229,6 @@ function AppNavigator() {
             name="CameraStack"
             component={CameraScreen}
             options={{ headerShown: false, presentation: 'fullScreenModal' }}
-          />
-          <Stack.Screen
-            name="ProjectDetail"
-            component={ProjectDetailScreen}
-            options={({ route }) => ({
-              title: route.params?.projectName || 'Projekt',
-            })}
           />
           <Stack.Screen
             name="ImageView"

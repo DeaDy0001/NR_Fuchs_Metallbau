@@ -86,6 +86,8 @@ function DriveImages() {
   const [tagFilterSearchQuery, setTagFilterSearchQuery] = useState(''); // Tag-Suchfeld im Filter-Modal
   const [sidebarActiveTab, setSidebarActiveTab] = useState('tags'); // 'tags' oder 'projects'
   const [showOnlyStarredProjects, setShowOnlyStarredProjects] = useState(true); // Nur markierte Projekte im Sidebar anzeigen (Standard)
+  const [showAllProjectsInSidebar, setShowAllProjectsInSidebar] = useState(false); // Alle Projekte in Modal-Sidebar
+  const [sidebarProjectSearch, setSidebarProjectSearch] = useState(''); // Suche in Modal-Sidebar Projekte
   const [selectedProjectId, setSelectedProjectId] = useState(null); // Aktives Projekt für Quick-Assign
 
   // Keep refs in sync for event handlers
@@ -628,6 +630,25 @@ function DriveImages() {
     setPanPosition({ x: 0, y: 0 });
   };
 
+  const handleZoomIn = () => {
+    setZoomLevel(prev => Math.min(prev + 0.25, 5));
+  };
+
+  const handleZoomOut = () => {
+    setZoomLevel(prev => {
+      const newZoom = Math.max(prev - 0.25, 0.5);
+      if (newZoom <= 1) {
+        setPanPosition({ x: 0, y: 0 });
+      }
+      return newZoom;
+    });
+  };
+
+  const handleZoomReset = () => {
+    setZoomLevel(1);
+    setPanPosition({ x: 0, y: 0 });
+  };
+
   // Open delete confirmation dialog
   const handleDelete = () => {
     setShowDeleteDialog(true);
@@ -711,19 +732,22 @@ function DriveImages() {
 
   // Perform actual delete operation
   const performDelete = async (deleteFromDrive) => {
+    const imageToDelete = selectedImage;
+    // Clear both states together to prevent modal flash
     setShowDeleteDialog(false);
+    setSelectedImage(null);
+    setDeleteFromProjects(false);
+
+    if (!imageToDelete) return;
 
     try {
-      const url = `/api/drive/images/${selectedImage.id}?deleteFromDrive=${deleteFromDrive}&deleteFromProjects=${deleteFromProjects}`;
+      const url = `/api/drive/images/${imageToDelete.id}?deleteFromDrive=${deleteFromDrive}&deleteFromProjects=${deleteFromProjects}`;
       const response = await fetch(url, {
         method: 'DELETE'
       });
 
       if (response.ok) {
         const result = await response.json();
-        // Close modal and reload images
-        setSelectedImage(null);
-        setDeleteFromProjects(false); // Reset checkbox
         loadImages();
 
         // Show info notification if the file was not found on Drive
@@ -1775,11 +1799,11 @@ function DriveImages() {
 
       {selectedImage && !showDeleteDialog && (
         <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <button className="modal-close" onClick={closeModal}>
-              <X size={24} />
+          <div className="modal-wrapper" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-external-close" onClick={closeModal} title="Schließen">
+              <X size={20} />
             </button>
-
+            <div className="modal">
             <div className="modal-content">
               {/* Lightbox Image Area (Left) */}
               <div
@@ -1787,31 +1811,46 @@ function DriveImages() {
                 className="modal-image-container"
                 onMouseDown={e => { if (e.button === 1) e.preventDefault(); }}
               >
-                <img
-                  ref={modalImageRef}
-                  src={selectedImage.local_path || selectedImage.thumbnail_url}
-                  alt={selectedImage.name}
-                  style={{
-                    transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomLevel})`,
-                    transition: 'transform 0.15s ease',
-                    cursor: zoomLevel > 1 ? 'grab' : 'default'
-                  }}
-                  draggable={false}
-                />
-
-                {/* Nav arrows */}
-                {images.findIndex(img => img.id === selectedImage.id) > 0 && (
-                  <button className="modal-lightbox-nav prev" onClick={handlePreviousImage} title="Vorheriges Bild (←)">
-                    <ChevronLeft size={24} />
+                {/* Zoom controls toolbar */}
+                <div className="zoom-controls">
+                  <button className="zoom-btn" onClick={handleZoomOut} title="Zoom Out" disabled={zoomLevel <= 0.5}>
+                    -
                   </button>
-                )}
-                {images.findIndex(img => img.id === selectedImage.id) < images.length - 1 && (
-                  <button className="modal-lightbox-nav next" onClick={handleNextImage} title="Nächstes Bild (→)">
-                    <ChevronRight size={24} />
+                  <span className="zoom-level">{Math.round(zoomLevel * 100)}%</span>
+                  <button className="zoom-btn" onClick={handleZoomIn} title="Zoom In" disabled={zoomLevel >= 5}>
+                    +
                   </button>
-                )}
+                  <button className="zoom-btn zoom-reset" onClick={handleZoomReset} title="Zoom zurücksetzen">
+                    Reset
+                  </button>
 
-                <div className="modal-lightbox-hint">Shift + Mausrad zum Zoomen · Mittlere Maustaste zum Verschieben</div>
+                  <div className="zoom-controls-right">
+                    {images.findIndex(img => img.id === selectedImage.id) > 0 && (
+                      <button className="zoom-btn nav-btn" onClick={handlePreviousImage} title="Vorheriges Bild (←)">
+                        <ChevronLeft size={18} />
+                      </button>
+                    )}
+                    {images.findIndex(img => img.id === selectedImage.id) < images.length - 1 && (
+                      <button className="zoom-btn nav-btn" onClick={handleNextImage} title="Nächstes Bild (→)">
+                        <ChevronRight size={18} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="modal-image-scroll">
+                  <img
+                    ref={modalImageRef}
+                    src={selectedImage.local_path || selectedImage.thumbnail_url}
+                    alt={selectedImage.name}
+                    style={{
+                      transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoomLevel})`,
+                      transition: 'transform 0.15s ease',
+                      cursor: zoomLevel > 1 ? 'grab' : 'default'
+                    }}
+                    draggable={false}
+                  />
+                </div>
               </div>
 
               {/* Fixed Sidebar (Right) */}
@@ -1911,54 +1950,79 @@ function DriveImages() {
                     </div>
                   )}
 
-                  {selectedImage.file_size && (
-                    <div className="modal-section">
-                      <label>Dateigröße</label>
-                      <div className="detail-text">
-                        {(selectedImage.file_size / 1024 / 1024).toFixed(2)} MB
+                  <div className="modal-section modal-meta-grid">
+                    {selectedImage.file_size && (
+                      <div className="meta-item">
+                        <span className="meta-label">Größe</span>
+                        <span className="meta-value">{(selectedImage.file_size / 1024 / 1024).toFixed(2)} MB</span>
                       </div>
-                    </div>
-                  )}
-
-                  {selectedImage.width && selectedImage.height && (
-                    <div className="modal-section">
-                      <label>Auflösung</label>
-                      <div className="detail-text">
-                        {selectedImage.width} x {selectedImage.height} px
+                    )}
+                    {selectedImage.width && selectedImage.height && (
+                      <div className="meta-item">
+                        <span className="meta-label">Auflösung</span>
+                        <span className="meta-value">{selectedImage.width} × {selectedImage.height}</span>
                       </div>
-                    </div>
-                  )}
-
-                  {selectedImage.photo_taken_at && (
-                    <div className="modal-section">
-                      <label>📸 Foto aufgenommen</label>
-                      <div className="detail-text">
-                        {formatSQLiteDate(selectedImage.photo_taken_at)}
+                    )}
+                    {selectedImage.photo_taken_at && (
+                      <div className="meta-item">
+                        <span className="meta-label">Aufgenommen</span>
+                        <span className="meta-value">{formatSQLiteDate(selectedImage.photo_taken_at)}</span>
                       </div>
-                    </div>
-                  )}
-
-                  {selectedImage.created_at && (
-                    <div className="modal-section">
-                      <label>📅 Hochgeladen am</label>
-                      <div className="detail-text">
-                        {formatSQLiteDate(selectedImage.created_at)}
+                    )}
+                    {selectedImage.created_at && (
+                      <div className="meta-item">
+                        <span className="meta-label">Hochgeladen</span>
+                        <span className="meta-value">{formatSQLiteDate(selectedImage.created_at)}</span>
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
 
                 {/* Lower section: Project assignment */}
-                <div className="modal-sidebar-lower">
+                <div className={`modal-sidebar-lower ${showAllProjectsInSidebar ? 'expanded' : ''}`}>
                   <div className="modal-section projects-section">
-                  <label>📁 Projekte</label>
-                  {selectedProjects.length === 0 ? (
-                    <div className="empty-hint">Keine Projekte markiert. Gehe zum Projekte-Tab und markiere Projekte.</div>
-                  ) : (
-                    <div className="project-list">
-                      {projects
-                        .filter(p => selectedProjects.includes(p.id))
-                        .map(project => {
+                  <div className="projects-header">
+                    <label>Projekte</label>
+                    <button
+                      className="all-projects-toggle"
+                      onClick={() => { setShowAllProjectsInSidebar(!showAllProjectsInSidebar); setSidebarProjectSearch(''); }}
+                    >
+                      {showAllProjectsInSidebar ? 'Markierte' : 'Alle Projekte'}
+                    </button>
+                  </div>
+                  {showAllProjectsInSidebar && (
+                    <input
+                      type="text"
+                      className="project-search-input"
+                      placeholder="Projekt oder Tag suchen..."
+                      value={sidebarProjectSearch}
+                      onChange={(e) => setSidebarProjectSearch(e.target.value)}
+                    />
+                  )}
+                  {(() => {
+                    const searchLower = sidebarProjectSearch.toLowerCase();
+                    const projectsToShow = showAllProjectsInSidebar
+                      ? projects.filter(p => {
+                          if (!sidebarProjectSearch) return true;
+                          if (p.folder_name.toLowerCase().includes(searchLower)) return true;
+                          // Tag-Suche
+                          try {
+                            const tags = Array.isArray(p.tags) ? p.tags : JSON.parse(p.tags || '[]');
+                            return tags.some(t => {
+                              const tagName = typeof t === 'string' ? t : t.name || '';
+                              return tagName.toLowerCase().includes(searchLower);
+                            });
+                          } catch { return false; }
+                        })
+                      : projects.filter(p => selectedProjects.includes(p.id));
+
+                    if (projectsToShow.length === 0) {
+                      return <div className="empty-hint">{showAllProjectsInSidebar ? 'Keine Projekte gefunden.' : 'Keine Projekte markiert.'}</div>;
+                    }
+
+                    return (
+                      <div className="project-list">
+                        {projectsToShow.map(project => {
                           const isAssigned = selectedImage.projects?.some(p => p.id === project.id);
                           return (
                             <button
@@ -1966,7 +2030,7 @@ function DriveImages() {
                               className={`project-item ${isAssigned ? 'project-assigned' : ''}`}
                               onClick={() => !isAssigned && handleAssignToProject(project.id)}
                               style={{ borderLeftColor: project.color }}
-                              title={isAssigned ? `✓ Bereits zugeordnet zu "${project.folder_name}"` : `Bild zu "${project.folder_name}" hinzufügen`}
+                              title={isAssigned ? `✓ Bereits zugeordnet` : `Zu "${project.folder_name}" hinzufügen`}
                             >
                               <span className="project-item-name">
                                 {isAssigned && <span className="checkmark">✓ </span>}
@@ -1976,7 +2040,7 @@ function DriveImages() {
                                 <button
                                   className="project-unassign-btn"
                                   onClick={(e) => handleUnassignFromProject(project.id, e)}
-                                  title={`Von "${project.folder_name}" entfernen`}
+                                  title={`Entfernen`}
                                 >
                                   <X size={16} />
                                 </button>
@@ -1984,11 +2048,13 @@ function DriveImages() {
                             </button>
                           );
                         })}
-                    </div>
-                  )}
+                      </div>
+                    );
+                  })()}
                   </div>
                 </div>
               </div>
+            </div>
             </div>
           </div>
         </div>

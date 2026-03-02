@@ -96,13 +96,13 @@ export default function ProjectsScreen({ navigation }) {
       const result = await createProject(name);
       setNewProjectName('');
       setShowNewProject(false);
-      // Save as pending project (waiting for desktop confirmation)
+      // Add as pending project (shown until confirmed by desktop software)
       await addPendingProject(name, result.folder_id);
-      // Reload data to show pending project
+      // Reload data to show the pending project
       await loadData();
       Alert.alert(
         'Projekt erstellt',
-        `"${name}" wurde im Inbox-Ordner erstellt und wartet auf Bestätigung in der Desktop-Software.`
+        `"${name}" wurde in der Inbox erstellt und wartet auf Bestätigung in der Desktop-Software.`
       );
     } catch (error) {
       Alert.alert('Fehler', error.message);

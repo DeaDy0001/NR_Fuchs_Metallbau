@@ -1,15 +1,20 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, Image, Dimensions, TouchableOpacity,
-  ActivityIndicator, FlatList, Animated, PanResponder,
+  ActivityIndicator, FlatList, Animated, PanResponder, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as FileSystem from 'expo-file-system';
 import { colors } from '../theme/colors';
 import { downloadFullImage } from '../services/syncService';
 import { getImageUrl } from '../services/api';
+import { deleteRecentPhoto } from '../services/database';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const IMAGE_HEIGHT = SCREEN_HEIGHT - 110;
+const HEADER_HEIGHT = 60;
+const FOOTER_HEIGHT = 64;
+const IMAGE_HEIGHT = SCREEN_HEIGHT - HEADER_HEIGHT - FOOTER_HEIGHT;
 
 // Calculate distance between two touch points
 function getDistance(touches) {
@@ -18,7 +23,15 @@ function getDistance(touches) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-// Single zoomable image using PanResponder + Animated (works on Android & iOS)
+// Get midpoint between two touch points
+function getMidpoint(touches) {
+  return {
+    x: (touches[0].pageX + touches[1].pageX) / 2,
+    y: (touches[0].pageY + touches[1].pageY) / 2,
+  };
+}
+
+// Single zoomable image using PanResponder + Animated
 function ZoomableImage({ imageId, localUri, isActive }) {
   const [imageUri, setImageUri] = useState(localUri || null);
   const [imageHeaders, setImageHeaders] = useState(null);
@@ -34,8 +47,11 @@ function ZoomableImage({ imageId, localUri, isActive }) {
   const currentTranslateY = useRef(0);
   const initialPinchDistance = useRef(0);
   const pinchStartScale = useRef(1);
+  const pinchMidpoint = useRef({ x: 0, y: 0 });
+  const pinchStartTranslate = useRef({ x: 0, y: 0 });
   const lastTapTime = useRef(0);
   const isPinching = useRef(false);
+  const wasPinching = useRef(false);
   const panStartX = useRef(0);
   const panStartY = useRef(0);
 
@@ -45,9 +61,9 @@ function ZoomableImage({ imageId, localUri, isActive }) {
     }
   }, [isActive]);
 
-  // Reset zoom when becoming inactive
+  // Reset zoom only when becoming inactive (swiping away)
   useEffect(() => {
-    if (isActive) {
+    if (!isActive) {
       resetZoom(false);
     }
   }, [isActive]);
@@ -100,20 +116,36 @@ function ZoomableImage({ imageId, localUri, isActive }) {
     ]).start();
   };
 
+  const clampTranslation = (tx, ty, scale) => {
+    const maxTransX = (SCREEN_WIDTH * (scale - 1)) / 2;
+    const maxTransY = (IMAGE_HEIGHT * (scale - 1)) / 2;
+    return {
+      x: Math.max(-maxTransX, Math.min(maxTransX, tx)),
+      y: Math.max(-maxTransY, Math.min(maxTransY, ty)),
+    };
+  };
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        // Only claim the gesture if zoomed in (for panning) or if 2 fingers (for pinching)
-        return currentScale.current > 1 || Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2;
+        // Claim gesture if zoomed in (for panning) or if any movement detected (for pinching)
+        if (currentScale.current > 1) return true;
+        return Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2;
       },
 
       onPanResponderGrant: (evt) => {
         const touches = evt.nativeEvent.touches;
         if (touches.length === 2) {
           isPinching.current = true;
+          wasPinching.current = true;
           initialPinchDistance.current = getDistance(touches);
           pinchStartScale.current = currentScale.current;
+          pinchMidpoint.current = getMidpoint(touches);
+          pinchStartTranslate.current = {
+            x: currentTranslateX.current,
+            y: currentTranslateY.current,
+          };
         } else {
           isPinching.current = false;
           panStartX.current = currentTranslateX.current;
@@ -125,11 +157,17 @@ function ZoomableImage({ imageId, localUri, isActive }) {
         const touches = evt.nativeEvent.touches;
 
         if (touches.length === 2) {
-          // Pinch zoom
+          // Pinch zoom with focal point tracking
           if (!isPinching.current) {
             isPinching.current = true;
+            wasPinching.current = true;
             initialPinchDistance.current = getDistance(touches);
             pinchStartScale.current = currentScale.current;
+            pinchMidpoint.current = getMidpoint(touches);
+            pinchStartTranslate.current = {
+              x: currentTranslateX.current,
+              y: currentTranslateY.current,
+            };
             return;
           }
 
@@ -137,10 +175,22 @@ function ZoomableImage({ imageId, localUri, isActive }) {
           const pinchRatio = currentDistance / initialPinchDistance.current;
           const newScale = Math.max(1, Math.min(pinchStartScale.current * pinchRatio, 6));
 
+          // Calculate focal point offset to zoom toward the pinch center
+          const mid = getMidpoint(touches);
+          const focalX = mid.x - SCREEN_WIDTH / 2;
+          const focalY = mid.y - HEADER_HEIGHT - IMAGE_HEIGHT / 2;
+          const scaleRatio = newScale / pinchStartScale.current;
+          const newTx = pinchStartTranslate.current.x + focalX * (1 - scaleRatio);
+          const newTy = pinchStartTranslate.current.y + focalY * (1 - scaleRatio);
+
           currentScale.current = newScale;
+          currentTranslateX.current = newTx;
+          currentTranslateY.current = newTy;
           scaleVal.setValue(newScale);
+          translateXVal.setValue(newTx);
+          translateYVal.setValue(newTy);
         } else if (currentScale.current > 1 && !isPinching.current) {
-          // Pan when zoomed in
+          // Pan when zoomed in with single finger
           const newX = panStartX.current + gestureState.dx;
           const newY = panStartY.current + gestureState.dy;
 
@@ -152,18 +202,40 @@ function ZoomableImage({ imageId, localUri, isActive }) {
       },
 
       onPanResponderRelease: (evt) => {
+        const wasJustPinching = isPinching.current || wasPinching.current;
         isPinching.current = false;
 
-        // Snap back to 1 if barely zoomed
-        if (currentScale.current < 1.15) {
+        // If scale dropped below 1 during pinch-out, snap to 1
+        if (currentScale.current <= 1) {
           resetZoom(true);
+          wasPinching.current = false;
           return;
         }
 
-        // Double tap detection
+        // After a pinch, clamp translation and clear pinch flag
+        if (wasJustPinching) {
+          const clamped = clampTranslation(
+            currentTranslateX.current,
+            currentTranslateY.current,
+            currentScale.current
+          );
+          if (clamped.x !== currentTranslateX.current || clamped.y !== currentTranslateY.current) {
+            currentTranslateX.current = clamped.x;
+            currentTranslateY.current = clamped.y;
+            Animated.parallel([
+              Animated.timing(translateXVal, { toValue: clamped.x, duration: 150, useNativeDriver: true }),
+              Animated.timing(translateYVal, { toValue: clamped.y, duration: 150, useNativeDriver: true }),
+            ]).start();
+          }
+          // Reset wasPinching after a short delay to avoid double-tap false positive
+          setTimeout(() => { wasPinching.current = false; }, 350);
+          return;
+        }
+
+        // Double tap detection (only when NOT pinching)
         const now = Date.now();
         const touches = evt.nativeEvent.changedTouches;
-        if (touches.length === 1 && Math.abs(evt.nativeEvent.locationX) < SCREEN_WIDTH) {
+        if (touches.length === 1) {
           if (now - lastTapTime.current < 300) {
             // Double tap
             if (currentScale.current > 1.5) {
@@ -178,17 +250,17 @@ function ZoomableImage({ imageId, localUri, isActive }) {
         }
 
         // Clamp translation so image doesn't fly off screen
-        const maxTransX = (SCREEN_WIDTH * (currentScale.current - 1)) / 2;
-        const maxTransY = (IMAGE_HEIGHT * (currentScale.current - 1)) / 2;
-        let clampedX = Math.max(-maxTransX, Math.min(maxTransX, currentTranslateX.current));
-        let clampedY = Math.max(-maxTransY, Math.min(maxTransY, currentTranslateY.current));
-
-        if (clampedX !== currentTranslateX.current || clampedY !== currentTranslateY.current) {
-          currentTranslateX.current = clampedX;
-          currentTranslateY.current = clampedY;
+        const clamped = clampTranslation(
+          currentTranslateX.current,
+          currentTranslateY.current,
+          currentScale.current
+        );
+        if (clamped.x !== currentTranslateX.current || clamped.y !== currentTranslateY.current) {
+          currentTranslateX.current = clamped.x;
+          currentTranslateY.current = clamped.y;
           Animated.parallel([
-            Animated.timing(translateXVal, { toValue: clampedX, duration: 150, useNativeDriver: true }),
-            Animated.timing(translateYVal, { toValue: clampedY, duration: 150, useNativeDriver: true }),
+            Animated.timing(translateXVal, { toValue: clamped.x, duration: 150, useNativeDriver: true }),
+            Animated.timing(translateYVal, { toValue: clamped.y, duration: 150, useNativeDriver: true }),
           ]).start();
         }
       },
@@ -238,12 +310,63 @@ function ZoomableImage({ imageId, localUri, isActive }) {
 }
 
 export default function ImageViewScreen({ route, navigation }) {
-  const { imageId, imageName, projectName, images, initialIndex, localUri } = route.params;
+  const { imageId, imageName, projectName, images, initialIndex, localUri, onDelete } = route.params;
   const [currentIndex, setCurrentIndex] = useState(initialIndex || 0);
+  const [deletedIds, setDeletedIds] = useState(new Set());
+  const insets = useSafeAreaInsets();
+  const flatListRef = useRef(null);
 
-  // Single image mode (no images array)
-  const imageList = images || [{ id: imageId, name: imageName, localUri }];
+  // Single image mode (no images array), filter out deleted
+  const allImages = images || [{ id: imageId, name: imageName, localUri }];
+  const imageList = allImages.filter(img => !deletedIds.has(img.id));
   const currentImage = imageList[currentIndex] || imageList[0];
+
+  const handleDeleteCurrent = useCallback(() => {
+    if (!currentImage) return;
+
+    Alert.alert(
+      'Foto löschen',
+      `"${currentImage.name}" vom Handy löschen?`,
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        {
+          text: 'Löschen',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Delete from database
+              if (currentImage.id) {
+                await deleteRecentPhoto(currentImage.id);
+              }
+              // Delete local file
+              if (currentImage.localUri) {
+                try {
+                  await FileSystem.deleteAsync(currentImage.localUri, { idempotent: true });
+                } catch {}
+              }
+
+              // Mark as deleted
+              setDeletedIds(prev => new Set([...prev, currentImage.id]));
+
+              // If all images are deleted, go back
+              const remaining = imageList.length - 1;
+              if (remaining <= 0) {
+                navigation.goBack();
+                return;
+              }
+
+              // Adjust index if needed
+              if (currentIndex >= remaining) {
+                setCurrentIndex(remaining - 1);
+              }
+            } catch (error) {
+              Alert.alert('Fehler', 'Foto konnte nicht gelöscht werden.');
+            }
+          },
+        },
+      ]
+    );
+  }, [currentImage, currentIndex, imageList.length, navigation]);
 
   const onViewableItemsChanged = useCallback(({ viewableItems }) => {
     if (viewableItems.length > 0 && viewableItems[0].index != null) {
@@ -259,13 +382,26 @@ export default function ImageViewScreen({ route, navigation }) {
     index,
   }), []);
 
+  const navigatePrev = useCallback(() => {
+    if (currentIndex > 0) {
+      const newIndex = currentIndex - 1;
+      flatListRef.current?.scrollToIndex({ index: newIndex, animated: true });
+      setCurrentIndex(newIndex);
+    }
+  }, [currentIndex]);
+
+  const navigateNext = useCallback(() => {
+    if (currentIndex < imageList.length - 1) {
+      const newIndex = currentIndex + 1;
+      flatListRef.current?.scrollToIndex({ index: newIndex, animated: true });
+      setCurrentIndex(newIndex);
+    }
+  }, [currentIndex, imageList.length]);
+
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* Header - Image name and counter */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.headerBtn} onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={24} color="white" />
-        </TouchableOpacity>
         <View style={styles.headerInfo}>
           <Text style={styles.headerTitle} numberOfLines={1}>{currentImage?.name || 'Bild'}</Text>
           <Text style={styles.headerSubtitle}>
@@ -283,6 +419,7 @@ export default function ImageViewScreen({ route, navigation }) {
         />
       ) : (
         <FlatList
+          ref={flatListRef}
           data={imageList}
           horizontal
           pagingEnabled
@@ -301,6 +438,37 @@ export default function ImageViewScreen({ route, navigation }) {
           )}
         />
       )}
+
+      {/* Footer - Back button + delete + navigation */}
+      <View style={[styles.footer, { paddingBottom: insets.bottom || 4 }]}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+          <Ionicons name="arrow-back" size={20} color="white" />
+          <Text style={styles.backBtnText}>Zurück</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.deleteBtn} onPress={handleDeleteCurrent}>
+          <Ionicons name="trash-outline" size={20} color="#ef4444" />
+        </TouchableOpacity>
+
+        {imageList.length > 1 && (
+          <View style={styles.navButtons}>
+            <TouchableOpacity
+              style={[styles.navBtn, currentIndex === 0 && styles.navBtnDisabled]}
+              onPress={navigatePrev}
+              disabled={currentIndex === 0}
+            >
+              <Ionicons name="chevron-back" size={22} color="white" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.navBtn, currentIndex === imageList.length - 1 && styles.navBtnDisabled]}
+              onPress={navigateNext}
+              disabled={currentIndex === imageList.length - 1}
+            >
+              <Ionicons name="chevron-forward" size={22} color="white" />
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
     </View>
   );
 }
@@ -309,10 +477,10 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: 'black' },
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingTop: 48, paddingHorizontal: 16, paddingBottom: 12,
+    paddingTop: 48, paddingHorizontal: 16, paddingBottom: 8,
     backgroundColor: 'rgba(0,0,0,0.8)', gap: 12, zIndex: 10,
+    height: HEADER_HEIGHT + 38,
   },
-  headerBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   headerInfo: { flex: 1 },
   headerTitle: { color: 'white', fontSize: 16, fontWeight: '600' },
   headerSubtitle: { color: colors.textTertiary, fontSize: 13, marginTop: 2 },
@@ -323,4 +491,53 @@ const styles = StyleSheet.create({
   },
   image: { width: SCREEN_WIDTH, height: IMAGE_HEIGHT },
   loadingText: { color: colors.textTertiary, fontSize: 14 },
+  footer: {
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+  },
+  backBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  backBtnText: {
+    color: 'white',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  deleteBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.3)',
+  },
+  navButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  navBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  navBtnDisabled: {
+    opacity: 0.3,
+  },
 });

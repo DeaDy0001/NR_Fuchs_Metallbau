@@ -178,20 +178,22 @@ export const setSetting = async (key, value) => {
 // Upload queue helpers
 // ============================================================
 
-export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = null, projectName = null, projectFolderId = null, gpsData = null) => {
+export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = null, projectName = null, projectFolderId = null, gpsData = null, skipRecentPhotos = false) => {
   const db = await getDb();
 
-  // Also add to recent photos for the home screen
-  try {
-    await db.runAsync(
-      'INSERT INTO recent_photos (file_uri, file_name, mime_type, project_id, project_name, gps_data, thumbnail_uri) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [fileUri, fileName, mimeType, projectId, projectName, gpsData, fileUri]
-    );
-    // Keep only last 50 recent photos
-    await db.runAsync(
-      'DELETE FROM recent_photos WHERE id NOT IN (SELECT id FROM recent_photos ORDER BY created_at DESC LIMIT 50)'
-    );
-  } catch {}
+  // Also add to recent photos for the home screen (skip when re-assigning existing photos)
+  if (!skipRecentPhotos) {
+    try {
+      await db.runAsync(
+        'INSERT INTO recent_photos (file_uri, file_name, mime_type, project_id, project_name, gps_data, thumbnail_uri) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [fileUri, fileName, mimeType, projectId, projectName, gpsData, fileUri]
+      );
+      // Keep only last 50 recent photos
+      await db.runAsync(
+        'DELETE FROM recent_photos WHERE id NOT IN (SELECT id FROM recent_photos ORDER BY created_at DESC LIMIT 50)'
+      );
+    } catch {}
+  }
 
   return await db.runAsync(
     'INSERT INTO upload_queue (file_uri, file_name, mime_type, project_id, project_name, project_folder_id, gps_data) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -382,6 +384,40 @@ export const getRecentPhotos = async (limit = 20, offset = 0) => {
     'SELECT * FROM recent_photos ORDER BY created_at DESC LIMIT ? OFFSET ?',
     [limit, offset]
   );
+};
+
+export const updateRecentPhotoProject = async (photoId, projectId, projectName) => {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE recent_photos SET project_id = ?, project_name = ? WHERE id = ?',
+    [projectId, projectName, photoId]
+  );
+};
+
+export const deleteRecentPhoto = async (photoId) => {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM recent_photos WHERE id = ?', [photoId]);
+};
+
+export const deleteRecentPhotos = async (photoIds) => {
+  if (!photoIds || photoIds.length === 0) return;
+  const db = await getDb();
+  const placeholders = photoIds.map(() => '?').join(',');
+  await db.runAsync(`DELETE FROM recent_photos WHERE id IN (${placeholders})`, photoIds);
+};
+
+/**
+ * Check which photos are still queued (not yet uploaded) by file_name
+ */
+export const getQueuedFileNames = async (fileNames) => {
+  if (!fileNames || fileNames.length === 0) return new Set();
+  const db = await getDb();
+  const placeholders = fileNames.map(() => '?').join(',');
+  const rows = await db.getAllAsync(
+    `SELECT file_name FROM upload_queue WHERE file_name IN (${placeholders}) AND status IN ('queued', 'failed')`,
+    fileNames
+  );
+  return new Set(rows.map(r => r.file_name));
 };
 
 // ============================================================

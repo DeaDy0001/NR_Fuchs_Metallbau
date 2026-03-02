@@ -171,9 +171,8 @@ const getInboxFolderId = async () => {
 
 /**
  * Create a new project (= create folder on Drive under inbox/)
- * Projects from mobile go into the inbox first, so the desktop software
- * can review and move them to Projekte/ (confirm/merge).
- * Returns the new project object with folder info
+ * The project stays in the inbox until confirmed by the desktop software,
+ * which moves it to Projekte/ and creates the proper folder structure.
  */
 export const createProject = async (name) => {
   const inboxFolderId = await getInboxFolderId();
@@ -189,6 +188,7 @@ export const createProject = async (name) => {
     };
   }
 
+  // Create project folder under inbox/
   const folder = await findOrCreateFolder(inboxFolderId, name);
 
   return {
@@ -280,6 +280,56 @@ export const fetchSyncData = async (tagsOnly = false) => {
     tags,
     serverTime: new Date().toISOString(),
   };
+};
+
+// ============================================================
+// Delete Requests (ask desktop software to delete images)
+// ============================================================
+
+/**
+ * Write delete requests to delete_requests.json in the inbox folder on Drive.
+ * The desktop software reads this file and shows the requests in the inbox modal.
+ */
+export const requestDeleteFromSoftware = async (photos) => {
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
+
+  const inboxFolderId = await getInboxFolderId();
+  const { getSetting } = require('./database');
+  const userName = await getSetting('userName', 'Handy');
+
+  // Build new delete request entries
+  const newRequests = photos.map(photo => ({
+    id: `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+    file_name: photo.file_name,
+    project_name: photo.project_name || null,
+    project_id: photo.project_id || null,
+    requested_at: new Date().toISOString(),
+    requested_by: userName,
+  }));
+
+  // Read existing delete_requests.json (if any)
+  let existing = [];
+  try {
+    const data = await readJsonFileByName(inboxFolderId, 'delete_requests.json');
+    if (Array.isArray(data)) existing = data;
+  } catch {}
+
+  const merged = [...existing, ...newRequests];
+
+  // Write back (create or update)
+  const files = await listFiles(inboxFolderId, {
+    name: 'delete_requests.json',
+    fields: 'files(id,name)',
+  });
+
+  if (files.length > 0) {
+    await updateJsonFile(files[0].id, merged);
+  } else {
+    await createJsonFile(inboxFolderId, 'delete_requests.json', merged);
+  }
+
+  return newRequests.length;
 };
 
 // ============================================================

@@ -488,6 +488,7 @@ export default function CameraScreen({ navigation, route }) {
         style={styles.camera}
         facing={facing}
         flash={flash}
+        shutterSound={false}
       />
 
       {/* Overlay on top of camera */}

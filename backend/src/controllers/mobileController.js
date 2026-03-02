@@ -2,7 +2,7 @@ const db = require('../config/database');
 const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
-const { compressImage, generateThumbnail, findSubfolder, findOrCreateSubfolder, moveFileOnDrive, listFoldersInFolder, listFilesInFolder, extractFolderId, deleteFileFromDrive } = require('../services/googleDriveService');
+const { compressImage, generateThumbnail, findSubfolder, findOrCreateSubfolder, moveFileOnDrive, listFoldersInFolder, listFilesInFolder, extractFolderId, deleteFileFromDrive, downloadFile, getFileMetadata, listAllFilesInFolder, readDriveFileAsJson, updateDriveFileContent } = require('../services/googleDriveService');
 const { google } = require('googleapis');
 const os = require('os');
 
@@ -802,6 +802,76 @@ const resolveDeviceUser = (deviceId) => {
   }
 };
 
+// Helper: Sanitize filename for local storage
+const sanitizeFilename = (filename) => {
+  return filename
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+};
+
+/**
+ * Helper: Download a Drive file locally, generate thumbnail, register in drive_images
+ * Returns the new drive_images row ID
+ */
+const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePathId, drivePathName) => {
+  const uploadBaseDir = path.join(__dirname, '../../../uploads/drive');
+  const drivePathDir = path.join(uploadBaseDir, sanitizeFilename(drivePathName));
+  await fs.ensureDir(drivePathDir);
+
+  const fileExt = path.extname(fileName);
+  const fileBaseName = path.basename(fileName, fileExt);
+  const uniqueName = `${Date.now()}_${sanitizeFilename(fileName)}`;
+  const localFilePath = path.join(drivePathDir, uniqueName);
+
+  // Download from Drive
+  await downloadFile(driveFileId, localFilePath);
+  const stats = await fs.stat(localFilePath);
+
+  // Extract EXIF date
+  let photoTakenAt = null;
+  try {
+    const exifr = require('exifr');
+    const exifData = await exifr.parse(localFilePath, {
+      pick: ['DateTimeOriginal', 'DateTime', 'CreateDate']
+    });
+    if (exifData) {
+      const dateValue = exifData.DateTimeOriginal || exifData.DateTime || exifData.CreateDate;
+      if (dateValue) photoTakenAt = new Date(dateValue).toISOString();
+    }
+  } catch {}
+
+  // Generate thumbnail
+  const thumbnailDir = path.join(__dirname, '../../../uploads/thumbnails');
+  await fs.ensureDir(thumbnailDir);
+  const thumbnailFilename = `${Date.now()}_${sanitizeFilename(fileBaseName)}.jpg`;
+  const thumbnailPath = path.join(thumbnailDir, thumbnailFilename);
+  await generateThumbnail(localFilePath, thumbnailPath);
+
+  // Register in drive_images
+  const localPath = `/uploads/drive/${sanitizeFilename(drivePathName)}/${uniqueName}`;
+  const thumbnailUrl = `/uploads/thumbnails/${thumbnailFilename}`;
+
+  const result = db.prepare(`
+    INSERT INTO drive_images
+    (drive_path_id, name, original_name, local_path, thumbnail_url,
+     file_size, mime_type, is_compressed, drive_file_id, photo_taken_at, subfolder)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL)
+  `).run(
+    drivePathId,
+    fileBaseName,
+    fileName,
+    localPath,
+    thumbnailUrl,
+    stats.size,
+    mimeType || 'image/jpeg',
+    driveFileId,
+    photoTakenAt
+  );
+
+  return result.lastInsertRowid;
+};
+
 /**
  * Get mobile inbox (uploads pending review in desktop)
  * GET /api/mobile/inbox
@@ -857,7 +927,44 @@ const getInbox = async (req, res) => {
       console.error('Error scanning Drive inbox:', e.message);
     }
 
-    res.json(driveInboxProjects);
+    // Also read delete_requests.json from inbox (if exists)
+    let deleteRequests = [];
+    try {
+      const drivePath = db.prepare('SELECT path FROM drive_paths LIMIT 1').get();
+      if (drivePath) {
+        let rootFolderId = drivePath.path;
+        const urlMatch = drivePath.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+        if (urlMatch) rootFolderId = urlMatch[1];
+
+        const metaFolder = await findSubfolder(rootFolderId, 'NR_Fuchs_Meta');
+        if (metaFolder) {
+          const inboxFolder = await findSubfolder(metaFolder.id, 'inbox');
+          if (inboxFolder) {
+            // Find delete_requests.json in inbox
+            const allFiles = await listAllFilesInFolder(inboxFolder.id);
+            const deleteFile = allFiles.find(f => f.name === 'delete_requests.json');
+            if (deleteFile) {
+              try {
+                const data = await readDriveFileAsJson(deleteFile.id);
+                if (Array.isArray(data) && data.length > 0) {
+                  deleteRequests = data.map(req => ({
+                    ...req,
+                    _deleteFileId: deleteFile.id,
+                    _inboxFolderId: inboxFolder.id,
+                  }));
+                }
+              } catch (e) {
+                console.error('Error reading delete_requests.json:', e.message);
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error reading delete requests:', e.message);
+    }
+
+    res.json({ projects: driveInboxProjects, deleteRequests });
   } catch (error) {
     console.error('Error getting inbox:', error);
     res.status(500).json({ error: 'Failed to get inbox' });
@@ -866,6 +973,9 @@ const getInbox = async (req, res) => {
 
 /**
  * Confirm an inbox project - move folder from inbox/ to Projekte/ on Google Drive
+ * + create local project folder with Bilder/ subfolder
+ * + download images to local Bilder/ folder
+ * + create project DB entry
  * POST /api/mobile/inbox/confirm
  * Body: { folderId, inboxFolderId, projectName }
  */
@@ -878,7 +988,7 @@ const confirmInboxProject = async (req, res) => {
     }
 
     // Find or create Projekte/ folder
-    const drivePath = db.prepare('SELECT path FROM drive_paths LIMIT 1').get();
+    const drivePath = db.prepare('SELECT * FROM drive_paths LIMIT 1').get();
     if (!drivePath) {
       return res.status(400).json({ error: 'Kein Google Drive Ordner konfiguriert' });
     }
@@ -892,6 +1002,11 @@ const confirmInboxProject = async (req, res) => {
       return res.status(400).json({ error: 'NR_Fuchs_Meta Ordner nicht gefunden' });
     }
 
+    // List files BEFORE moving (to avoid any Google Drive API caching issues)
+    const files = await listFilesInFolder(folderId);
+    const images = files.filter(f => f.mimeType && f.mimeType.startsWith('image/'));
+    console.log(`📋 Found ${images.length} images in inbox folder "${projectName}" before move`);
+
     const projekteFolder = await findOrCreateSubfolder(metaFolder.id, 'Projekte');
 
     // Move folder from inbox/ to Projekte/
@@ -901,6 +1016,48 @@ const confirmInboxProject = async (req, res) => {
     }
 
     await moveFileOnDrive(folderId, projekteFolder.id, sourceParentId);
+
+    // Create local project folder + Bilder subfolder + download images
+    const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    let downloaded = 0;
+
+    if (settings?.project_path) {
+      const projectFolder = path.join(settings.project_path, projectName);
+      const bilderFolder = path.join(projectFolder, 'Bilder');
+      await fs.ensureDir(bilderFolder);
+      console.log(`📁 Created local project folder: ${bilderFolder}`);
+
+      // Download images from Drive to local Bilder folder
+      for (const img of images) {
+        try {
+          // Download directly to Bilder folder
+          const destPath = path.join(bilderFolder, img.name);
+          if (!await fs.pathExists(destPath)) {
+            await downloadFile(img.id, destPath);
+            downloaded++;
+            console.log(`✓ Downloaded "${img.name}" to "${bilderFolder}"`);
+          } else {
+            downloaded++;
+            console.log(`⏭ "${img.name}" already exists, skipped`);
+          }
+        } catch (e) {
+          console.error(`✗ Failed to download ${img.name}:`, e.message);
+        }
+      }
+    } else {
+      console.warn('⚠ project_path not configured, skipping local download');
+    }
+
+    // Create project in DB if not exists
+    const existing = db.prepare('SELECT id FROM projects WHERE folder_name = ?').get(projectName);
+    let projectId;
+    if (existing) {
+      projectId = existing.id;
+    } else {
+      const result = db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)')
+        .run(projectName, '#3b82f6', '');
+      projectId = result.lastInsertRowid;
+    }
 
     // Update any related mobile_uploads entries
     try {
@@ -912,10 +1069,87 @@ const confirmInboxProject = async (req, res) => {
       // Non-critical
     }
 
-    res.json({ success: true, message: `Projekt "${projectName}" wurde nach Projekte/ verschoben` });
+    console.log(`✅ Project "${projectName}" confirmed: ${downloaded}/${images.length} images downloaded`);
+    res.json({
+      success: true,
+      message: `Projekt "${projectName}" wurde erstellt (${downloaded}/${images.length} Bilder heruntergeladen)`,
+    });
   } catch (error) {
     console.error('Error confirming inbox project:', error);
     res.status(500).json({ error: 'Projekt konnte nicht bestätigt werden: ' + error.message });
+  }
+};
+
+/**
+ * Add user inbox images to library (no project assignment)
+ * Moves images from inbox/{deviceId}/ to root Drive folder + downloads locally
+ * POST /api/mobile/inbox/add-to-library
+ * Body: { sourceFolderId, fileIds? }
+ */
+const addToLibrary = async (req, res) => {
+  try {
+    const { sourceFolderId, fileIds } = req.body;
+
+    if (!sourceFolderId) {
+      return res.status(400).json({ error: 'sourceFolderId ist erforderlich' });
+    }
+
+    // Get root Drive folder ID
+    const drivePath = db.prepare('SELECT * FROM drive_paths LIMIT 1').get();
+    if (!drivePath) {
+      return res.status(400).json({ error: 'Kein Google Drive Ordner konfiguriert' });
+    }
+
+    let rootFolderId = drivePath.path;
+    const urlMatch = drivePath.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    if (urlMatch) rootFolderId = urlMatch[1];
+
+    // List files in the inbox folder
+    const allFiles = await listFilesInFolder(sourceFolderId);
+    const filesToProcess = fileIds && fileIds.length > 0
+      ? allFiles.filter(f => fileIds.includes(f.id))
+      : allFiles;
+
+    let addedCount = 0;
+    for (const file of filesToProcess) {
+      try {
+        // 1. Move file on Drive from inbox/{deviceId}/ to root folder
+        await moveFileOnDrive(file.id, rootFolderId, sourceFolderId);
+
+        // 2. Download locally and register in drive_images
+        await downloadAndRegisterImage(
+          file.id,
+          file.name,
+          file.mimeType,
+          drivePath.id,
+          drivePath.name
+        );
+
+        addedCount++;
+        console.log(`✓ Added "${file.name}" to library`);
+      } catch (e) {
+        console.error(`Error adding file ${file.name} to library:`, e.message);
+      }
+    }
+
+    // Check if source folder is now empty - if so, delete it
+    try {
+      const remaining = await listFilesInFolder(sourceFolderId);
+      if (remaining.length === 0) {
+        await deleteFileFromDrive(sourceFolderId);
+      }
+    } catch (e) {
+      // Non-critical
+    }
+
+    res.json({
+      success: true,
+      addedCount,
+      message: `${addedCount} Bilder zur Bibliothek hinzugefügt`,
+    });
+  } catch (error) {
+    console.error('Error adding to library:', error);
+    res.status(500).json({ error: 'Fehler beim Hinzufügen: ' + error.message });
   }
 };
 
@@ -938,37 +1172,107 @@ const getInboxImages = async (req, res) => {
 };
 
 /**
- * Merge inbox project with existing project - move all files from inbox folder to target folder
+ * Helper: Merge files from inbox to a target project
+ * Handles: Drive move + local download + copy to Bilder/ + assignment records
+ */
+const mergeFilesToProject = async (files, sourceFolderId, targetProjectId) => {
+  // Look up project from DB
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(targetProjectId);
+  if (!project) {
+    throw new Error(`Projekt mit ID ${targetProjectId} nicht gefunden`);
+  }
+
+  // Get Drive path info
+  const drivePath = db.prepare('SELECT * FROM drive_paths LIMIT 1').get();
+  if (!drivePath) throw new Error('Kein Google Drive Ordner konfiguriert');
+
+  let rootFolderId = drivePath.path;
+  const urlMatch = drivePath.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (urlMatch) rootFolderId = urlMatch[1];
+
+  // Find or create NR_Fuchs_Meta/Projekte/{projectName}/ on Drive
+  const metaFolder = await findSubfolder(rootFolderId, 'NR_Fuchs_Meta');
+  if (!metaFolder) throw new Error('NR_Fuchs_Meta Ordner nicht gefunden');
+  const projekteFolder = await findOrCreateSubfolder(metaFolder.id, 'Projekte');
+  const projectDriveFolder = await findOrCreateSubfolder(projekteFolder.id, project.folder_name);
+
+  // Get project local Bilder path
+  const setting = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+  let bilderPath = null;
+  if (setting?.project_path) {
+    bilderPath = path.join(setting.project_path, project.folder_name, 'Bilder');
+    await fs.ensureDir(bilderPath);
+  }
+
+  let movedCount = 0;
+  for (const file of files) {
+    try {
+      // 1. Move on Drive to project folder
+      await moveFileOnDrive(file.id, projectDriveFolder.id, sourceFolderId);
+
+      // 2. Download locally and register in drive_images
+      const imageId = await downloadAndRegisterImage(
+        file.id,
+        file.name,
+        file.mimeType,
+        drivePath.id,
+        drivePath.name
+      );
+
+      // 3. Copy to local project Bilder/ folder
+      if (bilderPath && imageId) {
+        const image = db.prepare('SELECT * FROM drive_images WHERE id = ?').get(imageId);
+        if (image?.local_path) {
+          const sourcePath = path.join(__dirname, '../../..', image.local_path.startsWith('/') ? image.local_path.substring(1) : image.local_path);
+          const destPath = path.join(bilderPath, path.basename(sourcePath));
+          await fs.copy(sourcePath, destPath, { overwrite: false });
+        }
+
+        // 4. Create assignment record
+        const existing = db.prepare(
+          'SELECT id FROM image_project_assignments WHERE image_id = ? AND project_id = ?'
+        ).get(imageId, project.id);
+        if (!existing) {
+          db.prepare(
+            'INSERT INTO image_project_assignments (image_id, project_id) VALUES (?, ?)'
+          ).run(imageId, project.id);
+        }
+      }
+
+      movedCount++;
+      console.log(`✓ Merged "${file.name}" into project "${project.folder_name}"`);
+    } catch (e) {
+      console.error(`Error merging file ${file.name}:`, e.message);
+    }
+  }
+
+  return movedCount;
+};
+
+/**
+ * Merge inbox project with existing project
  * POST /api/mobile/inbox/merge
- * Body: { sourceFolderId, targetFolderId, inboxFolderId, projectName }
+ * Body: { sourceFolderId, targetProjectId, inboxFolderId, projectName }
  */
 const mergeInboxProject = async (req, res) => {
   try {
-    const { sourceFolderId, targetFolderId, inboxFolderId, projectName } = req.body;
+    const { sourceFolderId, targetProjectId, inboxFolderId, projectName } = req.body;
 
-    if (!sourceFolderId || !targetFolderId) {
-      return res.status(400).json({ error: 'sourceFolderId und targetFolderId sind erforderlich' });
+    if (!sourceFolderId || !targetProjectId) {
+      return res.status(400).json({ error: 'sourceFolderId und targetProjectId sind erforderlich' });
     }
 
     // List all files in the inbox project folder
     const files = await listFilesInFolder(sourceFolderId);
-
-    // Move each file to the target project folder
-    let movedCount = 0;
-    for (const file of files) {
-      try {
-        await moveFileOnDrive(file.id, targetFolderId, sourceFolderId);
-        movedCount++;
-      } catch (e) {
-        console.error(`Error moving file ${file.name}:`, e.message);
-      }
-    }
+    const movedCount = await mergeFilesToProject(files, sourceFolderId, targetProjectId);
 
     // Try to delete the now-empty inbox folder
     try {
-      await deleteFileFromDrive(sourceFolderId);
+      const remaining = await listFilesInFolder(sourceFolderId);
+      if (remaining.length === 0) {
+        await deleteFileFromDrive(sourceFolderId);
+      }
     } catch (e) {
-      // Non-critical - folder might not be empty or not accessible
       console.error('Could not delete empty inbox folder:', e.message);
     }
 
@@ -996,26 +1300,21 @@ const mergeInboxProject = async (req, res) => {
 /**
  * Selective merge - move only specific files from inbox folder to target project
  * POST /api/mobile/inbox/merge-selected
- * Body: { sourceFolderId, targetFolderId, fileIds: [fileId1, fileId2, ...] }
+ * Body: { sourceFolderId, targetProjectId, fileIds: [fileId1, fileId2, ...] }
  */
 const mergeSelectedInboxImages = async (req, res) => {
   try {
-    const { sourceFolderId, targetFolderId, fileIds } = req.body;
+    const { sourceFolderId, targetProjectId, fileIds } = req.body;
 
-    if (!sourceFolderId || !targetFolderId || !Array.isArray(fileIds) || fileIds.length === 0) {
-      return res.status(400).json({ error: 'sourceFolderId, targetFolderId und fileIds sind erforderlich' });
+    if (!sourceFolderId || !targetProjectId || !Array.isArray(fileIds) || fileIds.length === 0) {
+      return res.status(400).json({ error: 'sourceFolderId, targetProjectId und fileIds sind erforderlich' });
     }
 
-    // Move only the selected files
-    let movedCount = 0;
-    for (const fileId of fileIds) {
-      try {
-        await moveFileOnDrive(fileId, targetFolderId, sourceFolderId);
-        movedCount++;
-      } catch (e) {
-        console.error(`Error moving file ${fileId}:`, e.message);
-      }
-    }
+    // Get file details for the selected IDs
+    const allFiles = await listFilesInFolder(sourceFolderId);
+    const selectedFiles = allFiles.filter(f => fileIds.includes(f.id));
+
+    const movedCount = await mergeFilesToProject(selectedFiles, sourceFolderId, targetProjectId);
 
     // Check if source folder is now empty - if so, delete it
     try {
@@ -1035,6 +1334,48 @@ const mergeSelectedInboxImages = async (req, res) => {
   } catch (error) {
     console.error('Error merging selected inbox images:', error);
     res.status(500).json({ error: 'Zusammenführung fehlgeschlagen: ' + error.message });
+  }
+};
+
+/**
+ * Delete specific images from inbox
+ * POST /api/mobile/inbox/delete-images
+ * Body: { fileIds: string[] }
+ */
+const deleteInboxImages = async (req, res) => {
+  try {
+    const { fileIds } = req.body;
+    if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
+      return res.status(400).json({ error: 'fileIds (Array) ist erforderlich' });
+    }
+
+    let deletedCount = 0;
+    const errors = [];
+
+    for (const fileId of fileIds) {
+      try {
+        // Delete from Google Drive
+        await deleteFileFromDrive(fileId);
+
+        // Delete from local database if exists
+        try {
+          db.prepare('DELETE FROM drive_images WHERE drive_id = ?').run(fileId);
+        } catch {}
+
+        deletedCount++;
+      } catch (error) {
+        errors.push({ fileId, error: error.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      deletedCount,
+      errors: errors.length > 0 ? errors : undefined,
+    });
+  } catch (error) {
+    console.error('Error deleting inbox images:', error);
+    res.status(500).json({ error: 'Löschen fehlgeschlagen: ' + error.message });
   }
 };
 
@@ -1873,6 +2214,180 @@ const proxyInboxImage = async (req, res) => {
   }
 };
 
+/**
+ * Process delete requests from mobile app
+ * POST /api/mobile/inbox/process-delete
+ * Body: { requestIds: string[] } - IDs of delete requests to process
+ */
+const processDeleteRequests = async (req, res) => {
+  try {
+    const { requestIds } = req.body;
+    if (!requestIds || !Array.isArray(requestIds) || requestIds.length === 0) {
+      return res.status(400).json({ error: 'requestIds (Array) ist erforderlich' });
+    }
+
+    // Get inbox folder and read delete_requests.json
+    const drivePath = db.prepare('SELECT path FROM drive_paths LIMIT 1').get();
+    if (!drivePath) {
+      return res.status(400).json({ error: 'Kein Google Drive Ordner konfiguriert' });
+    }
+
+    let rootFolderId = drivePath.path;
+    const urlMatch = drivePath.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    if (urlMatch) rootFolderId = urlMatch[1];
+
+    const metaFolder = await findSubfolder(rootFolderId, 'NR_Fuchs_Meta');
+    if (!metaFolder) return res.status(400).json({ error: 'NR_Fuchs_Meta nicht gefunden' });
+
+    const inboxFolder = await findSubfolder(metaFolder.id, 'inbox');
+    if (!inboxFolder) return res.status(400).json({ error: 'Inbox nicht gefunden' });
+
+    // Find and read delete_requests.json
+    const allFiles = await listAllFilesInFolder(inboxFolder.id);
+    const deleteFile = allFiles.find(f => f.name === 'delete_requests.json');
+    if (!deleteFile) return res.status(404).json({ error: 'Keine Löschanfragen gefunden' });
+
+    const allRequests = await readDriveFileAsJson(deleteFile.id);
+    if (!Array.isArray(allRequests)) {
+      return res.status(400).json({ error: 'Ungültiges Format der Löschanfragen' });
+    }
+
+    // Process each requested deletion
+    const requestsToProcess = allRequests.filter(r => requestIds.includes(r.id));
+    let deletedCount = 0;
+    const errors = [];
+
+    // Get project settings for local deletion
+    const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+
+    // Find Projekte folder on Drive for searching
+    const projekteFolder = await findSubfolder(metaFolder.id, 'Projekte');
+
+    for (const req of requestsToProcess) {
+      try {
+        let fileDeleted = false;
+
+        // Search for the file on Drive
+        // 1. If project_id is set, search in that folder
+        // 2. Otherwise search in Projekte/ subfolders by project_name
+        // 3. Also search in inbox subfolders
+        const searchFolders = [];
+
+        if (req.project_id) {
+          searchFolders.push(req.project_id);
+        }
+
+        if (req.project_name && projekteFolder) {
+          const projFolder = await findSubfolder(projekteFolder.id, req.project_name);
+          if (projFolder) searchFolders.push(projFolder.id);
+        }
+
+        // Search for the file in each potential folder
+        for (const folderId of searchFolders) {
+          try {
+            const files = await listAllFilesInFolder(folderId);
+            const match = files.find(f => f.name === req.file_name);
+            if (match) {
+              await deleteFileFromDrive(match.id);
+              fileDeleted = true;
+              console.log(`🗑️ Deleted "${req.file_name}" from Drive (folder ${folderId})`);
+              break;
+            }
+          } catch (e) {
+            console.error(`Error searching folder ${folderId}:`, e.message);
+          }
+        }
+
+        // Delete from local Bilder/ folder
+        if (settings?.project_path && req.project_name) {
+          const localPath = path.join(settings.project_path, req.project_name, 'Bilder', req.file_name);
+          if (await fs.pathExists(localPath)) {
+            await fs.remove(localPath);
+            console.log(`🗑️ Deleted local file: ${localPath}`);
+          }
+        }
+
+        // Delete from drive_images DB if exists
+        try {
+          db.prepare('DELETE FROM drive_images WHERE original_name = ?').run(req.file_name);
+        } catch {}
+
+        if (fileDeleted) deletedCount++;
+        else errors.push(`"${req.file_name}" nicht auf Drive gefunden`);
+      } catch (e) {
+        console.error(`Error processing delete request for ${req.file_name}:`, e.message);
+        errors.push(`"${req.file_name}": ${e.message}`);
+      }
+    }
+
+    // Remove processed requests from delete_requests.json
+    const remaining = allRequests.filter(r => !requestIds.includes(r.id));
+    if (remaining.length > 0) {
+      await updateDriveFileContent(deleteFile.id, remaining);
+    } else {
+      // No more requests → delete the file entirely
+      await deleteFileFromDrive(deleteFile.id);
+    }
+
+    res.json({
+      success: true,
+      deletedCount,
+      errors: errors.length > 0 ? errors : undefined,
+      message: `${deletedCount} ${deletedCount === 1 ? 'Bild' : 'Bilder'} gelöscht`,
+    });
+  } catch (error) {
+    console.error('Error processing delete requests:', error);
+    res.status(500).json({ error: 'Löschen fehlgeschlagen: ' + error.message });
+  }
+};
+
+/**
+ * Dismiss delete requests without deleting the actual files
+ * POST /api/mobile/inbox/dismiss-delete
+ * Body: { requestIds: string[] }
+ */
+const dismissDeleteRequests = async (req, res) => {
+  try {
+    const { requestIds } = req.body;
+    if (!requestIds || !Array.isArray(requestIds) || requestIds.length === 0) {
+      return res.status(400).json({ error: 'requestIds (Array) ist erforderlich' });
+    }
+
+    const drivePath = db.prepare('SELECT path FROM drive_paths LIMIT 1').get();
+    if (!drivePath) return res.status(400).json({ error: 'Kein Google Drive Ordner konfiguriert' });
+
+    let rootFolderId = drivePath.path;
+    const urlMatch = drivePath.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    if (urlMatch) rootFolderId = urlMatch[1];
+
+    const metaFolder = await findSubfolder(rootFolderId, 'NR_Fuchs_Meta');
+    if (!metaFolder) return res.status(400).json({ error: 'NR_Fuchs_Meta nicht gefunden' });
+
+    const inboxFolder = await findSubfolder(metaFolder.id, 'inbox');
+    if (!inboxFolder) return res.status(400).json({ error: 'Inbox nicht gefunden' });
+
+    const allFiles = await listAllFilesInFolder(inboxFolder.id);
+    const deleteFile = allFiles.find(f => f.name === 'delete_requests.json');
+    if (!deleteFile) return res.status(404).json({ error: 'Keine Löschanfragen gefunden' });
+
+    const allRequests = await readDriveFileAsJson(deleteFile.id);
+    const remaining = Array.isArray(allRequests)
+      ? allRequests.filter(r => !requestIds.includes(r.id))
+      : [];
+
+    if (remaining.length > 0) {
+      await updateDriveFileContent(deleteFile.id, remaining);
+    } else {
+      await deleteFileFromDrive(deleteFile.id);
+    }
+
+    res.json({ success: true, dismissed: requestIds.length });
+  } catch (error) {
+    console.error('Error dismissing delete requests:', error);
+    res.status(500).json({ error: 'Fehler: ' + error.message });
+  }
+};
+
 module.exports = {
   generateConnectToken,
   getConnectInfo,
@@ -1891,9 +2406,13 @@ module.exports = {
   getInboxImages,
   proxyInboxImage,
   confirmInboxProject,
+  addToLibrary,
   mergeInboxProject,
   mergeSelectedInboxImages,
+  deleteInboxImages,
   deleteInboxProject,
+  processDeleteRequests,
+  dismissDeleteRequests,
   mobileGoogleAuth,
   mobileGoogleCallback,
   mobileRefreshToken,
