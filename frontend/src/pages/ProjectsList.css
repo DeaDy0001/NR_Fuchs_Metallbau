@@ -247,10 +247,17 @@
   color: white;
 }
 
-/* Project modal */
-.project-modal {
+/* Project modal wrapper - close button outside */
+.project-modal-wrapper {
+  position: relative;
   width: 90vw;
   max-width: 1200px;
+  max-height: 90vh;
+}
+
+/* Project modal */
+.project-modal {
+  width: 100%;
   max-height: 90vh;
   display: flex;
   flex-direction: column;

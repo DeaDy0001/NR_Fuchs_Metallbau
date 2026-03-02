@@ -68,6 +68,11 @@ function ProjectsList() {
     }
   }, [searchQuery]);
 
+  // Auto-sync every time the Projekte tab is opened
+  useEffect(() => {
+    handleSync();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const loadProjects = async () => {
     setLoading(true);
 
@@ -697,7 +702,11 @@ function ProjectsList() {
 
       {viewingProject && (
         <div className="modal-overlay" onClick={closeProjectModal}>
-          <div className="modal project-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-wrapper project-modal-wrapper" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-external-close" onClick={closeProjectModal} title="Schließen">
+              <X size={24} />
+            </button>
+            <div className="modal project-modal">
             <div className="modal-header">
               <h2>{viewingProject.folder_name}</h2>
               <div className="modal-header-actions">
@@ -708,9 +717,6 @@ function ProjectsList() {
                 >
                   <Trash2 size={16} />
                   Löschen
-                </button>
-                <button className="modal-close" onClick={closeProjectModal}>
-                  <X size={24} />
                 </button>
               </div>
             </div>
@@ -884,6 +890,7 @@ function ProjectsList() {
                 )
               ) : null}
             </div>
+          </div>
           </div>
         </div>
       )}
