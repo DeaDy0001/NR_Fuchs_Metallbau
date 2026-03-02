@@ -97,6 +97,20 @@ export const readJsonFileByName = async (folderId, fileName) => {
 };
 
 /**
+ * Get the parent folder IDs of a file/folder
+ */
+export const getFileParents = async (fileId) => {
+  const headers = await getHeaders();
+  const response = await fetch(
+    `${DRIVE_API}/files/${fileId}?fields=parents`,
+    { headers }
+  );
+  if (!response.ok) return [];
+  const data = await response.json();
+  return data.parents || [];
+};
+
+/**
  * Get file metadata
  */
 export const getFileMetadata = async (fileId) => {

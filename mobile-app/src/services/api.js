@@ -24,6 +24,7 @@ import {
   updateJsonFile,
   downloadFile,
   deleteFile,
+  getFileParents,
   getImageSource,
   checkFolderAccess,
   findOrCreateFolder,
@@ -203,9 +204,31 @@ export const createProject = async (name) => {
 /**
  * Delete a pending project from the inbox on Drive.
  * Removes the entire folder (including all images inside it).
+ * Safety check: only deletes if the folder is still inside the inbox.
+ * If the desktop already confirmed the project (moved to Projekte/),
+ * returns { alreadyConfirmed: true } instead of deleting.
  */
 export const deletePendingProject = async (folderId) => {
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
+
+  // Check if folder still exists and where it lives
+  const parents = await getFileParents(folderId);
+  if (parents.length === 0) {
+    // Folder doesn't exist anymore (already deleted or moved)
+    return { alreadyConfirmed: true };
+  }
+
+  // Find the inbox folder ID to verify parent
+  const inboxFolder = await findFolder(connection.meta_folder_id, 'inbox');
+  if (!inboxFolder || !parents.includes(inboxFolder.id)) {
+    // Folder exists but is NOT in inbox anymore → already confirmed by desktop
+    return { alreadyConfirmed: true };
+  }
+
+  // Safe to delete - folder is still in inbox
   await deleteFile(folderId);
+  return { alreadyConfirmed: false };
 };
 
 // ============================================================

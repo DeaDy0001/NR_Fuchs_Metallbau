@@ -99,9 +99,15 @@ export default function ProjectsScreen({ navigation }) {
           style: 'destructive',
           onPress: async () => {
             try {
-              await deletePendingProject(item.folder_id);
+              const result = await deletePendingProject(item.folder_id);
               await removePendingProject(item.folder_name);
               await loadData();
+              if (result.alreadyConfirmed) {
+                Alert.alert(
+                  'Bereits bestätigt',
+                  `"${item.folder_name}" wurde bereits in der Desktop-Software bestätigt und kann hier nicht mehr gelöscht werden.`
+                );
+              }
             } catch (error) {
               Alert.alert('Fehler', 'Löschen fehlgeschlagen: ' + error.message);
             }
