@@ -11,7 +11,7 @@ import * as MediaLibrary from 'expo-media-library';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { addToUploadQueue, getCachedProjects, addPendingProject } from '../services/database';
+import { addToUploadQueue, getCachedProjects, getPendingProjects, addPendingProject } from '../services/database';
 import { createProject } from '../services/api';
 import { processUploadQueue } from '../services/uploadQueue';
 
@@ -36,6 +36,8 @@ export default function CameraScreen({ navigation, route }) {
   const [projectFolderId, setProjectFolderId] = useState(route.params?.projectFolderId || null);
   const [showProjectPicker, setShowProjectPicker] = useState(false);
   const [projects, setProjects] = useState([]);
+  const [pendingProjects, setPendingProjects] = useState([]);
+  const [projectSearchText, setProjectSearchText] = useState('');
   const [newProjectName, setNewProjectName] = useState('');
   const [creatingProject, setCreatingProject] = useState(false);
 
@@ -46,16 +48,38 @@ export default function CameraScreen({ navigation, route }) {
   // Load projects for picker
   const loadProjects = async () => {
     try {
-      const p = await getCachedProjects();
-      setProjects(p);
+      const [cached, pending] = await Promise.all([getCachedProjects(), getPendingProjects()]);
+      setProjects(cached);
+      setPendingProjects(pending);
     } catch {}
   };
 
   const openProjectPicker = () => {
     loadProjects();
     setNewProjectName('');
+    setProjectSearchText('');
     setShowProjectPicker(true);
   };
+
+  // Combine cached and pending projects, filter by search
+  const allProjects = [
+    ...projects,
+    ...pendingProjects
+      .filter(pp => !projects.some(p => p.folder_id === pp.folder_id))
+      .map(pp => ({
+        id: pp.folder_id || `pending_${pp.id}`,
+        folder_name: pp.folder_name,
+        folder_id: pp.folder_id,
+        color: '#6b7280',
+        image_count: 0,
+        isPending: true,
+      })),
+  ];
+
+  const filteredPickerProjects = allProjects.filter(p => {
+    if (!projectSearchText) return true;
+    return p.folder_name.toLowerCase().includes(projectSearchText.toLowerCase());
+  });
 
   const selectProject = (project) => {
     if (project) {
@@ -109,6 +133,23 @@ export default function CameraScreen({ navigation, route }) {
             </TouchableOpacity>
           </View>
 
+          {/* Search */}
+          <View style={styles.pickerSearchContainer}>
+            <Ionicons name="search" size={16} color={colors.textTertiary} />
+            <TextInput
+              style={styles.pickerSearchInput}
+              placeholder="Projekt suchen..."
+              placeholderTextColor={colors.textTertiary}
+              value={projectSearchText}
+              onChangeText={setProjectSearchText}
+            />
+            {projectSearchText ? (
+              <TouchableOpacity onPress={() => setProjectSearchText('')}>
+                <Ionicons name="close-circle" size={18} color={colors.textTertiary} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
           {/* Create new project */}
           <View style={styles.newProjectRow}>
             <TextInput
@@ -144,7 +185,7 @@ export default function CameraScreen({ navigation, route }) {
           </TouchableOpacity>
 
           <ScrollView style={styles.projectPickerList}>
-            {projects.map(p => (
+            {filteredPickerProjects.map(p => (
               <TouchableOpacity
                 key={p.id}
                 style={[
@@ -154,10 +195,18 @@ export default function CameraScreen({ navigation, route }) {
                 onPress={() => selectProject(p)}
               >
                 <View style={[styles.projectPickerColor, { backgroundColor: p.color || colors.accent }]} />
-                <Text style={styles.projectPickerText}>{p.folder_name}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.projectPickerText}>{p.folder_name}</Text>
+                  {p.isPending && (
+                    <Text style={styles.pendingBadgeText}>Unbestätigt</Text>
+                  )}
+                </View>
                 <Text style={styles.projectPickerMeta}>{p.image_count || 0} Bilder</Text>
               </TouchableOpacity>
             ))}
+            {filteredPickerProjects.length === 0 && (
+              <Text style={styles.noProjectsHint}>Keine Projekte gefunden</Text>
+            )}
           </ScrollView>
         </View>
       </View>
@@ -677,6 +726,33 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center',
   },
   modalTitle: { fontSize: 20, fontWeight: '700', color: colors.textPrimary },
+  pickerSearchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.bgTertiary || colors.cardBg,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    marginBottom: 12,
+    gap: 8,
+  },
+  pickerSearchInput: {
+    flex: 1,
+    color: colors.textPrimary,
+    fontSize: 14,
+    paddingVertical: 10,
+  },
+  pendingBadgeText: {
+    fontSize: 11,
+    color: '#f59e0b',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  noProjectsHint: {
+    color: colors.textTertiary,
+    fontSize: 14,
+    textAlign: 'center',
+    paddingVertical: 24,
+  },
   projectPickerList: { maxHeight: 400 },
   projectPickerItem: {
     flexDirection: 'row', alignItems: 'center', gap: 12,

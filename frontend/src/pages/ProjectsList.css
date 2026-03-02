@@ -258,7 +258,7 @@
 }
 
 /* Project modal - self-contained, no dependency on .modal class */
-.project-modal {
+.project-modal-wrapper .project-modal {
   background-color: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 0.75rem;
@@ -407,12 +407,7 @@
 }
 
 /* Modal scrolling - EINE Scrollbar für das gesamte Modal */
-.project-modal {
-  display: flex;
-  flex-direction: column;
-  max-height: 90vh;
-  overflow-y: auto; /* Eine Scrollbar für alles */
-}
+/* (properties merged into .project-modal above) */
 
 .project-edit-section {
   padding: 1.5rem;

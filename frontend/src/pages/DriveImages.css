@@ -199,8 +199,8 @@
   color: white;
 }
 
-/* Projekt-Auswahl Modal */
-.project-modal {
+/* Projekt-Auswahl Modal (scoped to DriveImages to avoid conflict with ProjectsList modal) */
+.drive-images-page .project-modal {
   background-color: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 0.75rem;

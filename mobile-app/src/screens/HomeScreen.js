@@ -8,7 +8,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { getRecentPhotos, getCachedProjects, addToUploadQueue, updateRecentPhotoProject, getQueuedFileNames, addToDeleteQueue } from '../services/database';
+import { getRecentPhotos, getCachedProjects, getPendingProjects, addToUploadQueue, updateRecentPhotoProject, getQueuedFileNames, addToDeleteQueue } from '../services/database';
 import { createProject } from '../services/api';
 import { syncMetadata } from '../services/syncService';
 import { processDeleteQueue } from '../services/deleteQueue';
@@ -206,8 +206,19 @@ export default function HomeScreen({ navigation }) {
   // Project assignment
   const openProjectPicker = async () => {
     try {
-      const cached = await getCachedProjects();
-      setProjects(cached);
+      const [cached, pending] = await Promise.all([getCachedProjects(), getPendingProjects()]);
+      // Merge pending projects that aren't already in cached
+      const pendingMapped = pending
+        .filter(pp => !cached.some(c => c.folder_id === pp.folder_id))
+        .map(pp => ({
+          id: pp.folder_id || `pending_${pp.id}`,
+          folder_name: pp.folder_name,
+          folder_id: pp.folder_id,
+          color: '#6b7280',
+          image_count: 0,
+          isPending: true,
+        }));
+      setProjects([...cached, ...pendingMapped]);
       setProjectSearch('');
       setShowProjectPicker(true);
     } catch (error) {
@@ -473,7 +484,11 @@ export default function HomeScreen({ navigation }) {
                   <View style={[styles.projectColorBar, { backgroundColor: project.color || colors.accent }]} />
                   <View style={styles.projectInfo}>
                     <Text style={styles.projectName} numberOfLines={1}>{project.folder_name}</Text>
-                    <Text style={styles.projectImageCount}>{project.image_count || 0} Bilder</Text>
+                    {project.isPending ? (
+                      <Text style={styles.pendingBadge}>Unbestätigt</Text>
+                    ) : (
+                      <Text style={styles.projectImageCount}>{project.image_count || 0} Bilder</Text>
+                    )}
                   </View>
                   {project.is_starred ? (
                     <Ionicons name="star" size={14} color={colors.warning} />
@@ -699,6 +714,12 @@ const styles = StyleSheet.create({
   projectImageCount: {
     fontSize: 12,
     color: colors.textTertiary,
+    marginTop: 2,
+  },
+  pendingBadge: {
+    fontSize: 11,
+    color: '#f59e0b',
+    fontWeight: '600',
     marginTop: 2,
   },
   noProjectsText: {
