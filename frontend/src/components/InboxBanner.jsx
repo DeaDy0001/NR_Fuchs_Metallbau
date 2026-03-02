@@ -330,6 +330,12 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
   useEffect(() => setLocalDeleteRequests(deleteRequests), [deleteRequests]);
   useEffect(() => setLocalProjectChanges(projectChanges), [projectChanges]);
 
+  /** Trigger project sync + image refresh in background after confirmation actions */
+  const triggerBackgroundSync = () => {
+    fetch('/api/projects/sync', { method: 'POST' }).catch(() => {});
+    fetch('/api/drive/images/refresh', { method: 'POST' }).catch(() => {});
+  };
+
   /** Confirm project changes: download new images locally */
   const handleConfirmProjectChanges = async (change) => {
     const key = `pc_${change.project_name}`;
@@ -346,6 +352,7 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
         const data = await response.json();
         showNotification(data.message);
         setLocalProjectChanges(prev => prev.filter(c => c.project_name !== change.project_name));
+        triggerBackgroundSync();
         await onRefresh();
       } else {
         const data = await response.json();
@@ -588,6 +595,7 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
       if (response.ok) {
         hasChangesRef.current = true;
         showNotification(`"${item.project_name}" in Projekte verschoben`);
+        triggerBackgroundSync();
         await onRefresh();
       } else {
         const data = await response.json();
@@ -623,6 +631,7 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
         // Clear image cache
         setImages(prev => { const next = { ...prev }; delete next[folderId]; return next; });
         setSelectedImages(prev => { const next = { ...prev }; delete next[folderId]; return next; });
+        triggerBackgroundSync();
         await onRefresh();
       } else {
         const data = await response.json();
@@ -654,6 +663,7 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
         const data = await response.json();
         showNotification(`${data.movedCount} Bilder mit "${targetProject.folder_name}" zusammengeführt`);
         setMergeTarget(null);
+        triggerBackgroundSync();
         await onRefresh();
       } else {
         const data = await response.json();
@@ -701,6 +711,7 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
           delete next[inboxItem.drive_folder_id];
           return next;
         });
+        triggerBackgroundSync();
         await onRefresh();
       } else {
         const data = await response.json();

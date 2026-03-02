@@ -1209,7 +1209,7 @@ const acceptPendingProject = async (req, res) => {
       projectId = result.lastInsertRowid;
     }
 
-    // Download images from Drive to local Bilder folder
+    // Download images from Drive to local Bilder folder and register in DB
     const files = await listAllFilesInFolder(pending.drive_folder_id);
     const images = files.filter(f => f.mimeType && f.mimeType.startsWith('image/'));
     let downloaded = 0;
@@ -1219,7 +1219,39 @@ const acceptPendingProject = async (req, res) => {
         const localPath = path.join(bilderFolder, img.name);
         if (!await fs.pathExists(localPath)) {
           await downloadDriveFile(img.id, localPath);
-          downloaded++;
+        }
+        downloaded++;
+
+        // Register image in drive_images DB so it appears in Bilder tab
+        const existingImg = db.prepare('SELECT id FROM drive_images WHERE drive_file_id = ?').get(img.id);
+        let imageId;
+        if (!existingImg) {
+          const projectImageUrl = `/api/projects/${projectId}/file/image/${encodeURIComponent(img.name)}`;
+          const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+          let fileSize = null;
+          try {
+            const stats = await fs.stat(localPath);
+            fileSize = stats.size;
+          } catch (e) { /* ignore */ }
+
+          const imgResult = db.prepare(`
+            INSERT INTO drive_images (
+              name, original_name, local_path, thumbnail_url, file_url,
+              mime_type, drive_file_id, drive_path_id, file_size, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+          `).run(
+            img.name, img.name, projectImageUrl, projectImageUrl, projectImageUrl,
+            img.mimeType || 'image/jpeg', img.id, fileSize, now
+          );
+          imageId = imgResult.lastInsertRowid;
+        } else {
+          imageId = existingImg.id;
+        }
+
+        // Create project assignment
+        if (imageId) {
+          db.prepare('INSERT OR IGNORE INTO image_project_assignments (image_id, project_id) VALUES (?, ?)')
+            .run(imageId, projectId);
         }
       } catch (e) {
         console.error(`Failed to download ${img.name}:`, e.message);
@@ -1270,7 +1302,7 @@ const mergePendingProject = async (req, res) => {
     const targetBilder = path.join(settings.project_path, targetProject.folder_name, 'Bilder');
     await fs.ensureDir(targetBilder);
 
-    // Download images from Drive to target project's Bilder folder
+    // Download images from Drive to target project's Bilder folder and register in DB
     const files = await listAllFilesInFolder(pending.drive_folder_id);
     const images = files.filter(f => f.mimeType && f.mimeType.startsWith('image/'));
     let downloaded = 0;
@@ -1280,7 +1312,39 @@ const mergePendingProject = async (req, res) => {
         const localPath = path.join(targetBilder, img.name);
         if (!await fs.pathExists(localPath)) {
           await downloadDriveFile(img.id, localPath);
-          downloaded++;
+        }
+        downloaded++;
+
+        // Register image in drive_images DB so it appears in Bilder tab
+        const existingImg = db.prepare('SELECT id FROM drive_images WHERE drive_file_id = ?').get(img.id);
+        let imageId;
+        if (!existingImg) {
+          const projectImageUrl = `/api/projects/${targetProjectId}/file/image/${encodeURIComponent(img.name)}`;
+          const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+          let fileSize = null;
+          try {
+            const stats = await fs.stat(localPath);
+            fileSize = stats.size;
+          } catch (e) { /* ignore */ }
+
+          const imgResult = db.prepare(`
+            INSERT INTO drive_images (
+              name, original_name, local_path, thumbnail_url, file_url,
+              mime_type, drive_file_id, drive_path_id, file_size, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+          `).run(
+            img.name, img.name, projectImageUrl, projectImageUrl, projectImageUrl,
+            img.mimeType || 'image/jpeg', img.id, fileSize, now
+          );
+          imageId = imgResult.lastInsertRowid;
+        } else {
+          imageId = existingImg.id;
+        }
+
+        // Create project assignment
+        if (imageId) {
+          db.prepare('INSERT OR IGNORE INTO image_project_assignments (image_id, project_id) VALUES (?, ?)')
+            .run(imageId, targetProjectId);
         }
       } catch (e) {
         console.error(`Failed to download ${img.name}:`, e.message);
