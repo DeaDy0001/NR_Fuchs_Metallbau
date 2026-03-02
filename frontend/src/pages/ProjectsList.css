@@ -252,17 +252,22 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  width: 90vw;
-  max-width: 1200px;
+  width: 95vw;
+  max-width: 1800px;
   max-height: 90vh;
 }
 
-/* Project modal */
+/* Project modal - self-contained, no dependency on .modal class */
 .project-modal {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
   width: 100%;
-  max-height: 90vh;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 90vh;
 }
 
 /* Project edit section (above tabs) */

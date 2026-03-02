@@ -47,25 +47,29 @@ function InboxBanner() {
 
   const totalProjectChangeImages = projectChanges.reduce((sum, c) => sum + c.new_images.length, 0);
   const totalCount = inboxItems.length + (deleteRequests.length > 0 ? 1 : 0) + (projectChanges.length > 0 ? 1 : 0);
-  if (totalCount === 0) return null;
+
+  // Don't render anything if no items AND modal is closed
+  if (totalCount === 0 && !showModal) return null;
 
   const bannerDeleteRequesters = [...new Set(deleteRequests.map(r => r.requested_by).filter(Boolean))];
 
   return (
     <>
-      <div className="inbox-banner" onClick={() => setShowModal(true)}>
-        <div className="inbox-banner-content">
-          <Inbox size={18} />
-          <span>
-            {inboxItems.length > 0 && `Neue Uploads von der Handy-App (${inboxItems.length})`}
-            {inboxItems.length > 0 && (deleteRequests.length > 0 || projectChanges.length > 0) && ' · '}
-            {deleteRequests.length > 0 && `${deleteRequests.length} ${deleteRequests.length === 1 ? 'Löschanfrage' : 'Löschanfragen'}${bannerDeleteRequesters.length > 0 ? ` von ${bannerDeleteRequesters.join(', ')}` : ''}`}
-            {deleteRequests.length > 0 && projectChanges.length > 0 && ' · '}
-            {projectChanges.length > 0 && `${totalProjectChangeImages} neue Bilder in ${projectChanges.length} ${projectChanges.length === 1 ? 'Projekt' : 'Projekten'}`}
-          </span>
-          {scanning && <Loader size={14} className="spinning" />}
+      {totalCount > 0 && (
+        <div className="inbox-banner" onClick={() => setShowModal(true)}>
+          <div className="inbox-banner-content">
+            <Inbox size={18} />
+            <span>
+              {inboxItems.length > 0 && `Neue Uploads von der Handy-App (${inboxItems.length})`}
+              {inboxItems.length > 0 && (deleteRequests.length > 0 || projectChanges.length > 0) && ' · '}
+              {deleteRequests.length > 0 && `${deleteRequests.length} ${deleteRequests.length === 1 ? 'Löschanfrage' : 'Löschanfragen'}${bannerDeleteRequesters.length > 0 ? ` von ${bannerDeleteRequesters.join(', ')}` : ''}`}
+              {deleteRequests.length > 0 && projectChanges.length > 0 && ' · '}
+              {projectChanges.length > 0 && `${totalProjectChangeImages} neue Bilder in ${projectChanges.length} ${projectChanges.length === 1 ? 'Projekt' : 'Projekten'}`}
+            </span>
+            {scanning && <Loader size={14} className="spinning" />}
+          </div>
         </div>
-      </div>
+      )}
 
       {showModal && (
         <InboxModal
@@ -408,6 +412,16 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
     }
     onClose();
   }, [onClose]);
+
+  // Auto-close modal when all items have been processed
+  useEffect(() => {
+    if (!hasChangesRef.current) return;
+    const totalItems = projects.length + localDeleteRequests.length + localProjectChanges.length;
+    if (totalItems === 0) {
+      const timer = setTimeout(() => handleClose(), 1200);
+      return () => clearTimeout(timer);
+    }
+  }, [projects, localDeleteRequests, localProjectChanges, handleClose]);
 
   useEffect(() => {
     loadExistingProjects();

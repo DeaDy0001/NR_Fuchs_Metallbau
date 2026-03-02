@@ -732,7 +732,7 @@ function ProjectsList() {
             <button className="modal-external-close" onClick={closeProjectModal} title="Schließen">
               <X size={24} />
             </button>
-            <div className="modal project-modal">
+            <div className="project-modal">
             <div className="modal-header">
               <h2>{viewingProject.folder_name}</h2>
               <div className="modal-header-actions">
