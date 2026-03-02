@@ -2388,6 +2388,30 @@ const dismissDeleteRequests = async (req, res) => {
   }
 };
 
+/**
+ * Preview a delete request image from local project folder
+ * GET /api/mobile/inbox/delete-preview/:projectName/:fileName
+ */
+const previewDeleteRequestImage = async (req, res) => {
+  try {
+    const { projectName, fileName } = req.params;
+    const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    if (!settings?.project_path) {
+      return res.status(404).json({ error: 'Kein Projektpfad konfiguriert' });
+    }
+
+    const filePath = path.join(settings.project_path, projectName, 'Bilder', fileName);
+    if (await fs.pathExists(filePath)) {
+      return res.sendFile(path.resolve(filePath));
+    }
+
+    res.status(404).json({ error: 'Bild nicht lokal gefunden' });
+  } catch (error) {
+    console.error('Error serving delete request preview:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 module.exports = {
   generateConnectToken,
   getConnectInfo,
@@ -2413,6 +2437,7 @@ module.exports = {
   deleteInboxProject,
   processDeleteRequests,
   dismissDeleteRequests,
+  previewDeleteRequestImage,
   mobileGoogleAuth,
   mobileGoogleCallback,
   mobileRefreshToken,

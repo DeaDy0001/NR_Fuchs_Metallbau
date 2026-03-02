@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Inbox, Check, GitMerge, Trash2, X, Search, Image, FolderOpen, Loader, ChevronDown, ChevronUp, Tag, ChevronLeft, ChevronRight, User, CheckSquare, Square } from 'lucide-react';
 import './InboxBanner.css';
 
@@ -228,6 +228,50 @@ function ImageLightbox({ images, startIndex, onClose }) {
   );
 }
 
+/* ========== Delete Preview Lightbox ========== */
+function DeletePreviewLightbox({ images, startIndex, onClose }) {
+  const [currentIndex, setCurrentIndex] = useState(startIndex);
+  const currentImage = images[currentIndex];
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'ArrowLeft' && currentIndex > 0) setCurrentIndex(i => i - 1);
+      if (e.key === 'ArrowRight' && currentIndex < images.length - 1) setCurrentIndex(i => i + 1);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = '';
+    };
+  }, [currentIndex, images.length, onClose]);
+
+  return (
+    <div className="image-lightbox-overlay" onClick={onClose}>
+      <div className="image-lightbox-container" onClick={e => e.stopPropagation()}>
+        {currentImage?.previewUrl && (
+          <img src={currentImage.previewUrl} alt={currentImage.name} draggable={false} />
+        )}
+      </div>
+      <button className="image-lightbox-close" onClick={onClose}><X size={20} /></button>
+      {images.length > 1 && currentIndex > 0 && (
+        <button className="image-lightbox-nav prev" onClick={(e) => { e.stopPropagation(); setCurrentIndex(i => i - 1); }}>
+          <ChevronLeft size={24} />
+        </button>
+      )}
+      {images.length > 1 && currentIndex < images.length - 1 && (
+        <button className="image-lightbox-nav next" onClick={(e) => { e.stopPropagation(); setCurrentIndex(i => i + 1); }}>
+          <ChevronRight size={24} />
+        </button>
+      )}
+      <div className="image-lightbox-name">
+        {currentImage?.name} ({currentIndex + 1}/{images.length})
+      </div>
+    </div>
+  );
+}
+
 /* ========== Inbox Modal ========== */
 function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
   const [expandedProject, setExpandedProject] = useState(null);
@@ -244,6 +288,25 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
   // Track images marked for deletion per folder (red entries)
   const [markedForDeletion, setMarkedForDeletion] = useState({});
   const hasChangesRef = useRef(false);
+  // Local copy of deleteRequests for optimistic (instant) removal
+  const [localDeleteRequests, setLocalDeleteRequests] = useState(deleteRequests);
+  // Track which delete request group is expanded
+  const [expandedDeleteGroup, setExpandedDeleteGroup] = useState(null);
+  // Track lightbox for delete request images
+  const [deletePreviewLightbox, setDeletePreviewLightbox] = useState(null);
+
+  useEffect(() => setLocalDeleteRequests(deleteRequests), [deleteRequests]);
+
+  // Group delete requests by project name
+  const groupedDeleteRequests = useMemo(() => {
+    const groups = {};
+    localDeleteRequests.forEach(req => {
+      const key = req.project_name || '__no_project__';
+      if (!groups[key]) groups[key] = { name: req.project_name, items: [] };
+      groups[key].items.push(req);
+    });
+    return Object.values(groups);
+  }, [localDeleteRequests]);
 
   const handleClose = useCallback(() => {
     if (hasChangesRef.current) {
@@ -563,51 +626,57 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
     }
   };
 
-  /** Process delete requests (actually delete files) */
-  const handleProcessDeleteRequests = async (requestIds) => {
-    setProcessing(prev => ({ ...prev, delete_requests: 'processing' }));
-    try {
-      const response = await fetch('/api/mobile/inbox/process-delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestIds }),
-      });
-      const data = await response.json();
-      if (response.ok) {
+  /** Process delete requests (fire-and-forget: instant UI update, background API) */
+  const handleProcessDeleteRequests = (requestIds) => {
+    // Optimistic: remove from UI immediately
+    setLocalDeleteRequests(prev => prev.filter(r => !requestIds.includes(r.id)));
+    showNotification(`${requestIds.length} ${requestIds.length === 1 ? 'Bild wird' : 'Bilder werden'} gelöscht...`);
+
+    // Fire API in background
+    fetch('/api/mobile/inbox/process-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestIds }),
+    })
+    .then(async res => {
+      const data = await res.json();
+      if (res.ok) {
         hasChangesRef.current = true;
-        showNotification(data.message || `${data.deletedCount} Bilder gelöscht`);
-        await onRefresh();
+        showNotification(data.message || 'Gelöscht');
       } else {
         showNotification(data.error || 'Fehler beim Löschen', 'error');
       }
-    } catch (e) {
+      onRefresh();
+    })
+    .catch(e => {
       showNotification('Fehler: ' + e.message, 'error');
-    } finally {
-      setProcessing(prev => ({ ...prev, delete_requests: null }));
-    }
+      onRefresh();
+    });
   };
 
-  /** Dismiss delete requests (keep files, remove requests) */
-  const handleDismissDeleteRequests = async (requestIds) => {
-    setProcessing(prev => ({ ...prev, delete_requests: 'dismissing' }));
-    try {
-      const response = await fetch('/api/mobile/inbox/dismiss-delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestIds }),
-      });
-      if (response.ok) {
-        showNotification('Löschanfragen verworfen');
-        await onRefresh();
-      } else {
-        const data = await response.json();
+  /** Dismiss delete requests (fire-and-forget: instant UI update) */
+  const handleDismissDeleteRequests = (requestIds) => {
+    // Optimistic: remove from UI immediately
+    setLocalDeleteRequests(prev => prev.filter(r => !requestIds.includes(r.id)));
+    showNotification('Löschanfragen verworfen');
+
+    // Fire API in background
+    fetch('/api/mobile/inbox/dismiss-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestIds }),
+    })
+    .then(async res => {
+      if (!res.ok) {
+        const data = await res.json();
         showNotification(data.error || 'Fehler', 'error');
       }
-    } catch (e) {
+      onRefresh();
+    })
+    .catch(e => {
       showNotification('Fehler: ' + e.message, 'error');
-    } finally {
-      setProcessing(prev => ({ ...prev, delete_requests: null }));
-    }
+      onRefresh();
+    });
   };
 
   const showNotification = (message, type = 'success') => {
@@ -896,17 +965,16 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
         )}
 
         <div className="pending-modal-body">
-          {/* Delete Requests Section */}
-          {deleteRequests.length > 0 && (
+          {/* Delete Requests Section - grouped by project, collapsible */}
+          {localDeleteRequests.length > 0 && (
             <div className="delete-requests-section">
               <div className="delete-requests-header">
                 <Trash2 size={16} />
-                <span>Löschanfragen vom Handy ({deleteRequests.length})</span>
+                <span>Löschanfragen vom Handy ({localDeleteRequests.length})</span>
                 <div className="delete-requests-actions">
                   <button
                     className="btn-pending btn-accept btn-small"
-                    onClick={() => handleProcessDeleteRequests(deleteRequests.map(r => r.id))}
-                    disabled={processing.delete_requests}
+                    onClick={() => handleProcessDeleteRequests(localDeleteRequests.map(r => r.id))}
                     title="Alle löschen"
                   >
                     <Trash2 size={14} />
@@ -914,8 +982,7 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
                   </button>
                   <button
                     className="btn-pending btn-dismiss btn-small"
-                    onClick={() => handleDismissDeleteRequests(deleteRequests.map(r => r.id))}
-                    disabled={processing.delete_requests}
+                    onClick={() => handleDismissDeleteRequests(localDeleteRequests.map(r => r.id))}
                     title="Anfragen verwerfen (Bilder behalten)"
                   >
                     <X size={14} />
@@ -923,56 +990,99 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
                   </button>
                 </div>
               </div>
-              <div className="delete-requests-list">
-                {deleteRequests.map(req => (
-                  <div key={req.id} className="delete-request-item">
-                    <div className="delete-request-info">
-                      <Image size={14} />
-                      <span className="delete-request-filename">{req.file_name}</span>
-                      {req.project_name ? (
-                        <span className="delete-request-project">
-                          <FolderOpen size={12} />
-                          {req.project_name}
-                        </span>
-                      ) : (
-                        <span className="delete-request-no-project">Kein Projekt</span>
-                      )}
+
+              {groupedDeleteRequests.map(group => {
+                const isExpanded = expandedDeleteGroup === (group.name || '__no_project__');
+                const groupKey = group.name || '__no_project__';
+                return (
+                  <div key={groupKey} className="delete-group">
+                    <div
+                      className="delete-group-header"
+                      onClick={() => setExpandedDeleteGroup(isExpanded ? null : groupKey)}
+                    >
+                      <FolderOpen size={16} />
+                      <span className="delete-group-name">{group.name || 'Kein Projekt'}</span>
+                      <span className="delete-group-count">{group.items.length} {group.items.length === 1 ? 'Bild' : 'Bilder'}</span>
+                      <div className="delete-group-actions">
+                        <button
+                          className="btn-pending btn-delete btn-icon"
+                          onClick={(e) => { e.stopPropagation(); handleProcessDeleteRequests(group.items.map(r => r.id)); }}
+                          title="Alle in dieser Gruppe löschen"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                        <button
+                          className="btn-pending btn-dismiss btn-icon"
+                          onClick={(e) => { e.stopPropagation(); handleDismissDeleteRequests(group.items.map(r => r.id)); }}
+                          title="Gruppe verwerfen"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                      {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                     </div>
-                    <div className="delete-request-meta">
-                      <span className="delete-request-by">{req.requested_by}</span>
-                      <span className="delete-request-date">
-                        {new Date(req.requested_at).toLocaleDateString('de-DE', {
-                          day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
-                        })}
-                      </span>
-                    </div>
-                    <div className="delete-request-item-actions">
-                      <button
-                        className="btn-pending btn-delete btn-icon"
-                        onClick={() => handleProcessDeleteRequests([req.id])}
-                        disabled={processing.delete_requests}
-                        title="Bild löschen"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                      <button
-                        className="btn-pending btn-dismiss btn-icon"
-                        onClick={() => handleDismissDeleteRequests([req.id])}
-                        disabled={processing.delete_requests}
-                        title="Anfrage verwerfen"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
+
+                    {isExpanded && (
+                      <div className="delete-group-images">
+                        <div className="pending-images-grid">
+                          {group.items.map((req, idx) => {
+                            const previewUrl = group.name
+                              ? `/api/mobile/inbox/delete-preview/${encodeURIComponent(group.name)}/${encodeURIComponent(req.file_name)}`
+                              : null;
+                            return (
+                              <div key={req.id} className="pending-image-card marked-delete delete-preview-card">
+                                {previewUrl ? (
+                                  <img
+                                    src={previewUrl}
+                                    alt={req.file_name}
+                                    onClick={() => setDeletePreviewLightbox({
+                                      images: group.items.map(r => ({
+                                        id: null,
+                                        name: r.file_name,
+                                        previewUrl: `/api/mobile/inbox/delete-preview/${encodeURIComponent(group.name)}/${encodeURIComponent(r.file_name)}`,
+                                      })),
+                                      startIndex: idx,
+                                    })}
+                                  />
+                                ) : (
+                                  <div className="pending-image-placeholder">
+                                    <Image size={24} />
+                                  </div>
+                                )}
+                                <div className="pending-image-name delete-name">{req.file_name}</div>
+                                <div className="delete-preview-meta">
+                                  <span>{req.requested_by}</span>
+                                  <span>
+                                    {new Date(req.requested_at).toLocaleDateString('de-DE', {
+                                      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+                                    })}
+                                  </span>
+                                </div>
+                                <div className="delete-preview-actions">
+                                  <button
+                                    className="btn-pending btn-delete btn-icon"
+                                    onClick={(e) => { e.stopPropagation(); handleProcessDeleteRequests([req.id]); }}
+                                    title="Löschen"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                  <button
+                                    className="btn-pending btn-dismiss btn-icon"
+                                    onClick={(e) => { e.stopPropagation(); handleDismissDeleteRequests([req.id]); }}
+                                    title="Verwerfen"
+                                  >
+                                    <X size={12} />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                ))}
-              </div>
-              {processing.delete_requests && (
-                <div className="delete-requests-processing">
-                  <Loader size={16} className="spinning" />
-                  <span>{processing.delete_requests === 'processing' ? 'Wird gelöscht...' : 'Wird verworfen...'}</span>
-                </div>
-              )}
+                );
+              })}
             </div>
           )}
 
@@ -993,6 +1103,14 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
           images={lightbox.images}
           startIndex={lightbox.startIndex}
           onClose={() => setLightbox(null)}
+        />
+      )}
+
+      {deletePreviewLightbox && (
+        <DeletePreviewLightbox
+          images={deletePreviewLightbox.images}
+          startIndex={deletePreviewLightbox.startIndex}
+          onClose={() => setDeletePreviewLightbox(null)}
         />
       )}
     </div>

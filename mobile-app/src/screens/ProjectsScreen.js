@@ -404,35 +404,28 @@ export default function ProjectsScreen({ navigation }) {
         </View>
       )}
 
-      {/* Project List */}
+      {/* Project List - pending projects integrated at the top */}
       <FlatList
-        data={sortedProjects}
-        keyExtractor={p => String(p.id)}
-        renderItem={renderProject}
+        data={[
+          ...filteredPending.map(p => ({ ...p, _type: 'pending' })),
+          ...sortedProjects.map(p => ({ ...p, _type: 'project' })),
+        ]}
+        keyExtractor={p => p._type === 'pending' ? `pending-${p.id}` : String(p.id)}
+        renderItem={({ item }) => item._type === 'pending' ? renderPendingProject({ item }) : renderProject({ item })}
         contentContainerStyle={styles.list}
         refreshControl={
           <RefreshControl refreshing={refreshing && !syncing} onRefresh={handleRefresh} tintColor={colors.accent} />
         }
         ListHeaderComponent={
-          <>
-            {/* Pending Projects Section */}
-            {filteredPending.length > 0 && (
-              <View style={styles.pendingSection}>
-                <Text style={styles.pendingSectionTitle}>Warte auf Bestätigung</Text>
-                {filteredPending.map(item => (
-                  <View key={`pending-${item.id}`}>
-                    {renderPendingProject({ item })}
-                  </View>
-                ))}
-              </View>
-            )}
-            {sortedProjects.length > 0 ? (
-              <Text style={styles.resultCount}>{sortedProjects.length} Projekte</Text>
-            ) : null}
-          </>
+          (sortedProjects.length > 0 || filteredPending.length > 0) ? (
+            <Text style={styles.resultCount}>
+              {sortedProjects.length} {sortedProjects.length === 1 ? 'Projekt' : 'Projekte'}
+              {filteredPending.length > 0 && ` · ${filteredPending.length} offen`}
+            </Text>
+          ) : null
         }
         ListEmptyComponent={
-          !syncing && filteredPending.length === 0 ? (
+          !syncing ? (
             <View style={styles.empty}>
               <Ionicons name="folder-open-outline" size={48} color={colors.textTertiary} />
               <Text style={styles.emptyText}>
@@ -534,14 +527,7 @@ const styles = StyleSheet.create({
   list: { padding: 16, paddingTop: 4 },
   resultCount: { fontSize: 12, color: colors.textTertiary, marginBottom: 8 },
 
-  // Pending section
-  pendingSection: {
-    marginBottom: 16,
-  },
-  pendingSectionTitle: {
-    fontSize: 13, fontWeight: '600', color: colors.accent,
-    marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5,
-  },
+  // Pending (inline with projects)
   pendingCard: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: colors.cardBg,
     borderRadius: 12, marginBottom: 10, padding: 16, borderWidth: 1,
