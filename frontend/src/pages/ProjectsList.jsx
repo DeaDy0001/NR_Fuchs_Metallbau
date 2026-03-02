@@ -55,6 +55,7 @@ function ProjectsList() {
   const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
   const [showEditor, setShowEditor] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteFromProjects, setDeleteFromProjects] = useState(false);
   const modalImageRef = useRef(null);
   const [showAllProjectsInSidebar, setShowAllProjectsInSidebar] = useState(false);
   const [sidebarProjectSearch, setSidebarProjectSearch] = useState('');
@@ -503,13 +504,15 @@ function ProjectsList() {
   // Perform the actual delete
   const performDelete = async (deleteFromDrive) => {
     const imageToDelete = selectedImage;
+    const shouldDeleteFromProjects = deleteFromProjects;
     setShowDeleteDialog(false);
+    setDeleteFromProjects(false);
 
     if (!imageToDelete || !imageToDelete.id) return;
 
     try {
       const response = await fetch(
-        `/api/drive/images/${imageToDelete.id}?deleteFromDrive=${deleteFromDrive}&deleteFromProjects=true`,
+        `/api/drive/images/${imageToDelete.id}?deleteFromDrive=${deleteFromDrive}&deleteFromProjects=${shouldDeleteFromProjects}`,
         { method: 'DELETE' }
       );
 
@@ -890,8 +893,22 @@ function ProjectsList() {
                         onClick={() => handleImageClick(image)}
                         style={{ cursor: 'pointer' }}
                       >
+                        {image.id && (
+                          <button
+                            className="project-image-delete-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedImage(image);
+                              setEditingName(image.name);
+                              setShowDeleteDialog(true);
+                            }}
+                            title="Bild löschen"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
                         <img src={image.url} alt={image.name} />
-                        <div className="project-image-name">{image.name}</div>
+                        <div className="project-image-name" title={image.name}>{image.name}</div>
                       </div>
                     ))}
                   </div>
@@ -1246,16 +1263,36 @@ function ProjectsList() {
 
       {/* Delete Image Dialog */}
       {showDeleteDialog && selectedImage && (
-        <div className="modal-overlay" onClick={() => setShowDeleteDialog(false)}>
+        <div className="modal-overlay" onClick={() => {setShowDeleteDialog(false); setDeleteFromProjects(false);}}>
           <div className="delete-dialog" onClick={(e) => e.stopPropagation()}>
             <h3>Bild löschen</h3>
             <p>Möchtest du das Bild <strong>"{selectedImage.name}"</strong> löschen?</p>
+
+            {selectedImage.projects && selectedImage.projects.length > 0 && (
+              <div style={{ margin: '15px 0', padding: '10px', backgroundColor: '#2a2a2a', borderRadius: '4px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '14px' }}>
+                  <input
+                    type="checkbox"
+                    checked={deleteFromProjects}
+                    onChange={(e) => setDeleteFromProjects(e.target.checked)}
+                    style={{ marginRight: '10px', width: '18px', height: '18px', cursor: 'pointer' }}
+                  />
+                  <span>
+                    Auch von {selectedImage.projects.length === 1 ? 'Projekt' : 'allen Projekten'} löschen?
+                    <span style={{ display: 'block', fontSize: '12px', color: '#888', marginTop: '4px' }}>
+                      {selectedImage.projects.map(p => p.folder_name).join(', ')}
+                    </span>
+                  </span>
+                </label>
+              </div>
+            )}
+
             <div className="delete-options">
               <button
                 className="delete-option-btn software-only"
                 onClick={() => performDelete(false)}
               >
-                <div className="option-title">Nur aus Software</div>
+                <div className="option-title">🗑️ Nur aus Software</div>
                 <div className="option-description">
                   {selectedImage.drive_file_id
                     ? 'Bleibt auf Google Drive, wird aber nicht mehr heruntergeladen'
@@ -1267,7 +1304,7 @@ function ProjectsList() {
                   className="delete-option-btn full-delete"
                   onClick={() => performDelete(true)}
                 >
-                  <div className="option-title">Auch von Google Drive</div>
+                  <div className="option-title">🔥 Auch von Google Drive</div>
                   <div className="option-description">
                     Wird permanent von Google Drive gelöscht
                   </div>
@@ -1276,7 +1313,7 @@ function ProjectsList() {
             </div>
             <button
               className="delete-cancel-btn"
-              onClick={() => setShowDeleteDialog(false)}
+              onClick={() => {setShowDeleteDialog(false); setDeleteFromProjects(false);}}
             >
               Abbrechen
             </button>
