@@ -54,6 +54,7 @@ function ProjectsList() {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
   const [showEditor, setShowEditor] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const modalImageRef = useRef(null);
   const [showAllProjectsInSidebar, setShowAllProjectsInSidebar] = useState(false);
   const [sidebarProjectSearch, setSidebarProjectSearch] = useState('');
@@ -490,34 +491,43 @@ function ProjectsList() {
     }
   };
 
-  // Delete image
-  const handleDeleteImage = async () => {
+  // Delete image - open dialog
+  const handleDeleteImage = () => {
     if (!selectedImage.id) {
       alert('Nur registrierte Bilder können gelöscht werden');
       return;
     }
+    setShowDeleteDialog(true);
+  };
 
-    const confirmDelete = window.confirm(
-      `Möchtest du das Bild "${selectedImage.name}" wirklich löschen?\n\nDies löscht das Bild nur aus der Datenbank, nicht vom Laufwerk.`
-    );
+  // Perform the actual delete
+  const performDelete = async (deleteFromDrive) => {
+    const imageToDelete = selectedImage;
+    setShowDeleteDialog(false);
 
-    if (!confirmDelete) return;
+    if (!imageToDelete || !imageToDelete.id) return;
 
     try {
-      const response = await fetch(`/api/drive/images/${selectedImage.id}?deleteFromDrive=false`, {
-        method: 'DELETE'
-      });
+      const response = await fetch(
+        `/api/drive/images/${imageToDelete.id}?deleteFromDrive=${deleteFromDrive}&deleteFromProjects=true`,
+        { method: 'DELETE' }
+      );
 
       if (response.ok) {
+        const result = await response.json();
         closeImageViewer();
         // Reload project files
         if (viewingProject) {
           loadProjectFiles(viewingProject.id);
         }
-        alert('Bild erfolgreich gelöscht');
+        if (result.driveFileNotFound) {
+          alert('Das Bild war nicht mehr auf Google Drive vorhanden. Es wurde aus der Software gelöscht.');
+        } else {
+          alert('Bild erfolgreich gelöscht');
+        }
       } else {
         const error = await response.json();
-        alert(`Fehler beim Löschen: ${error.message}`);
+        alert(`Fehler beim Löschen: ${error.message || error.error}`);
       }
     } catch (error) {
       console.error('Error deleting image:', error);
@@ -1230,6 +1240,46 @@ function ProjectsList() {
                 {creating ? 'Erstelle...' : 'Projekt erstellen'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Image Dialog */}
+      {showDeleteDialog && selectedImage && (
+        <div className="modal-overlay" onClick={() => setShowDeleteDialog(false)}>
+          <div className="delete-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>Bild löschen</h3>
+            <p>Möchtest du das Bild <strong>"{selectedImage.name}"</strong> löschen?</p>
+            <div className="delete-options">
+              <button
+                className="delete-option-btn software-only"
+                onClick={() => performDelete(false)}
+              >
+                <div className="option-title">Nur aus Software</div>
+                <div className="option-description">
+                  {selectedImage.drive_file_id
+                    ? 'Bleibt auf Google Drive, wird aber nicht mehr heruntergeladen'
+                    : 'Bild wird aus der Software gelöscht'}
+                </div>
+              </button>
+              {selectedImage.drive_file_id && (
+                <button
+                  className="delete-option-btn full-delete"
+                  onClick={() => performDelete(true)}
+                >
+                  <div className="option-title">Auch von Google Drive</div>
+                  <div className="option-description">
+                    Wird permanent von Google Drive gelöscht
+                  </div>
+                </button>
+              )}
+            </div>
+            <button
+              className="delete-cancel-btn"
+              onClick={() => setShowDeleteDialog(false)}
+            >
+              Abbrechen
+            </button>
           </div>
         </div>
       )}

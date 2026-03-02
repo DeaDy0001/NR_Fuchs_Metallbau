@@ -2448,6 +2448,11 @@ const getProjectChanges = async (req, res) => {
     const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
     const projectBasePath = settings?.project_path;
 
+    // Get ignored file IDs (files previously deleted by user - should not reappear)
+    const ignoredFileIds = new Set(
+      db.prepare('SELECT drive_file_id FROM ignored_files').all().map(r => r.drive_file_id)
+    );
+
     const changes = [];
 
     for (const folder of projectFolders) {
@@ -2466,9 +2471,9 @@ const getProjectChanges = async (req, res) => {
           }
         }
 
-        // Find new images (on Drive but not local)
+        // Find new images (on Drive but not local, and not previously ignored/deleted)
         const newImages = driveImages.filter(img =>
-          !localImageNames.has(img.name.toLowerCase())
+          !localImageNames.has(img.name.toLowerCase()) && !ignoredFileIds.has(img.id)
         );
 
         if (newImages.length > 0) {
@@ -2547,6 +2552,14 @@ const confirmProjectChanges = async (req, res) => {
     const bilderFolder = path.join(settings.project_path, projectName, 'Bilder');
     await fs.ensureDir(bilderFolder);
 
+    // Ensure project exists in DB
+    let project = db.prepare('SELECT id FROM projects WHERE folder_name = ?').get(projectName);
+    if (!project) {
+      const insertResult = db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)')
+        .run(projectName, '#3b82f6', '');
+      project = { id: insertResult.lastInsertRowid };
+    }
+
     let downloaded = 0;
     for (const fileId of fileIds) {
       try {
@@ -2554,20 +2567,41 @@ const confirmProjectChanges = async (req, res) => {
         const destPath = path.join(bilderFolder, meta.name);
         if (!await fs.pathExists(destPath)) {
           await downloadFile(fileId, destPath);
-          downloaded++;
+        }
+        downloaded++;
+
+        // Register in drive_images with drive_file_id so it can be tracked for Drive deletion
+        const existingImg = db.prepare('SELECT id FROM drive_images WHERE drive_file_id = ?').get(fileId);
+        if (!existingImg) {
+          const projectImageUrl = `/api/projects/${project.id}/file/image/${encodeURIComponent(meta.name)}`;
+          const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+          let fileSize = null;
+          try {
+            const stats = await fs.stat(destPath);
+            fileSize = stats.size;
+          } catch (e) { /* ignore */ }
+
+          const imgResult = db.prepare(`
+            INSERT INTO drive_images (
+              name, original_name, local_path, thumbnail_url, file_url,
+              mime_type, drive_file_id, drive_path_id, file_size, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+          `).run(
+            meta.name, meta.name, projectImageUrl, projectImageUrl, projectImageUrl,
+            meta.mimeType || 'image/jpeg', fileId, fileSize, now
+          );
+
+          // Create project assignment
+          db.prepare('INSERT OR IGNORE INTO image_project_assignments (image_id, project_id) VALUES (?, ?)')
+            .run(imgResult.lastInsertRowid, project.id);
         } else {
-          downloaded++;
+          // Image already registered - ensure project assignment exists
+          db.prepare('INSERT OR IGNORE INTO image_project_assignments (image_id, project_id) VALUES (?, ?)')
+            .run(existingImg.id, project.id);
         }
       } catch (e) {
         console.error(`Error downloading file ${fileId}:`, e.message);
       }
-    }
-
-    // Ensure project exists in DB
-    const existing = db.prepare('SELECT id FROM projects WHERE folder_name = ?').get(projectName);
-    if (!existing) {
-      db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)')
-        .run(projectName, '#3b82f6', '');
     }
 
     res.json({
