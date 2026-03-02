@@ -200,7 +200,7 @@ export default function ProjectsScreen({ navigation }) {
   const renderPendingProject = ({ item }) => (
     <TouchableOpacity
       style={styles.pendingCard}
-      onPress={() => navigation.navigate('CameraStack', {
+      onPress={() => navigation.navigate('ProjectDetail', {
         projectId: item.folder_id,
         projectName: item.folder_name,
         projectFolderId: item.folder_id,
@@ -215,13 +215,7 @@ export default function ProjectsScreen({ navigation }) {
             <Text style={styles.pendingBadgeText}>Unbestätigt</Text>
           </View>
         </View>
-        <View style={styles.pendingActions}>
-          <Text style={styles.pendingHint}>Wartet auf Bestätigung</Text>
-          <View style={styles.pendingUploadHint}>
-            <Ionicons name="camera-outline" size={12} color={colors.accent} />
-            <Text style={styles.pendingUploadText}>Fotos aufnehmen</Text>
-          </View>
-        </View>
+        <Text style={styles.pendingHint}>Wartet auf Bestätigung</Text>
       </View>
       <TouchableOpacity
         style={styles.pendingDeleteBtn}
@@ -541,10 +535,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent + '20',
   },
   pendingBadgeText: { fontSize: 11, color: colors.accent, fontWeight: '600' },
-  pendingActions: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
-  pendingHint: { fontSize: 12, color: colors.textTertiary },
-  pendingUploadHint: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  pendingUploadText: { fontSize: 12, color: colors.accent, fontWeight: '500' },
+  pendingHint: { fontSize: 12, color: colors.textTertiary, marginTop: 4 },
   pendingDeleteBtn: { padding: 6, marginRight: 4 },
 
   // Project card

@@ -84,8 +84,18 @@ function CustomTabBar({ state, descriptors, navigation }) {
               return;
             }
             const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-            if (!isFocused && !event.defaultPrevented) {
-              navigation.navigate(route.name);
+            if (!event.defaultPrevented) {
+              if (!isFocused) {
+                // Switching to this tab - for nested stack tabs, always reset to root screen
+                if (route.name === 'Projects') {
+                  navigation.navigate('Projects', { screen: 'ProjectsList' });
+                } else {
+                  navigation.navigate(route.name);
+                }
+              } else if (route.name === 'Projects') {
+                // Already on Projects tab, tapped again - go back to project list
+                navigation.navigate('Projects', { screen: 'ProjectsList' });
+              }
             }
           };
 

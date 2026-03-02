@@ -11,7 +11,7 @@ import * as MediaLibrary from 'expo-media-library';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { addToUploadQueue, getCachedProjects } from '../services/database';
+import { addToUploadQueue, getCachedProjects, addPendingProject } from '../services/database';
 import { createProject } from '../services/api';
 import { processUploadQueue } from '../services/uploadQueue';
 
@@ -77,6 +77,8 @@ export default function CameraScreen({ navigation, route }) {
     setCreatingProject(true);
     try {
       const result = await createProject(name);
+      // Also add as pending project so it shows as "Unbestätigt" in Projekte tab
+      await addPendingProject(name, result.folder_id);
       selectProject({
         id: result.id,
         folder_name: result.folder_name,
