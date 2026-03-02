@@ -318,6 +318,20 @@ export const getThumbnailSource = async (thumbnailLink) => {
 // ============================================================
 
 /**
+ * Delete a file or folder from Drive (permanently)
+ */
+export const deleteFile = async (fileId) => {
+  const headers = await getHeaders();
+  const response = await fetch(`${DRIVE_API}/files/${fileId}`, {
+    method: 'DELETE',
+    headers,
+  });
+  if (!response.ok && response.status !== 204) {
+    throw new Error(`Löschen fehlgeschlagen (${response.status})`);
+  }
+};
+
+/**
  * Check if we can access a Drive folder
  */
 export const checkFolderAccess = async (folderId) => {

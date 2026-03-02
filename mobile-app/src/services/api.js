@@ -23,6 +23,7 @@ import {
   createJsonFile,
   updateJsonFile,
   downloadFile,
+  deleteFile,
   getImageSource,
   checkFolderAccess,
   findOrCreateFolder,
@@ -197,6 +198,14 @@ export const createProject = async (name) => {
     folder_name: name,
     folder_id: folder.id,
   };
+};
+
+/**
+ * Delete a pending project from the inbox on Drive.
+ * Removes the entire folder (including all images inside it).
+ */
+export const deletePendingProject = async (folderId) => {
+  await deleteFile(folderId);
 };
 
 // ============================================================

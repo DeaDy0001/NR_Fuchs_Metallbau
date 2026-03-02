@@ -6,9 +6,9 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
-import { getCachedProjects, getCachedTags, addPendingProject, getPendingProjects, clearConfirmedPendingProjects } from '../services/database';
+import { getCachedProjects, getCachedTags, addPendingProject, getPendingProjects, clearConfirmedPendingProjects, removePendingProject } from '../services/database';
 import { syncMetadata } from '../services/syncService';
-import { createProject } from '../services/api';
+import { createProject, deletePendingProject } from '../services/api';
 import { useApp } from '../contexts/AppContext';
 
 const SORT_OPTIONS = [
@@ -86,6 +86,29 @@ export default function ProjectsScreen({ navigation }) {
       setRefreshing(false);
       setSyncing(false);
     }
+  };
+
+  const handleDeletePending = (item) => {
+    Alert.alert(
+      'Projekt löschen?',
+      `"${item.folder_name}" und alle hochgeladenen Bilder werden von Google Drive gelöscht.`,
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        {
+          text: 'Löschen',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deletePendingProject(item.folder_id);
+              await removePendingProject(item.folder_name);
+              await loadData();
+            } catch (error) {
+              Alert.alert('Fehler', 'Löschen fehlgeschlagen: ' + error.message);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleCreateProject = async () => {
@@ -192,6 +215,13 @@ export default function ProjectsScreen({ navigation }) {
           </View>
         </View>
       </View>
+      <TouchableOpacity
+        style={styles.pendingDeleteBtn}
+        onPress={(e) => { e.stopPropagation(); handleDeletePending(item); }}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
+        <Ionicons name="trash-outline" size={18} color={colors.error} />
+      </TouchableOpacity>
       <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
     </TouchableOpacity>
   );
@@ -521,6 +551,7 @@ const styles = StyleSheet.create({
   pendingHint: { fontSize: 12, color: colors.textTertiary },
   pendingUploadHint: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   pendingUploadText: { fontSize: 12, color: colors.accent, fontWeight: '500' },
+  pendingDeleteBtn: { padding: 6, marginRight: 4 },
 
   // Project card
   projectCard: {
