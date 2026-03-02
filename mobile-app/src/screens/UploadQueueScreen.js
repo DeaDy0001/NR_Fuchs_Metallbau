@@ -3,14 +3,17 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Ani
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
-import { getQueueDisplayItems, cleanupOldQueueItems } from '../services/database';
+import { getQueueDisplayItems, cleanupOldQueueItems, getDeleteQueueDisplayItems, cleanupOldDeleteQueueItems } from '../services/database';
 import { forceProcessQueue, addUploadListener, getCurrentUploadState } from '../services/uploadQueue';
+import { addDeleteListener, processDeleteQueue } from '../services/deleteQueue';
 import { useApp } from '../contexts/AppContext';
 
 export default function UploadQueueScreen() {
   const { refreshQueueCount } = useApp();
   const [pending, setPending] = useState([]);
   const [completed, setCompleted] = useState([]);
+  const [deletePending, setDeletePending] = useState([]);
+  const [deleteCompleted, setDeleteCompleted] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [uploadState, setUploadState] = useState(getCurrentUploadState());
   const [currentPhase, setCurrentPhase] = useState(null); // 'compressing' or 'uploading'
@@ -22,6 +25,7 @@ export default function UploadQueueScreen() {
   useFocusEffect(
     useCallback(() => {
       loadQueue();
+      loadDeleteQueue();
       setUploadState(getCurrentUploadState());
     }, [])
   );
@@ -66,6 +70,27 @@ export default function UploadQueueScreen() {
     return unsubscribe;
   }, []);
 
+  // Listen for delete queue events
+  useEffect(() => {
+    const unsubscribe = addDeleteListener(async (event) => {
+      if (event.type === 'deleted' || event.type === 'done' || event.type === 'error') {
+        await loadDeleteQueue();
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  const loadDeleteQueue = async () => {
+    try {
+      const { pending: p, completed: c } = await getDeleteQueueDisplayItems();
+      setDeletePending(p);
+      setDeleteCompleted(c);
+      await cleanupOldDeleteQueueItems();
+    } catch (error) {
+      console.error('Error loading delete queue:', error);
+    }
+  };
+
   const loadQueue = async () => {
     try {
       const { pending: p, completed: c } = await getQueueDisplayItems();
@@ -81,7 +106,9 @@ export default function UploadQueueScreen() {
   const handleForceSync = async () => {
     setRefreshing(true);
     await forceProcessQueue();
+    processDeleteQueue();
     await loadQueue();
+    await loadDeleteQueue();
     await refreshQueueCount();
     setRefreshing(false);
   };
@@ -161,9 +188,65 @@ export default function UploadQueueScreen() {
     );
   };
 
+  const getDeleteStatusConfig = (status) => {
+    switch (status) {
+      case 'queued': return { icon: 'time-outline', color: colors.warning, label: 'Wartend' };
+      case 'done': return { icon: 'checkmark-circle', color: colors.success, label: 'Gelöscht' };
+      case 'failed': return { icon: 'alert-circle', color: colors.error, label: 'Fehlgeschlagen' };
+      default: return { icon: 'help-circle', color: colors.textTertiary, label: status };
+    }
+  };
+
+  const renderDeleteItem = ({ item }) => {
+    const config = getDeleteStatusConfig(item.status);
+    return (
+      <View style={[styles.queueItem, styles.deleteItem]}>
+        <View style={styles.itemIconContainer}>
+          <Ionicons name="trash-outline" size={24} color={config.color} />
+        </View>
+        <View style={styles.itemInfo}>
+          <Text style={styles.itemName} numberOfLines={1}>{item.file_name}</Text>
+          <View style={styles.itemMeta}>
+            <Text style={[styles.itemStatus, { color: config.color }]}>{config.label}</Text>
+            {item.project_name && (
+              <Text style={styles.itemProject} numberOfLines={1}>
+                <Ionicons name="folder-outline" size={11} color={colors.textTertiary} /> {item.project_name}
+              </Text>
+            )}
+            {item.delete_from_software === 1 && (
+              <Text style={styles.itemDeleteSoftware}>+ Software</Text>
+            )}
+          </View>
+          {item.error && <Text style={styles.itemError} numberOfLines={2}>{item.error}</Text>}
+        </View>
+        {item.status === 'done' && item.processed_at && (
+          <Text style={styles.itemTime}>{formatTime(item.processed_at)}</Text>
+        )}
+      </View>
+    );
+  };
+
   const totalPending = pending.length;
   const totalCompleted = completed.length;
-  const allItems = [...pending, ...completed];
+  const totalDeletePending = deletePending.length;
+  const totalDeleteCompleted = deleteCompleted.length;
+
+  // Build unified list with section headers
+  const allItems = [];
+  if (totalDeletePending > 0) {
+    allItems.push({ _type: 'section', label: `Lösch-Queue (${totalDeletePending})`, icon: 'trash-outline', color: colors.error });
+    deletePending.forEach(i => allItems.push({ ...i, _type: 'delete' }));
+  }
+  if (totalPending > 0) {
+    allItems.push({ _type: 'section', label: `Upload-Queue (${totalPending})`, icon: 'cloud-upload-outline', color: colors.accent });
+    pending.forEach(i => allItems.push({ ...i, _type: 'upload' }));
+  }
+  if (totalCompleted > 0 || totalDeleteCompleted > 0) {
+    allItems.push({ _type: 'section', label: 'Erledigt', icon: 'checkmark-done-outline', color: colors.success });
+    deleteCompleted.forEach(i => allItems.push({ ...i, _type: 'delete' }));
+    completed.forEach(i => allItems.push({ ...i, _type: 'upload' }));
+  }
+
   const { isProcessing, uploadProgress } = uploadState;
 
   return (
@@ -171,15 +254,15 @@ export default function UploadQueueScreen() {
       {/* Summary card */}
       <View style={styles.summary}>
         <View style={styles.summaryItem}>
-          <Text style={[styles.summaryNumber, { color: totalPending > 0 ? colors.warning : colors.textTertiary }]}>
-            {totalPending}
+          <Text style={[styles.summaryNumber, { color: (totalPending + totalDeletePending) > 0 ? colors.warning : colors.textTertiary }]}>
+            {totalPending + totalDeletePending}
           </Text>
           <Text style={styles.summaryLabel}>Ausstehend</Text>
         </View>
         <View style={styles.summaryDivider} />
         <View style={styles.summaryItem}>
-          <Text style={[styles.summaryNumber, { color: colors.success }]}>{totalCompleted}</Text>
-          <Text style={styles.summaryLabel}>Hochgeladen</Text>
+          <Text style={[styles.summaryNumber, { color: colors.success }]}>{totalCompleted + totalDeleteCompleted}</Text>
+          <Text style={styles.summaryLabel}>Erledigt</Text>
         </View>
       </View>
 
@@ -234,8 +317,19 @@ export default function UploadQueueScreen() {
       {/* Queue list */}
       <FlatList
         data={allItems}
-        keyExtractor={i => String(i.id)}
-        renderItem={renderQueueItem}
+        keyExtractor={(i, idx) => i._type === 'section' ? `section-${idx}` : `${i._type}-${i.id}`}
+        renderItem={({ item }) => {
+          if (item._type === 'section') {
+            return (
+              <View style={styles.sectionHeader}>
+                <Ionicons name={item.icon} size={16} color={item.color} />
+                <Text style={[styles.sectionHeaderText, { color: item.color }]}>{item.label}</Text>
+              </View>
+            );
+          }
+          if (item._type === 'delete') return renderDeleteItem({ item });
+          return renderQueueItem({ item });
+        }}
         contentContainerStyle={styles.list}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleForceSync} tintColor={colors.accent} />
@@ -244,19 +338,11 @@ export default function UploadQueueScreen() {
           <View style={styles.empty}>
             <Ionicons name="checkmark-done-circle-outline" size={56} color={colors.textTertiary} />
             <Text style={styles.emptyTitle}>Alles erledigt</Text>
-            <Text style={styles.emptyText}>Keine Uploads in der Warteschlange</Text>
+            <Text style={styles.emptyText}>Keine Aufgaben in der Warteschlange</Text>
           </View>
         }
         ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
-        // Section header between pending and completed
-        stickyHeaderIndices={totalPending > 0 && totalCompleted > 0 ? [totalPending] : []}
       />
-
-      {/* Section labels rendered inline via data */}
-      {totalPending > 0 && totalCompleted > 0 && (
-        <View style={styles.sectionDivider} pointerEvents="none">
-        </View>
-      )}
     </View>
   );
 }
@@ -443,9 +529,35 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
 
-  // Section divider (not used as overlay)
-  sectionDivider: {
-    display: 'none',
+  // Delete queue items
+  deleteItem: {
+    borderColor: 'rgba(239, 68, 68, 0.2)',
+  },
+  itemDeleteSoftware: {
+    fontSize: 10,
+    color: colors.error,
+    fontWeight: '600',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    overflow: 'hidden',
+  },
+
+  // Section headers
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    marginTop: 4,
+  },
+  sectionHeaderText: {
+    fontSize: 13,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
 
   // Empty state

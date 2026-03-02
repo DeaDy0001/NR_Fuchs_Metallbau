@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Alert, Image,
+  View, Text, StyleSheet, TouchableOpacity, Image,
   ActivityIndicator, FlatList, Dimensions, Modal, ScrollView, TextInput, Animated,
 } from 'react-native';
+import { useDialog } from '../components/CustomDialog';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -17,6 +18,7 @@ import { processUploadQueue } from '../services/uploadQueue';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function CameraScreen({ navigation, route }) {
+  const { alert } = useDialog();
   const { refreshQueueCount } = useApp();
   const [permission, requestPermission] = useCameraPermissions();
   const [capturedImages, setCapturedImages] = useState([]);
@@ -82,7 +84,7 @@ export default function CameraScreen({ navigation, route }) {
       });
       setNewProjectName('');
     } catch (error) {
-      Alert.alert('Fehler', 'Projekt konnte nicht erstellt werden: ' + error.message);
+      alert('Fehler', 'Projekt konnte nicht erstellt werden: ' + error.message);
     } finally {
       setCreatingProject(false);
     }
@@ -195,10 +197,10 @@ export default function CameraScreen({ navigation, route }) {
       if (status === 'granted') {
         setGpsEnabled(true);
       } else {
-        Alert.alert('GPS nicht verfügbar', 'Standortzugriff wurde nicht erlaubt.');
+        alert('GPS nicht verfügbar', 'Standortzugriff wurde nicht erlaubt.');
       }
     } catch (error) {
-      Alert.alert('Fehler', 'GPS konnte nicht aktiviert werden.');
+      alert('Fehler', 'GPS konnte nicht aktiviert werden.');
     }
   };
 
@@ -267,7 +269,7 @@ export default function CameraScreen({ navigation, route }) {
 
       setCapturedImages(prev => [...prev, newImage]);
     } catch (error) {
-      Alert.alert('Fehler', 'Foto konnte nicht aufgenommen werden.');
+      alert('Fehler', 'Foto konnte nicht aufgenommen werden.');
     }
   };
 
@@ -279,7 +281,7 @@ export default function CameraScreen({ navigation, route }) {
   };
 
   const removeAllImages = () => {
-    Alert.alert(
+    alert(
       'Alle Bilder verwerfen?',
       `${capturedImages.length} ${capturedImages.length === 1 ? 'Bild' : 'Bilder'} werden gelöscht.`,
       [

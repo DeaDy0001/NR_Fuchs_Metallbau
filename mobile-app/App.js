@@ -10,6 +10,7 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import { AppProvider, useApp } from './src/contexts/AppContext';
 import { colors } from './src/theme/colors';
 import ErrorBoundary from './src/components/ErrorBoundary';
+import { DialogProvider } from './src/components/CustomDialog';
 
 // Screens
 import LoginScreen from './src/screens/LoginScreen';
@@ -34,11 +35,10 @@ const screenOptions = {
   headerTitleStyle: { fontWeight: '600' },
 };
 
-// Tab config with action tabs (Camera, Gallery, Queue navigate to stack screens)
+// Tab config with action tabs (Camera navigates to stack screen)
 const TAB_CONFIG = {
   Home: { icon: 'home', iconOutline: 'home-outline', label: 'Start' },
   Camera: { icon: 'camera', iconOutline: 'camera-outline', label: 'Foto', isAction: true },
-  Gallery: { icon: 'images', iconOutline: 'images-outline', label: 'Galerie', isAction: true },
   Projects: { icon: 'folder', iconOutline: 'folder-outline', label: 'Projekte' },
   Queue: { icon: 'cloud-upload', iconOutline: 'cloud-upload-outline', label: 'Upload' },
   Settings: { icon: 'settings', iconOutline: 'settings-outline', label: 'Einstellungen' },
@@ -80,8 +80,6 @@ function CustomTabBar({ state, descriptors, navigation }) {
               // Action tabs navigate to stack screens instead of switching tabs
               if (route.name === 'Camera') {
                 navigation.navigate('CameraStack');
-              } else if (route.name === 'Gallery') {
-                navigation.navigate('CameraStack', { pickFromGallery: true });
               }
               return;
             }
@@ -162,7 +160,6 @@ function MainTabs() {
         options={{ title: 'Start', headerTitle: 'Fuchs Metallbau' }}
       />
       <Tab.Screen name="Camera" component={DummyScreen} options={{ tabBarLabel: 'Foto' }} />
-      <Tab.Screen name="Gallery" component={DummyScreen} options={{ tabBarLabel: 'Galerie' }} />
       <Tab.Screen
         name="Projects"
         component={ProjectsStackScreen}
@@ -256,6 +253,7 @@ export default function App() {
     <SafeAreaProvider>
     <ErrorBoundary>
       <AppProvider>
+        <DialogProvider>
         <NavigationContainer
           theme={{
             ...DarkTheme,
@@ -274,6 +272,7 @@ export default function App() {
           <StatusBar style="light" hidden={true} translucent={true} />
           <AppNavigator />
         </NavigationContainer>
+        </DialogProvider>
       </AppProvider>
     </ErrorBoundary>
     </SafeAreaProvider>

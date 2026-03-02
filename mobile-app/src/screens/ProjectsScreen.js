@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput,
-  RefreshControl, Alert, Modal,
+  RefreshControl, Modal,
 } from 'react-native';
+import { useDialog } from '../components/CustomDialog';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -21,6 +22,7 @@ const SORT_OPTIONS = [
 ];
 
 export default function ProjectsScreen({ navigation }) {
+  const { alert } = useDialog();
   const { isConnected } = useApp();
   const [projects, setProjects] = useState([]);
   const [pendingProjectsList, setPendingProjectsList] = useState([]);
@@ -89,7 +91,7 @@ export default function ProjectsScreen({ navigation }) {
   };
 
   const handleDeletePending = (item) => {
-    Alert.alert(
+    alert(
       'Projekt löschen?',
       `"${item.folder_name}" und alle hochgeladenen Bilder werden von Google Drive gelöscht.`,
       [
@@ -103,13 +105,13 @@ export default function ProjectsScreen({ navigation }) {
               await removePendingProject(item.folder_name);
               await loadData();
               if (result.alreadyConfirmed) {
-                Alert.alert(
+                alert(
                   'Bereits bestätigt',
                   `"${item.folder_name}" wurde bereits in der Desktop-Software bestätigt und kann hier nicht mehr gelöscht werden.`
                 );
               }
             } catch (error) {
-              Alert.alert('Fehler', 'Löschen fehlgeschlagen: ' + error.message);
+              alert('Fehler', 'Löschen fehlgeschlagen: ' + error.message);
             }
           },
         },
@@ -129,12 +131,12 @@ export default function ProjectsScreen({ navigation }) {
       await addPendingProject(name, result.folder_id);
       // Reload data to show the pending project
       await loadData();
-      Alert.alert(
+      alert(
         'Projekt erstellt',
         `"${name}" wurde in der Inbox erstellt und wartet auf Bestätigung in der Desktop-Software.`
       );
     } catch (error) {
-      Alert.alert('Fehler', error.message);
+      alert('Fehler', error.message);
     }
   };
 

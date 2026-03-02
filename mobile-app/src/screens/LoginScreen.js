@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  Alert, AppState, Linking, Platform, ScrollView, Modal, SafeAreaView,
+  AppState, Linking, Platform, ScrollView, Modal, SafeAreaView,
 } from 'react-native';
+import { useDialog } from '../components/CustomDialog';
 import { WebView } from 'react-native-webview';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,6 +21,7 @@ import config from '../config';
  *    intercepts the localhost redirect, and exchanges the code via the server API
  */
 export default function LoginScreen() {
+  const { alert } = useDialog();
   const { onGoogleLogin, resetSetup } = useApp();
   const [clientId, setClientId] = useState(null);
   const [serverUrl, setServerUrl] = useState(null);
@@ -102,7 +104,7 @@ export default function LoginScreen() {
 
   const startGoogleSignIn = async () => {
     if (!clientId) {
-      Alert.alert('Fehler', 'Keine Google Client-ID konfiguriert. Bitte zuerst QR-Code scannen.');
+      alert('Fehler', 'Keine Google Client-ID konfiguriert. Bitte zuerst QR-Code scannen.');
       return;
     }
 
@@ -157,7 +159,7 @@ export default function LoginScreen() {
       if (isMountedRef.current) {
         setAuthLoading(false);
         setUserCode(null);
-        Alert.alert('Anmeldung fehlgeschlagen', error.message);
+        alert('Anmeldung fehlgeschlagen', error.message);
       }
     }
   };
@@ -246,7 +248,7 @@ export default function LoginScreen() {
         deviceCodeRef.current = null;
         setAuthLoading(false);
         setUserCode(null);
-        Alert.alert('Anmeldung fehlgeschlagen', error.message);
+        alert('Anmeldung fehlgeschlagen', error.message);
       }
     } finally {
       isPollingRef.current = false;
@@ -258,7 +260,7 @@ export default function LoginScreen() {
   const startWebViewAuth = async () => {
     if (!serverUrl) {
       setAuthLoading(false);
-      Alert.alert(
+      alert(
         'Server nicht erreichbar',
         'Die Anmeldung benötigt eine Verbindung zum Desktop-Server.\n\nBitte stelle sicher, dass die Desktop-Software läuft und scanne den QR-Code erneut.'
       );
@@ -288,7 +290,7 @@ export default function LoginScreen() {
       console.error('[Fuchs] WebView OAuth init error:', error);
       if (isMountedRef.current) {
         setAuthLoading(false);
-        Alert.alert('Anmeldung fehlgeschlagen', error.message);
+        alert('Anmeldung fehlgeschlagen', error.message);
       }
     }
   };
@@ -315,7 +317,7 @@ export default function LoginScreen() {
       if (error) {
         console.log('[Fuchs] OAuth error:', error);
         setWebViewAuth(null);
-        Alert.alert('Anmeldung abgebrochen', 'Die Google-Anmeldung wurde abgebrochen.');
+        alert('Anmeldung abgebrochen', 'Die Google-Anmeldung wurde abgebrochen.');
         return false; // Prevent navigation
       }
 
@@ -353,7 +355,7 @@ export default function LoginScreen() {
       console.error('[Fuchs] Token exchange error:', error);
       if (isMountedRef.current) {
         setAuthLoading(false);
-        Alert.alert('Anmeldung fehlgeschlagen', error.message);
+        alert('Anmeldung fehlgeschlagen', error.message);
       }
     }
   };

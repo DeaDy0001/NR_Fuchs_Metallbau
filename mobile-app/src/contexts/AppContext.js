@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { getSetting, setSetting, getUploadQueueCount, getActiveDriveConnection, updateDriveConnectionFolders } from '../services/database';
+import { getSetting, setSetting, getUploadQueueCount, getDeleteQueueCount, getActiveDriveConnection, updateDriveConnectionFolders } from '../services/database';
 import { isAuthenticated, clearAuth, getAccessToken } from '../services/googleAuth';
 import { checkFolderAccess, findOrCreateFolder } from '../services/driveService';
 import { startQueueProcessing, stopQueueProcessing, addUploadListener, forceProcessQueue } from '../services/uploadQueue';
@@ -210,8 +210,9 @@ export const AppProvider = ({ children }) => {
   };
 
   const refreshQueueCount = async () => {
-    const count = await getUploadQueueCount();
-    setQueueCount(count);
+    const uploadCount = await getUploadQueueCount();
+    const deleteCount = await getDeleteQueueCount();
+    setQueueCount(uploadCount + deleteCount);
   };
 
   return (

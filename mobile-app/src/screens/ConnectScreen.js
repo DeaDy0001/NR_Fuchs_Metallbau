@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, FlatList } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, FlatList } from 'react-native';
+import { useDialog } from '../components/CustomDialog';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -8,6 +9,7 @@ import { setSetting, getDriveConnections, addDriveConnection, setActiveDriveConn
 import { verifyConnection, findOrCreateFolder } from '../services/driveService';
 
 export default function ConnectScreen() {
+  const { alert } = useDialog();
   const { isGoogleAuthed, onSetupComplete, onDriveConnect, logout, userEmail } = useApp();
   const [permission, requestPermission] = useCameraPermissions();
   const [connections, setConnections] = useState([]);
@@ -85,7 +87,7 @@ export default function ConnectScreen() {
 
     const parsed = parseQrData(data);
     if (!parsed) {
-      Alert.alert('Ungültiger QR-Code', 'Dieser QR-Code enthält keine gültige Drive-Verbindung.');
+      alert('Ungültiger QR-Code', 'Dieser QR-Code enthält keine gültige Drive-Verbindung.');
       setScanned(false);
       return;
     }
@@ -98,7 +100,7 @@ export default function ConnectScreen() {
         if (parsed.googleClientId) {
           await setSetting('googleClientId', parsed.googleClientId);
         } else {
-          Alert.alert(
+          alert(
             'QR-Code unvollständig',
             'Der QR-Code enthält keine Google Client ID. Bitte erstelle einen neuen QR-Code in der Desktop-Software.'
           );
@@ -115,7 +117,7 @@ export default function ConnectScreen() {
         // Save the Drive connection (without meta/inbox folders - will be created after Google Sign-In)
         await addDriveConnection(parsed.name, parsed.rootFolderId);
 
-        Alert.alert(
+        alert(
           'Einrichtung erfolgreich!',
           `Drive-Ordner "${parsed.name}" wurde gespeichert.\n\nMelde dich jetzt mit deinem Google-Konto an.`
         );
@@ -123,7 +125,7 @@ export default function ConnectScreen() {
         // Transition to LoginScreen
         onSetupComplete();
       } catch (error) {
-        Alert.alert('Fehler', error.message);
+        alert('Fehler', error.message);
         setScanned(false);
       } finally {
         setConnecting(false);
@@ -133,7 +135,7 @@ export default function ConnectScreen() {
       try {
         const folderName = await verifyConnection(parsed.rootFolderId);
         if (!folderName) {
-          Alert.alert(
+          alert(
             'Zugriff verweigert',
             `Der Drive-Ordner ist nicht für dein Google-Konto freigegeben.${userEmail ? `\n\nAngemeldet als: ${userEmail}` : ''}\n\nMögliche Lösungen:\n• Mit anderem Konto anmelden (unten "Konto wechseln")\n• Administrator bitten, den Ordner mit deinem Google-Konto zu teilen`,
             [
@@ -168,7 +170,7 @@ export default function ConnectScreen() {
           await setSetting('serverUrl', parsed.serverUrl);
         }
 
-        Alert.alert('Verbunden!', `"${connectionName}" wurde verbunden.`);
+        alert('Verbunden!', `"${connectionName}" wurde verbunden.`);
         setShowScanner(false);
 
         // Activate this connection
@@ -178,7 +180,7 @@ export default function ConnectScreen() {
           onDriveConnect(active);
         }
       } catch (error) {
-        Alert.alert('Fehler', error.message);
+        alert('Fehler', error.message);
         setScanned(false);
       } finally {
         setConnecting(false);
@@ -191,7 +193,7 @@ export default function ConnectScreen() {
     try {
       const accessible = await verifyConnection(connection.root_folder_id);
       if (!accessible) {
-        Alert.alert('Nicht erreichbar', 'Der Drive-Ordner ist nicht mehr zugänglich.');
+        alert('Nicht erreichbar', 'Der Drive-Ordner ist nicht mehr zugänglich.');
         setConnecting(false);
         return;
       }
@@ -207,14 +209,14 @@ export default function ConnectScreen() {
       await setActiveDriveConnection(connection.id);
       onDriveConnect(connection);
     } catch (error) {
-      Alert.alert('Fehler', error.message);
+      alert('Fehler', error.message);
     } finally {
       setConnecting(false);
     }
   };
 
   const handleDeleteConnection = (connection) => {
-    Alert.alert(
+    alert(
       'Verbindung entfernen?',
       `"${connection.name}" wird entfernt. Du kannst sie jederzeit erneut per QR-Code hinzufügen.`,
       [
@@ -387,7 +389,7 @@ export default function ConnectScreen() {
       <TouchableOpacity
         style={styles.switchAccountButton}
         onPress={() => {
-          Alert.alert(
+          alert(
             'Konto wechseln?',
             'Du wirst abgemeldet und kannst dich mit einem anderen Google-Konto anmelden.',
             [

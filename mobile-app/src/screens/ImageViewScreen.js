@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, Image, Dimensions, TouchableOpacity,
-  ActivityIndicator, FlatList, Animated, PanResponder, Alert,
+  ActivityIndicator, FlatList, Animated, PanResponder,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useDialog } from '../components/CustomDialog';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as FileSystem from 'expo-file-system';
 import { colors } from '../theme/colors';
 import { downloadFullImage } from '../services/syncService';
 import { getImageUrl } from '../services/api';
-import { deleteRecentPhoto } from '../services/database';
+import { addToDeleteQueue } from '../services/database';
+import { processDeleteQueue } from '../services/deleteQueue';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const HEADER_HEIGHT = 60;
@@ -310,6 +311,7 @@ function ZoomableImage({ imageId, localUri, isActive }) {
 }
 
 export default function ImageViewScreen({ route, navigation }) {
+  const { alert } = useDialog();
   const { imageId, imageName, projectName, images, initialIndex, localUri, onDelete } = route.params;
   const [currentIndex, setCurrentIndex] = useState(initialIndex || 0);
   const [deletedIds, setDeletedIds] = useState(new Set());
@@ -324,7 +326,7 @@ export default function ImageViewScreen({ route, navigation }) {
   const handleDeleteCurrent = useCallback(() => {
     if (!currentImage) return;
 
-    Alert.alert(
+    alert(
       'Foto löschen',
       `"${currentImage.name}" vom Handy löschen?`,
       [
@@ -333,34 +335,27 @@ export default function ImageViewScreen({ route, navigation }) {
           text: 'Löschen',
           style: 'destructive',
           onPress: async () => {
-            try {
-              // Delete from database
-              if (currentImage.id) {
-                await deleteRecentPhoto(currentImage.id);
-              }
-              // Delete local file
-              if (currentImage.localUri) {
-                try {
-                  await FileSystem.deleteAsync(currentImage.localUri, { idempotent: true });
-                } catch {}
-              }
+            // Queue for background deletion
+            await addToDeleteQueue([{
+              id: currentImage.id,
+              file_name: currentImage.name,
+              file_uri: currentImage.localUri,
+            }]);
+            processDeleteQueue();
 
-              // Mark as deleted
-              setDeletedIds(prev => new Set([...prev, currentImage.id]));
+            // Mark as deleted in UI immediately
+            setDeletedIds(prev => new Set([...prev, currentImage.id]));
 
-              // If all images are deleted, go back
-              const remaining = imageList.length - 1;
-              if (remaining <= 0) {
-                navigation.goBack();
-                return;
-              }
+            // If all images are deleted, go back
+            const remaining = imageList.length - 1;
+            if (remaining <= 0) {
+              navigation.goBack();
+              return;
+            }
 
-              // Adjust index if needed
-              if (currentIndex >= remaining) {
-                setCurrentIndex(remaining - 1);
-              }
-            } catch (error) {
-              Alert.alert('Fehler', 'Foto konnte nicht gelöscht werden.');
+            // Adjust index if needed
+            if (currentIndex >= remaining) {
+              setCurrentIndex(remaining - 1);
             }
           },
         },
