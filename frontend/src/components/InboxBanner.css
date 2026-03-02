@@ -756,6 +756,10 @@
   margin-bottom: 16px;
 }
 
+.delete-requests-section.collapsed {
+  padding: 12px 16px;
+}
+
 .delete-requests-header {
   display: flex;
   align-items: center;
@@ -763,6 +767,9 @@
   color: #ef4444;
   font-weight: 600;
   font-size: 14px;
+}
+
+.delete-requests-section.expanded .delete-requests-header {
   margin-bottom: 12px;
 }
 
@@ -770,9 +777,16 @@
   flex: 1;
 }
 
-.delete-requests-actions {
+.delete-requests-bulk-actions {
   display: flex;
   gap: 8px;
+  margin-bottom: 12px;
+}
+
+.delete-group-requester {
+  color: var(--text-secondary, #94a3b8);
+  font-weight: 400;
+  font-size: 0.85em;
 }
 
 .btn-small {

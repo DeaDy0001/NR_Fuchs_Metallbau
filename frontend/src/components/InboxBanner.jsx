@@ -40,6 +40,8 @@ function InboxBanner() {
   const totalCount = inboxItems.length + (deleteRequests.length > 0 ? 1 : 0);
   if (totalCount === 0) return null;
 
+  const bannerDeleteRequesters = [...new Set(deleteRequests.map(r => r.requested_by).filter(Boolean))];
+
   return (
     <>
       <div className="inbox-banner" onClick={() => setShowModal(true)}>
@@ -47,7 +49,7 @@ function InboxBanner() {
           <Inbox size={18} />
           <span>
             Neue Uploads von der Handy-App ({inboxItems.length})
-            {deleteRequests.length > 0 && ` · ${deleteRequests.length} Löschanfragen`}
+            {deleteRequests.length > 0 && ` · ${deleteRequests.length} ${deleteRequests.length === 1 ? 'Löschanfrage' : 'Löschanfragen'}${bannerDeleteRequesters.length > 0 ? ` von ${bannerDeleteRequesters.join(', ')}` : ''}`}
           </span>
           {scanning && <Loader size={14} className="spinning" />}
         </div>
@@ -292,6 +294,8 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
   const [localDeleteRequests, setLocalDeleteRequests] = useState(deleteRequests);
   // Track which delete request group is expanded
   const [expandedDeleteGroup, setExpandedDeleteGroup] = useState(null);
+  // Track whether the entire delete requests section is expanded (collapsed by default)
+  const [deletesSectionExpanded, setDeletesSectionExpanded] = useState(false);
   // Track lightbox for delete request images
   const [deletePreviewLightbox, setDeletePreviewLightbox] = useState(null);
 
@@ -965,126 +969,146 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
         )}
 
         <div className="pending-modal-body">
-          {/* Delete Requests Section - grouped by project, collapsible */}
-          {localDeleteRequests.length > 0 && (
-            <div className="delete-requests-section">
-              <div className="delete-requests-header">
+          {/* Delete Requests Section - collapsed by default, user must click to expand */}
+          {localDeleteRequests.length > 0 && (() => {
+            const uniqueRequesters = [...new Set(localDeleteRequests.map(r => r.requested_by).filter(Boolean))];
+            const requesterText = uniqueRequesters.length > 0
+              ? `von ${uniqueRequesters.join(', ')}`
+              : '';
+            return (
+            <div className={`delete-requests-section ${deletesSectionExpanded ? 'expanded' : 'collapsed'}`}>
+              <div
+                className="delete-requests-header"
+                onClick={() => setDeletesSectionExpanded(!deletesSectionExpanded)}
+                style={{ cursor: 'pointer' }}
+              >
                 <Trash2 size={16} />
-                <span>Löschanfragen vom Handy ({localDeleteRequests.length})</span>
-                <div className="delete-requests-actions">
-                  <button
-                    className="btn-pending btn-accept btn-small"
-                    onClick={() => handleProcessDeleteRequests(localDeleteRequests.map(r => r.id))}
-                    title="Alle löschen"
-                  >
-                    <Trash2 size={14} />
-                    Alle löschen
-                  </button>
-                  <button
-                    className="btn-pending btn-dismiss btn-small"
-                    onClick={() => handleDismissDeleteRequests(localDeleteRequests.map(r => r.id))}
-                    title="Anfragen verwerfen (Bilder behalten)"
-                  >
-                    <X size={14} />
-                    Verwerfen
-                  </button>
-                </div>
+                <span>{localDeleteRequests.length} {localDeleteRequests.length === 1 ? 'Löschanfrage' : 'Löschanfragen'} {requesterText}</span>
+                {deletesSectionExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
               </div>
 
-              {groupedDeleteRequests.map(group => {
-                const isExpanded = expandedDeleteGroup === (group.name || '__no_project__');
-                const groupKey = group.name || '__no_project__';
-                return (
-                  <div key={groupKey} className="delete-group">
-                    <div
-                      className="delete-group-header"
-                      onClick={() => setExpandedDeleteGroup(isExpanded ? null : groupKey)}
+              {deletesSectionExpanded && (
+                <>
+                  <div className="delete-requests-bulk-actions">
+                    <button
+                      className="btn-pending btn-accept btn-small"
+                      onClick={() => handleProcessDeleteRequests(localDeleteRequests.map(r => r.id))}
+                      title="Alle löschen"
                     >
-                      <FolderOpen size={16} />
-                      <span className="delete-group-name">{group.name || 'Kein Projekt'}</span>
-                      <span className="delete-group-count">{group.items.length} {group.items.length === 1 ? 'Bild' : 'Bilder'}</span>
-                      <div className="delete-group-actions">
-                        <button
-                          className="btn-pending btn-delete btn-icon"
-                          onClick={(e) => { e.stopPropagation(); handleProcessDeleteRequests(group.items.map(r => r.id)); }}
-                          title="Alle in dieser Gruppe löschen"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                        <button
-                          className="btn-pending btn-dismiss btn-icon"
-                          onClick={(e) => { e.stopPropagation(); handleDismissDeleteRequests(group.items.map(r => r.id)); }}
-                          title="Gruppe verwerfen"
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                      {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                    </div>
-
-                    {isExpanded && (
-                      <div className="delete-group-images">
-                        <div className="pending-images-grid">
-                          {group.items.map((req, idx) => {
-                            const previewUrl = group.name
-                              ? `/api/mobile/inbox/delete-preview/${encodeURIComponent(group.name)}/${encodeURIComponent(req.file_name)}`
-                              : null;
-                            return (
-                              <div key={req.id} className="pending-image-card marked-delete delete-preview-card">
-                                {previewUrl ? (
-                                  <img
-                                    src={previewUrl}
-                                    alt={req.file_name}
-                                    onClick={() => setDeletePreviewLightbox({
-                                      images: group.items.map(r => ({
-                                        id: null,
-                                        name: r.file_name,
-                                        previewUrl: `/api/mobile/inbox/delete-preview/${encodeURIComponent(group.name)}/${encodeURIComponent(r.file_name)}`,
-                                      })),
-                                      startIndex: idx,
-                                    })}
-                                  />
-                                ) : (
-                                  <div className="pending-image-placeholder">
-                                    <Image size={24} />
-                                  </div>
-                                )}
-                                <div className="pending-image-name delete-name">{req.file_name}</div>
-                                <div className="delete-preview-meta">
-                                  <span>{req.requested_by}</span>
-                                  <span>
-                                    {new Date(req.requested_at).toLocaleDateString('de-DE', {
-                                      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
-                                    })}
-                                  </span>
-                                </div>
-                                <div className="delete-preview-actions">
-                                  <button
-                                    className="btn-pending btn-delete btn-icon"
-                                    onClick={(e) => { e.stopPropagation(); handleProcessDeleteRequests([req.id]); }}
-                                    title="Löschen"
-                                  >
-                                    <Trash2 size={12} />
-                                  </button>
-                                  <button
-                                    className="btn-pending btn-dismiss btn-icon"
-                                    onClick={(e) => { e.stopPropagation(); handleDismissDeleteRequests([req.id]); }}
-                                    title="Verwerfen"
-                                  >
-                                    <X size={12} />
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
+                      <Trash2 size={14} />
+                      Alle löschen
+                    </button>
+                    <button
+                      className="btn-pending btn-dismiss btn-small"
+                      onClick={() => handleDismissDeleteRequests(localDeleteRequests.map(r => r.id))}
+                      title="Anfragen verwerfen (Bilder behalten)"
+                    >
+                      <X size={14} />
+                      Verwerfen
+                    </button>
                   </div>
-                );
-              })}
+
+                  {groupedDeleteRequests.map(group => {
+                    const isExpanded = expandedDeleteGroup === (group.name || '__no_project__');
+                    const groupKey = group.name || '__no_project__';
+                    const groupRequesters = [...new Set(group.items.map(r => r.requested_by).filter(Boolean))];
+                    return (
+                      <div key={groupKey} className="delete-group">
+                        <div
+                          className="delete-group-header"
+                          onClick={() => setExpandedDeleteGroup(isExpanded ? null : groupKey)}
+                        >
+                          <FolderOpen size={16} />
+                          <span className="delete-group-name">{group.name || 'Kein Projekt'}</span>
+                          <span className="delete-group-count">
+                            {group.items.length} {group.items.length === 1 ? 'Bild' : 'Bilder'}
+                            {groupRequesters.length > 0 && <span className="delete-group-requester"> — Löschanfrage von {groupRequesters.join(', ')}</span>}
+                          </span>
+                          <div className="delete-group-actions">
+                            <button
+                              className="btn-pending btn-delete btn-icon"
+                              onClick={(e) => { e.stopPropagation(); handleProcessDeleteRequests(group.items.map(r => r.id)); }}
+                              title="Alle in dieser Gruppe löschen"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                            <button
+                              className="btn-pending btn-dismiss btn-icon"
+                              onClick={(e) => { e.stopPropagation(); handleDismissDeleteRequests(group.items.map(r => r.id)); }}
+                              title="Gruppe verwerfen"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                          {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </div>
+
+                        {isExpanded && (
+                          <div className="delete-group-images">
+                            <div className="pending-images-grid">
+                              {group.items.map((req, idx) => {
+                                const previewUrl = group.name
+                                  ? `/api/mobile/inbox/delete-preview/${encodeURIComponent(group.name)}/${encodeURIComponent(req.file_name)}`
+                                  : null;
+                                return (
+                                  <div key={req.id} className="pending-image-card marked-delete delete-preview-card">
+                                    {previewUrl ? (
+                                      <img
+                                        src={previewUrl}
+                                        alt={req.file_name}
+                                        onClick={() => setDeletePreviewLightbox({
+                                          images: group.items.map(r => ({
+                                            id: null,
+                                            name: r.file_name,
+                                            previewUrl: `/api/mobile/inbox/delete-preview/${encodeURIComponent(group.name)}/${encodeURIComponent(r.file_name)}`,
+                                          })),
+                                          startIndex: idx,
+                                        })}
+                                      />
+                                    ) : (
+                                      <div className="pending-image-placeholder">
+                                        <Image size={24} />
+                                      </div>
+                                    )}
+                                    <div className="pending-image-name delete-name">{req.file_name}</div>
+                                    <div className="delete-preview-meta">
+                                      <span>Löschanfrage von {req.requested_by}</span>
+                                      <span>
+                                        {new Date(req.requested_at).toLocaleDateString('de-DE', {
+                                          day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+                                        })}
+                                      </span>
+                                    </div>
+                                    <div className="delete-preview-actions">
+                                      <button
+                                        className="btn-pending btn-delete btn-icon"
+                                        onClick={(e) => { e.stopPropagation(); handleProcessDeleteRequests([req.id]); }}
+                                        title="Löschen"
+                                      >
+                                        <Trash2 size={12} />
+                                      </button>
+                                      <button
+                                        className="btn-pending btn-dismiss btn-icon"
+                                        onClick={(e) => { e.stopPropagation(); handleDismissDeleteRequests([req.id]); }}
+                                        title="Verwerfen"
+                                      >
+                                        <X size={12} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
             </div>
-          )}
+            );
+          })()}
 
           {/* Upload Projects */}
           {projects.length === 0 && deleteRequests.length === 0 ? (
