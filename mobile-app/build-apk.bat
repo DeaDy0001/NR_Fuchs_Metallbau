@@ -86,7 +86,9 @@ echo  EAS Projekt muss einmalig konfiguriert werden.
 echo  Waehle "Create a new EAS project" wenn gefragt.
 echo.
 call eas init
-if %ERRORLEVEL% neq 0 goto :PROJECT_FAIL
+:: Exit-Code von eas init ist unzuverlaessig, pruefen ob projectId jetzt da ist
+findstr /c:"projectId" app.json >nul 2>&1
+if !ERRORLEVEL! neq 0 goto :PROJECT_FAIL
 echo  [OK] EAS Projekt konfiguriert
 goto :INSTALL_DEPS
 
