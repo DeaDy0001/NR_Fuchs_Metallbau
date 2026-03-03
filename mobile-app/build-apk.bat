@@ -170,6 +170,14 @@ wsl -d Ubuntu -e /bin/bash -c "test -f $HOME/android-sdk/cmdline-tools/latest/bi
 if !ERRORLEVEL! neq 0 goto :WSL_NO_SDK
 echo  [OK] Android SDK in WSL vorhanden
 
+REM Pruefe NDK in WSL (wird von React Native benoetigt)
+wsl -d Ubuntu -e /bin/bash -c "test -f $HOME/android-sdk/ndk/27.1.12297006/source.properties" >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo  [..] NDK fehlt - wird nachinstalliert...
+    wsl -d Ubuntu -e /bin/bash -c "$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk 'ndk;27.1.12297006' 2>&1"
+    echo  [OK] NDK installiert
+)
+
 REM Pruefe EAS CLI in WSL
 wsl -d Ubuntu -e /bin/bash -c "command -v eas" >nul 2>&1
 if !ERRORLEVEL! neq 0 (
@@ -316,9 +324,9 @@ if !ERRORLEVEL! neq 0 (
 echo  [OK] Command-Line Tools installiert
 echo  [..] Akzeptiere Android-Lizenzen...
 wsl -d Ubuntu -e /bin/bash -c "yes 2>/dev/null | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk --licenses >/dev/null 2>&1"
-echo  [..] Installiere Build-Tools und Platform...
-echo      (Das kann 1-2 Minuten dauern)
-wsl -d Ubuntu -e /bin/bash -c "$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk 'platform-tools' 'build-tools;36.0.0' 'platforms;android-36' 2>&1"
+echo  [..] Installiere Build-Tools, Platform und NDK...
+echo      (Das kann 2-3 Minuten dauern)
+wsl -d Ubuntu -e /bin/bash -c "$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk 'platform-tools' 'build-tools;36.0.0' 'platforms;android-36' 'ndk;27.1.12297006' 2>&1"
 echo  [OK] Android SDK installiert
 goto :BUILD_LOCAL
 
