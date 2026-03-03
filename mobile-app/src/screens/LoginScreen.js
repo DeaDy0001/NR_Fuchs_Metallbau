@@ -121,6 +121,22 @@ export default function LoginScreen() {
 
   // ---- Device Authorization Flow ----
 
+  const requestDeviceCode = async (scopes) => {
+    const deviceId = `fuchs_mobile_${clientId.substring(0, 12)}`;
+    const res = await fetch('https://oauth2.googleapis.com/device/code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        scope: scopes.join(' '),
+        device_id: deviceId,
+        device_name: 'Fuchs Metallbau App',
+      }).toString(),
+    });
+    const data = await res.json();
+    return { ok: res.ok, data };
+  };
+
   const startGoogleSignIn = async () => {
     if (!clientId) {
       alert('Fehler', 'Keine Google Client-ID konfiguriert. Bitte zuerst QR-Code scannen.');
@@ -132,39 +148,35 @@ export default function LoginScreen() {
     setWebViewAuth(null);
 
     try {
-      const deviceFlowScopes = config.google.scopes;
-      console.log('[Fuchs] Starting device authorization flow with scopes:', deviceFlowScopes);
+      // Try full drive scope first (needed to access shared folders)
+      const fullScopes = config.google.scopes;
+      console.log('[Fuchs] Trying device flow with full scopes:', fullScopes);
+      let result = await requestDeviceCode(fullScopes);
 
-      // Generate a stable device ID from the client ID (deterministic per app installation)
-      const deviceId = `fuchs_mobile_${clientId.substring(0, 12)}`;
+      // If full scope fails, retry with limited scope (drive.file)
+      if (!result.ok) {
+        console.log('[Fuchs] Full scope failed (' + (result.data.error || 'unknown') + '), trying drive.file...');
+        const limitedScopes = [
+          'https://www.googleapis.com/auth/drive.file',
+          'https://www.googleapis.com/auth/userinfo.profile',
+          'https://www.googleapis.com/auth/userinfo.email',
+        ];
+        result = await requestDeviceCode(limitedScopes);
+      }
 
-      const deviceRes = await fetch('https://oauth2.googleapis.com/device/code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: clientId,
-          scope: deviceFlowScopes.join(' '),
-          device_id: deviceId,
-          device_name: 'Fuchs Metallbau App',
-        }).toString(),
-      });
-
-      const deviceData = await deviceRes.json();
-      console.log('[Fuchs] Device code response:', JSON.stringify(deviceData));
-
-      if (!deviceRes.ok) {
-        // Device Flow not supported - fall back to In-App WebView OAuth
-        console.log('[Fuchs] Device flow failed (' + (deviceData.error || 'unknown') + '), falling back to WebView OAuth');
+      if (!result.ok) {
+        // Both scopes failed - fall back to WebView OAuth
+        console.log('[Fuchs] Device flow failed completely, falling back to WebView OAuth');
         return startWebViewAuth();
       }
 
-      const { device_code, user_code, verification_url, expires_in, interval } = deviceData;
+      const { device_code, user_code, verification_url, expires_in, interval } = result.data;
 
       deviceCodeRef.current = device_code;
       pollIntervalRef.current = (interval || 5) * 1000;
       expiresAtRef.current = Date.now() + (expires_in * 1000);
 
-      const verifyUrl = deviceData.verification_url_complete ||
+      const verifyUrl = result.data.verification_url_complete ||
         `${verification_url}?user_code=${user_code}`;
 
       setUserCode(user_code);
