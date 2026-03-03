@@ -153,6 +153,11 @@ const initTables = async () => {
     // upload_queue migrations
     { table: 'upload_queue', column: 'project_folder_id', sql: 'ALTER TABLE upload_queue ADD COLUMN project_folder_id TEXT' },
     { table: 'upload_queue', column: 'gps_data', sql: 'ALTER TABLE upload_queue ADD COLUMN gps_data TEXT' },
+    { table: 'upload_queue', column: 'custom_title', sql: 'ALTER TABLE upload_queue ADD COLUMN custom_title TEXT' },
+    { table: 'upload_queue', column: 'notes', sql: 'ALTER TABLE upload_queue ADD COLUMN notes TEXT' },
+    // recent_photos migrations
+    { table: 'recent_photos', column: 'custom_title', sql: 'ALTER TABLE recent_photos ADD COLUMN custom_title TEXT' },
+    { table: 'recent_photos', column: 'notes', sql: 'ALTER TABLE recent_photos ADD COLUMN notes TEXT' },
   ];
 
   for (const m of migrations) {
@@ -193,15 +198,15 @@ export const setSetting = async (key, value) => {
 // Upload queue helpers
 // ============================================================
 
-export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = null, projectName = null, projectFolderId = null, gpsData = null, skipRecentPhotos = false) => {
+export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = null, projectName = null, projectFolderId = null, gpsData = null, skipRecentPhotos = false, customTitle = null, notes = null) => {
   const db = await getDb();
 
   // Also add to recent photos for the home screen (skip when re-assigning existing photos)
   if (!skipRecentPhotos) {
     try {
       await db.runAsync(
-        'INSERT INTO recent_photos (file_uri, file_name, mime_type, project_id, project_name, gps_data, thumbnail_uri) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [fileUri, fileName, mimeType, projectId, projectName, gpsData, fileUri]
+        'INSERT INTO recent_photos (file_uri, file_name, mime_type, project_id, project_name, gps_data, thumbnail_uri, custom_title, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [fileUri, fileName, mimeType, projectId, projectName, gpsData, fileUri, customTitle, notes]
       );
       // Keep only last 50 recent photos
       await db.runAsync(
@@ -211,8 +216,8 @@ export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = 
   }
 
   return await db.runAsync(
-    'INSERT INTO upload_queue (file_uri, file_name, mime_type, project_id, project_name, project_folder_id, gps_data) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [fileUri, fileName, mimeType, projectId, projectName, projectFolderId, gpsData]
+    'INSERT INTO upload_queue (file_uri, file_name, mime_type, project_id, project_name, project_folder_id, gps_data, custom_title, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [fileUri, fileName, mimeType, projectId, projectName, projectFolderId, gpsData, customTitle, notes]
   );
 };
 

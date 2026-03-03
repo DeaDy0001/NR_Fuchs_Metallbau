@@ -5,7 +5,7 @@ import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
-import { View, ActivityIndicator, Platform, ScrollView, TouchableOpacity, Text } from 'react-native';
+import { View, ActivityIndicator, Platform, ScrollView, TouchableOpacity, Text, Image } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppProvider, useApp } from './src/contexts/AppContext';
 import { colors } from './src/theme/colors';
@@ -167,7 +167,15 @@ function MainTabs() {
       <Tab.Screen
         name="Home"
         component={HomeScreen}
-        options={{ title: 'Start', headerTitle: 'Fuchs Metallbau' }}
+        options={{
+          title: 'Start',
+          headerTitle: () => (
+            <Image
+              source={require('./assets/Fuchs Metallbau.jpg')}
+              style={{ height: 34, width: 140, resizeMode: 'contain' }}
+            />
+          ),
+        }}
       />
       <Tab.Screen name="Camera" component={DummyScreen} options={{ tabBarLabel: 'Foto' }} />
       <Tab.Screen

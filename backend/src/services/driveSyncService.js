@@ -1,7 +1,7 @@
 const db = require('../config/database');
 const path = require('path');
 const fs = require('fs-extra');
-const exifr = require('exifr');
+const { readExifData } = require('./exifService');
 const {
   extractFolderId,
   listFilesInFolder,
@@ -112,19 +112,24 @@ const syncDrivePath = async (drivePathId) => {
 
         // Extract EXIF data BEFORE compression (original file still exists!)
         let photoTakenAt = null;
+        let gpsLatitude = null;
+        let gpsLongitude = null;
+        let gpsAltitude = null;
+        let imageNotes = null;
         try {
-          const exifData = await exifr.parse(tempFilePath, {
-            pick: ['DateTimeOriginal', 'DateTime', 'CreateDate']
-          });
-
-          if (exifData) {
-            // Try multiple EXIF date fields (in order of preference)
-            const dateValue = exifData.DateTimeOriginal || exifData.DateTime || exifData.CreateDate;
-            if (dateValue) {
-              // Convert to ISO string
-              photoTakenAt = new Date(dateValue).toISOString();
-              console.log(`📸 Photo taken at: ${photoTakenAt}`);
-            }
+          const exifData = await readExifData(tempFilePath);
+          if (exifData.photoTakenAt) {
+            photoTakenAt = exifData.photoTakenAt;
+            console.log(`📸 Photo taken at: ${photoTakenAt}`);
+          }
+          if (exifData.latitude != null && exifData.longitude != null) {
+            gpsLatitude = exifData.latitude;
+            gpsLongitude = exifData.longitude;
+            gpsAltitude = exifData.altitude;
+            console.log(`📍 GPS: ${gpsLatitude}, ${gpsLongitude}`);
+          }
+          if (exifData.userComment) {
+            imageNotes = exifData.userComment;
           }
         } catch (err) {
           console.warn(`Could not extract EXIF data from ${file.name}:`, err.message);
@@ -181,8 +186,9 @@ const syncDrivePath = async (drivePathId) => {
         db.prepare(`
           INSERT INTO drive_images
           (drive_path_id, name, original_name, file_url, local_path, thumbnail_url,
-           file_size, mime_type, width, height, is_compressed, drive_file_id, photo_taken_at, subfolder)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           file_size, mime_type, width, height, is_compressed, drive_file_id, photo_taken_at, subfolder,
+           gps_latitude, gps_longitude, gps_altitude, image_notes)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           drivePathId,
           fileBaseName,
@@ -197,8 +203,50 @@ const syncDrivePath = async (drivePathId) => {
           isCompressed ? 1 : 0,
           file.id,
           photoTakenAt,
-          file.subfolder || null // Store first-level subfolder name (null if in root)
+          file.subfolder || null,
+          gpsLatitude,
+          gpsLongitude,
+          gpsAltitude,
+          imageNotes
         );
+
+        // Check for pending metadata from mobile app
+        try {
+          const pending = db.prepare(
+            'SELECT * FROM pending_image_metadata WHERE drive_file_id = ? OR file_name = ? LIMIT 1'
+          ).get(file.id, file.name);
+          if (pending) {
+            const updates = [];
+            const params = [];
+            if (pending.gps_latitude != null && pending.gps_longitude != null && !gpsLatitude) {
+              updates.push('gps_latitude = ?', 'gps_longitude = ?');
+              params.push(pending.gps_latitude, pending.gps_longitude);
+              if (pending.gps_altitude != null) {
+                updates.push('gps_altitude = ?');
+                params.push(pending.gps_altitude);
+              }
+            }
+            if (pending.notes && !imageNotes) {
+              updates.push('image_notes = ?');
+              params.push(pending.notes);
+            }
+            if (pending.custom_title) {
+              updates.push('name = ?');
+              params.push(pending.custom_title);
+            }
+            if (updates.length > 0) {
+              const imgId = db.prepare('SELECT id FROM drive_images WHERE drive_file_id = ?').get(file.id);
+              if (imgId) {
+                params.push(imgId.id);
+                db.prepare(`UPDATE drive_images SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+              }
+            }
+            // Clean up pending metadata
+            db.prepare('DELETE FROM pending_image_metadata WHERE id = ?').run(pending.id);
+          }
+        } catch (e) {
+          // Non-critical - pending metadata table might not exist yet
+        }
 
         addedCount++;
 

@@ -1924,6 +1924,41 @@ function DriveImages() {
                       </div>
                     )}
                   </div>
+
+                  {/* GPS Location */}
+                  <div className="modal-section">
+                    <label>GPS-Standort</label>
+                    {selectedImage.gps_latitude != null && selectedImage.gps_longitude != null ? (
+                      <button
+                        className="gps-map-btn"
+                        onClick={() => window.open(
+                          `https://www.google.com/maps?q=${selectedImage.gps_latitude},${selectedImage.gps_longitude}`,
+                          '_blank'
+                        )}
+                        title={`${selectedImage.gps_latitude.toFixed(6)}, ${selectedImage.gps_longitude.toFixed(6)}`}
+                      >
+                        <span className="gps-icon">📍</span>
+                        <span>Auf Google Maps öffnen</span>
+                        <span className="gps-coords">
+                          {selectedImage.gps_latitude.toFixed(5)}, {selectedImage.gps_longitude.toFixed(5)}
+                        </span>
+                      </button>
+                    ) : (
+                      <div className="detail-text" style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                        Keine GPS-Daten vorhanden
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Notes */}
+                  {selectedImage.image_notes && (
+                    <div className="modal-section">
+                      <label>Notizen</label>
+                      <div className="image-notes-display">
+                        {selectedImage.image_notes}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Lower section: Project assignment */}

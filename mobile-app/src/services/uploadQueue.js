@@ -3,6 +3,41 @@ import { getSetting, getQueuedUploads, updateUploadStatus } from './database';
 import { uploadImage } from './api';
 import { processImageForUpload } from './imageProcessor';
 
+/**
+ * Report image metadata (GPS, title, notes) to the desktop server
+ * Non-critical - silently fails if server not reachable
+ */
+const reportMetadataToServer = async (item, driveFileId) => {
+  try {
+    const serverUrl = await getSetting('serverUrl');
+    if (!serverUrl) return;
+
+    const gpsData = item.gps_data ? JSON.parse(item.gps_data) : null;
+    if (!gpsData && !item.custom_title && !item.notes) return;
+
+    const deviceId = await getSetting('heartbeat_device_id', '');
+
+    await fetch(`${serverUrl}/api/mobile/image-metadata`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Device-ID': deviceId,
+      },
+      body: JSON.stringify({
+        drive_file_id: driveFileId || null,
+        file_name: item.file_name,
+        gps_latitude: gpsData?.latitude || null,
+        gps_longitude: gpsData?.longitude || null,
+        gps_altitude: gpsData?.altitude || null,
+        custom_title: item.custom_title || null,
+        notes: item.notes || null,
+      }),
+    });
+  } catch {
+    // Silently fail - server not reachable (not on same network)
+  }
+};
+
 let isProcessing = false;
 let listeners = [];
 let currentlyUploadingId = null;
@@ -102,13 +137,18 @@ export const processUploadQueue = async () => {
           progress: { ...uploadProgress },
         });
 
-        await uploadImage(
+        const uploadResult = await uploadImage(
           uploadUri,
           item.file_name,
           item.mime_type,
           item.project_folder_id || item.project_id,
           item.project_name
         );
+
+        // Step 3: Report metadata (GPS, title, notes) to desktop server
+        if (item.gps_data || item.custom_title || item.notes) {
+          reportMetadataToServer(item, uploadResult?.fileId || null);
+        }
 
         await updateUploadStatus(item.id, 'uploaded');
         notifyListeners({ type: 'uploaded', item, progress: { ...uploadProgress } });

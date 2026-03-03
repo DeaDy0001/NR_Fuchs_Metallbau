@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
 const { compressImage, generateThumbnail, findSubfolder, findOrCreateSubfolder, moveFileOnDrive, listFoldersInFolder, listFilesInFolder, extractFolderId, deleteFileFromDrive, downloadFile, getFileMetadata, listAllFilesInFolder, readDriveFileAsJson, updateDriveFileContent } = require('../services/googleDriveService');
+const { readExifData, writeExifData } = require('../services/exifService');
 const { google } = require('googleapis');
 const os = require('os');
 
@@ -583,19 +584,45 @@ const uploadImage = async (req, res) => {
       return res.status(400).json({ error: 'Kein Bild angegeben' });
     }
 
-    const { project_id, project_name } = req.body;
+    const { project_id, project_name, custom_title, notes, gps_latitude, gps_longitude, gps_altitude } = req.body;
     const userName = req.device.user_name;
     const deviceId = req.device.device_id;
 
     const originalName = req.file.originalname;
     const ext = path.extname(originalName);
-    const baseName = path.basename(originalName, ext);
+    const baseName = custom_title || path.basename(originalName, ext);
     const timestamp = Date.now();
     const fileName = `${baseName}_${timestamp}${ext}`;
 
     // Move file to mobile uploads directory
     const finalPath = path.join(MOBILE_UPLOADS_DIR, fileName);
     await fs.move(req.file.path, finalPath);
+
+    // Write EXIF metadata into image (GPS, title, notes)
+    const lat = gps_latitude ? parseFloat(gps_latitude) : null;
+    const lon = gps_longitude ? parseFloat(gps_longitude) : null;
+    const alt = gps_altitude ? parseFloat(gps_altitude) : null;
+
+    try {
+      await writeExifData(finalPath, {
+        latitude: lat,
+        longitude: lon,
+        altitude: alt,
+        description: custom_title || null,
+        userComment: notes || null
+      });
+    } catch (e) {
+      console.error('EXIF write failed (non-critical):', e.message);
+    }
+
+    // Read back EXIF to also get photo_taken_at
+    let photoTakenAt = null;
+    try {
+      const exifData = await readExifData(finalPath);
+      if (exifData.photoTakenAt) photoTakenAt = exifData.photoTakenAt;
+    } catch (e) {
+      // ignore
+    }
 
     // Generate thumbnail
     const thumbnailName = `mobile_${baseName}_${timestamp}.webp`;
@@ -631,8 +658,8 @@ const uploadImage = async (req, res) => {
     // Also insert into drive_images so it appears in the main software
     const imgResult = db.prepare(`
       INSERT INTO drive_images
-        (drive_path_id, name, original_name, file_url, local_path, thumbnail_url, file_size, mime_type, is_compressed, drive_file_id)
-      VALUES (NULL, ?, ?, '', ?, ?, ?, ?, 0, ?)
+        (drive_path_id, name, original_name, file_url, local_path, thumbnail_url, file_size, mime_type, is_compressed, drive_file_id, photo_taken_at, gps_latitude, gps_longitude, gps_altitude, image_notes)
+      VALUES (NULL, ?, ?, '', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
     `).run(
       baseName,
       originalName,
@@ -640,7 +667,12 @@ const uploadImage = async (req, res) => {
       thumbnailRelative,
       stats.size,
       req.file.mimetype,
-      `mobile_${deviceId}_${timestamp}`
+      `mobile_${deviceId}_${timestamp}`,
+      photoTakenAt,
+      lat,
+      lon,
+      alt,
+      notes || null
     );
 
     // If project_id is given, assign image to project
@@ -2678,6 +2710,94 @@ const rejectProjectChanges = async (req, res) => {
   }
 };
 
+/**
+ * Report image metadata from mobile app (GPS, title, notes)
+ * POST /api/mobile/image-metadata
+ * Called after upload to Drive - stores metadata for when sync picks up the file
+ */
+const reportImageMetadata = async (req, res) => {
+  try {
+    const { drive_file_id, file_name, gps_latitude, gps_longitude, gps_altitude, custom_title, notes } = req.body;
+
+    if (!file_name && !drive_file_id) {
+      return res.status(400).json({ error: 'file_name oder drive_file_id erforderlich' });
+    }
+
+    const lat = gps_latitude != null ? parseFloat(gps_latitude) : null;
+    const lon = gps_longitude != null ? parseFloat(gps_longitude) : null;
+    const alt = gps_altitude != null ? parseFloat(gps_altitude) : null;
+
+    // Try to find the image by drive_file_id first, then by name
+    let image = null;
+    if (drive_file_id) {
+      image = db.prepare('SELECT * FROM drive_images WHERE drive_file_id = ?').get(drive_file_id);
+    }
+    if (!image && file_name) {
+      // Match by original_name (most recent)
+      image = db.prepare('SELECT * FROM drive_images WHERE original_name = ? ORDER BY created_at DESC LIMIT 1').get(file_name);
+    }
+
+    if (image) {
+      // Image already synced - update it directly
+      const updates = [];
+      const params = [];
+      if (lat != null && lon != null) {
+        updates.push('gps_latitude = ?', 'gps_longitude = ?');
+        params.push(lat, lon);
+        if (alt != null) {
+          updates.push('gps_altitude = ?');
+          params.push(alt);
+        }
+      }
+      if (notes) {
+        updates.push('image_notes = ?');
+        params.push(notes);
+      }
+      if (custom_title) {
+        updates.push('name = ?');
+        params.push(custom_title);
+      }
+      if (updates.length > 0) {
+        params.push(image.id);
+        db.prepare(`UPDATE drive_images SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+
+        // Also write EXIF data into the image file if it has a local path
+        if (image.local_path) {
+          const absolutePath = path.join(__dirname, '../../../', image.local_path);
+          if (await fs.pathExists(absolutePath)) {
+            try {
+              await writeExifData(absolutePath, {
+                latitude: lat,
+                longitude: lon,
+                altitude: alt,
+                description: custom_title || null,
+                userComment: notes || null
+              });
+            } catch (e) {
+              console.warn('EXIF write after metadata report failed:', e.message);
+            }
+          }
+        }
+      }
+      return res.json({ success: true, matched: true, imageId: image.id });
+    }
+
+    // Image not synced yet - store as pending metadata
+    // We create a record in a simple key-value approach using the file_name
+    const key = drive_file_id || file_name;
+    db.prepare(`
+      INSERT OR REPLACE INTO pending_image_metadata
+        (lookup_key, file_name, drive_file_id, gps_latitude, gps_longitude, gps_altitude, custom_title, notes, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(key, file_name, drive_file_id || null, lat, lon, alt, custom_title || null, notes || null);
+
+    res.json({ success: true, matched: false, pending: true });
+  } catch (error) {
+    console.error('Error reporting image metadata:', error);
+    res.status(500).json({ error: 'Metadaten konnten nicht gespeichert werden' });
+  }
+};
+
 module.exports = {
   generateConnectToken,
   getConnectInfo,
@@ -2685,6 +2805,7 @@ module.exports = {
   registerDevice,
   authenticateDevice,
   getDevices,
+  reportImageMetadata,
   removeDevice,
   getProjects,
   getProjectImages,

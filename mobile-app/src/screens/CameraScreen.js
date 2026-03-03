@@ -45,6 +45,10 @@ export default function CameraScreen({ navigation, route }) {
   const [showPreviewGallery, setShowPreviewGallery] = useState(false);
   const [selectedPreviewIndex, setSelectedPreviewIndex] = useState(0);
 
+  // Per-image metadata editing
+  const [editingField, setEditingField] = useState(null); // 'title' | 'notes' | null
+  const [editFieldValue, setEditFieldValue] = useState('');
+
   // Load projects for picker
   const loadProjects = async () => {
     try {
@@ -345,6 +349,41 @@ export default function CameraScreen({ navigation, route }) {
     );
   };
 
+  // Open an editing field for the current image
+  const openEditField = (field) => {
+    const currentImage = capturedImages[selectedPreviewIndex];
+    if (!currentImage) return;
+    if (field === 'title') {
+      setEditFieldValue(currentImage.customTitle || path.basename(currentImage.fileName, path.extname(currentImage.fileName)));
+    } else {
+      setEditFieldValue(currentImage.notes || '');
+    }
+    setEditingField(field);
+  };
+
+  // Save the editing field and close
+  const saveEditField = () => {
+    if (editingField && capturedImages[selectedPreviewIndex]) {
+      setCapturedImages(prev => {
+        const updated = [...prev];
+        if (editingField === 'title') {
+          updated[selectedPreviewIndex] = { ...updated[selectedPreviewIndex], customTitle: editFieldValue.trim() || null };
+        } else {
+          updated[selectedPreviewIndex] = { ...updated[selectedPreviewIndex], notes: editFieldValue.trim() || null };
+        }
+        return updated;
+      });
+    }
+    setEditingField(null);
+    setEditFieldValue('');
+  };
+
+  // Helper to get basename without extension (for display)
+  const path = {
+    basename: (name, ext) => ext ? name.replace(new RegExp(ext.replace('.', '\\.') + '$'), '') : name,
+    extname: (name) => { const m = name.match(/\.[^.]+$/); return m ? m[0] : ''; },
+  };
+
   const showToast = (message) => {
     setToast(message);
     Animated.timing(toastOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
@@ -372,7 +411,10 @@ export default function CameraScreen({ navigation, route }) {
         await addToUploadQueue(
           img.uri, img.fileName, img.mimeType,
           projectId, projectName, projectFolderId,
-          img.gps ? JSON.stringify(img.gps) : null
+          img.gps ? JSON.stringify(img.gps) : null,
+          false,
+          img.customTitle || null,
+          img.notes || null
         );
       }
 
@@ -436,6 +478,74 @@ export default function CameraScreen({ navigation, route }) {
               )}
             />
           </View>
+        )}
+
+        {/* Metadata buttons for current image */}
+        <View style={styles.metadataBar}>
+          <TouchableOpacity
+            style={[styles.metadataBtn, currentImage.customTitle && styles.metadataBtnActive]}
+            onPress={() => openEditField('title')}
+          >
+            <Ionicons name="pencil-outline" size={18} color={currentImage.customTitle ? colors.accent : colors.textSecondary} />
+            <Text
+              style={[styles.metadataBtnText, currentImage.customTitle && { color: colors.accent }]}
+              numberOfLines={1}
+            >
+              {currentImage.customTitle || 'Titel'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.metadataBtn, currentImage.notes && styles.metadataBtnActive]}
+            onPress={() => openEditField('notes')}
+          >
+            <Ionicons name="document-text-outline" size={18} color={currentImage.notes ? colors.accent : colors.textSecondary} />
+            <Text
+              style={[styles.metadataBtnText, currentImage.notes && { color: colors.accent }]}
+              numberOfLines={1}
+            >
+              {currentImage.notes || 'Notizen'}
+            </Text>
+          </TouchableOpacity>
+
+          {currentImage.gps && (
+            <View style={styles.metadataGpsBadge}>
+              <Ionicons name="location" size={14} color={colors.success || '#22c55e'} />
+              <Text style={styles.metadataGpsText}>GPS</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Metadata editing modal */}
+        {editingField && (
+          <Modal transparent animationType="slide">
+            <TouchableOpacity style={styles.metadataModalOverlay} activeOpacity={1} onPress={saveEditField}>
+              <View style={styles.metadataModalContent} onStartShouldSetResponder={() => true}>
+                <View style={styles.metadataModalHeader}>
+                  <Text style={styles.metadataModalTitle}>
+                    {editingField === 'title' ? 'Bild-Titel' : 'Notizen'}
+                  </Text>
+                  <TouchableOpacity onPress={saveEditField}>
+                    <Ionicons name="checkmark-circle" size={28} color={colors.accent} />
+                  </TouchableOpacity>
+                </View>
+                <TextInput
+                  style={[
+                    styles.metadataModalInput,
+                    editingField === 'notes' && { height: 120, textAlignVertical: 'top' }
+                  ]}
+                  value={editFieldValue}
+                  onChangeText={setEditFieldValue}
+                  placeholder={editingField === 'title' ? 'Bildname eingeben...' : 'Notizen eingeben...'}
+                  placeholderTextColor={colors.textTertiary}
+                  autoFocus
+                  multiline={editingField === 'notes'}
+                  returnKeyType={editingField === 'title' ? 'done' : 'default'}
+                  onSubmitEditing={editingField === 'title' ? saveEditField : undefined}
+                />
+              </View>
+            </TouchableOpacity>
+          </Modal>
         )}
 
         {/* Action bar - single row with icons */}
@@ -705,6 +815,49 @@ const styles = StyleSheet.create({
     paddingVertical: 10, paddingHorizontal: 20, borderRadius: 12, backgroundColor: colors.accent,
   },
   previewActionLabelSend: { fontSize: 11, color: 'white', fontWeight: '600' },
+
+  // Metadata bar (title + notes buttons)
+  metadataBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 16, paddingVertical: 8,
+    backgroundColor: colors.bgSecondary, borderTopWidth: 1, borderTopColor: colors.border,
+  },
+  metadataBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingVertical: 10, paddingHorizontal: 12,
+    backgroundColor: colors.cardBg, borderRadius: 10,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  metadataBtnActive: {
+    borderColor: colors.accent, backgroundColor: 'rgba(59,130,246,0.08)',
+  },
+  metadataBtnText: { fontSize: 13, color: colors.textSecondary, fontWeight: '500', flex: 1 },
+  metadataGpsBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingVertical: 8, paddingHorizontal: 10,
+    backgroundColor: 'rgba(34,197,94,0.1)', borderRadius: 10,
+    borderWidth: 1, borderColor: 'rgba(34,197,94,0.3)',
+  },
+  metadataGpsText: { fontSize: 12, color: '#22c55e', fontWeight: '600' },
+
+  // Metadata editing modal
+  metadataModalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end',
+  },
+  metadataModalContent: {
+    backgroundColor: colors.bgPrimary, borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    padding: 20, paddingBottom: 40,
+  },
+  metadataModalHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16,
+  },
+  metadataModalTitle: { fontSize: 18, fontWeight: '700', color: colors.textPrimary },
+  metadataModalInput: {
+    backgroundColor: colors.inputBg || colors.bgSecondary,
+    borderWidth: 1, borderColor: colors.border,
+    borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12,
+    fontSize: 16, color: colors.textPrimary,
+  },
 
   // Permission
   permissionText: { color: colors.textPrimary, fontSize: 16 },

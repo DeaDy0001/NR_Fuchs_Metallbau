@@ -63,6 +63,9 @@ router.post('/register', mobile.registerDevice);
 // Device heartbeat (called from mobile app periodically)
 router.post('/heartbeat', mobile.deviceHeartbeat);
 
+// Report image metadata (GPS, title, notes) after Drive upload - no auth needed
+router.post('/image-metadata', mobile.reportImageMetadata);
+
 // Device management (called from desktop)
 router.get('/devices', mobile.getDevices);
 router.delete('/devices/:deviceId', mobile.removeDevice);
