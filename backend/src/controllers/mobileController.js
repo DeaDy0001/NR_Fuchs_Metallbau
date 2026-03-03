@@ -1918,9 +1918,11 @@ const mobileExchangeCode = async (req, res) => {
       return res.status(400).json({ error: 'Authorization code ist erforderlich' });
     }
 
-    // Use unified GOOGLE_CLIENT_ID credentials
-    const useClientId = client_id || process.env.GOOGLE_CLIENT_ID;
-    const useClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    // Match client_id to the correct client_secret
+    const useClientId = client_id || process.env.GOOGLE_MOBILE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
+    const useClientSecret = (useClientId === process.env.GOOGLE_MOBILE_CLIENT_ID)
+      ? (process.env.GOOGLE_MOBILE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET)
+      : process.env.GOOGLE_CLIENT_SECRET;
 
     if (!useClientId || !useClientSecret) {
       return res.status(500).json({ error: 'Google OAuth nicht konfiguriert. Bitte Credentials im Dev-Tab konfigurieren.' });
@@ -1988,9 +1990,11 @@ const mobileDeviceToken = async (req, res) => {
       return res.status(400).json({ error: 'device_code ist erforderlich' });
     }
 
-    // Use unified GOOGLE_CLIENT_ID credentials
-    const useClientId = client_id || process.env.GOOGLE_CLIENT_ID;
-    const useClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    // Match client_id to the correct client_secret (device flow uses mobile/TV credentials)
+    const useClientId = client_id || process.env.GOOGLE_MOBILE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
+    const useClientSecret = (useClientId === process.env.GOOGLE_MOBILE_CLIENT_ID)
+      ? (process.env.GOOGLE_MOBILE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET)
+      : process.env.GOOGLE_CLIENT_SECRET;
 
     if (!useClientId || !useClientSecret) {
       return res.status(500).json({ error: 'Google OAuth nicht konfiguriert. Bitte Credentials im Dev-Tab konfigurieren.' });

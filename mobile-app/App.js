@@ -172,7 +172,7 @@ function MainTabs() {
           headerTitle: () => (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <Image
-                source={require('./assets/Fuchs Metallbau.jpg')}
+                source={require('./assets/splash-icon.png')}
                 style={{ height: 32, width: 32, borderRadius: 8 }}
                 resizeMode="cover"
               />
