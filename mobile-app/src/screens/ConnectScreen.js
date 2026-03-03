@@ -42,7 +42,24 @@ export default function ConnectScreen() {
   };
 
   const parseQrData = (data) => {
-    // Format 1: JSON (from desktop software)
+    // Format 1: Setup URL (dual-purpose QR code - works in browser AND in app)
+    // http://192.168.x.x:3001/api/mobile/connect/setup?d=<base64url-encoded-json>
+    try {
+      const setupMatch = data.match(/\/api\/mobile\/connect\/setup\?d=([A-Za-z0-9_-]+)/);
+      if (setupMatch) {
+        const decoded = JSON.parse(atob(setupMatch[1].replace(/-/g, '+').replace(/_/g, '/')));
+        if (decoded.type === 'fuchs_drive' && decoded.rootFolderId) {
+          return {
+            name: decoded.name || 'Drive-Verbindung',
+            rootFolderId: decoded.rootFolderId,
+            googleClientId: decoded.googleClientId || null,
+            serverUrl: decoded.serverUrl || null,
+          };
+        }
+      }
+    } catch {}
+
+    // Format 2: JSON (from desktop software - legacy)
     // {"type":"fuchs_drive","googleClientId":"...","rootFolderId":"...","name":"..."}
     try {
       const parsed = JSON.parse(data);
@@ -56,7 +73,7 @@ export default function ConnectScreen() {
       }
     } catch {}
 
-    // Format 2: URL with folder ID as parameter
+    // Format 3: URL with folder ID as parameter
     // fuchs://drive?name=Firma&root=FOLDER_ID
     try {
       if (data.startsWith('fuchs://')) {
@@ -69,7 +86,7 @@ export default function ConnectScreen() {
       }
     } catch {}
 
-    // Format 3: Plain Google Drive folder URL
+    // Format 4: Plain Google Drive folder URL
     // https://drive.google.com/drive/folders/FOLDER_ID
     try {
       const match = data.match(/drive\.google\.com\/drive\/folders\/([a-zA-Z0-9_-]+)/);

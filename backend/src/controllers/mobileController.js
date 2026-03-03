@@ -107,8 +107,14 @@ const generateConnectToken = (req, res) => {
       serverUrl,
     };
 
+    // Encode payload as base64url in a URL so:
+    // - Phone camera scan → opens landing page with APK download
+    // - In-app scan → app extracts connection data from URL
+    const encodedData = Buffer.from(JSON.stringify(qrPayload)).toString('base64url');
+    const qrUrl = `${serverUrl}/api/mobile/connect/setup?d=${encodedData}`;
+
     res.json({
-      qrData: JSON.stringify(qrPayload),
+      qrData: qrUrl,
       name: drivePath.name,
       rootFolderId,
       googleClientId,
@@ -153,6 +159,51 @@ const connectLandingPage = (req, res) => {
     res.send(buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, connectionData }));
   } catch (error) {
     console.error('Error serving connect page:', error);
+    res.status(500).send('Fehler beim Laden der Seite');
+  }
+};
+
+/**
+ * Setup landing page - dual purpose QR code endpoint
+ * GET /api/mobile/connect/setup?d=<base64url-encoded-json>
+ *
+ * When scanned with phone camera → shows landing page with APK download
+ * When scanned in the app → app extracts connection data from URL
+ */
+const connectSetupPage = (req, res) => {
+  try {
+    const { d } = req.query;
+    if (!d) {
+      return res.status(400).send('Ungültiger Link - kein Daten-Parameter');
+    }
+
+    // Decode the payload
+    let payload;
+    try {
+      payload = JSON.parse(Buffer.from(d, 'base64url').toString('utf-8'));
+    } catch {
+      return res.status(400).send('Ungültiger Link - Daten konnten nicht gelesen werden');
+    }
+
+    const serverUrl = payload.serverUrl || `${req.protocol}://${req.hostname}:${req.socket.localPort}`;
+    const driveName = payload.name || 'Fuchs Metallbau';
+
+    // Check if APK exists
+    const apkPath = path.join(__dirname, '../../../mobile-app/android/app.apk');
+    const apkExists = fs.existsSync(apkPath);
+    let apkSize = '';
+    if (apkExists) {
+      const stats = fs.statSync(apkPath);
+      const mb = (stats.size / (1024 * 1024)).toFixed(1);
+      apkSize = `${mb} MB`;
+    }
+
+    // The same QR URL that brought the user here - they'll scan it again in the app
+    const qrUrl = `${serverUrl}/api/mobile/connect/setup?d=${d}`;
+
+    res.send(buildSetupPageHtml({ serverUrl, driveName, apkExists, apkSize, qrUrl }));
+  } catch (error) {
+    console.error('Error serving setup page:', error);
     res.status(500).send('Fehler beim Laden der Seite');
   }
 };
@@ -304,6 +355,126 @@ function buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, connecti
       });
     }
   </script>
+</body>
+</html>`;
+}
+
+function buildSetupPageHtml({ serverUrl, driveName, apkExists, apkSize, qrUrl }) {
+  return `<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Fuchs Metallbau - App einrichten</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+      background:#0f0f23;color:#e2e8f0;min-height:100vh;
+      display:flex;flex-direction:column;align-items:center;
+      padding:24px 16px;
+    }
+    .card{
+      background:#1a1a2e;border:1px solid #2a2a4a;border-radius:16px;
+      padding:32px 24px;max-width:420px;width:100%;text-align:center;
+    }
+    .logo{
+      width:72px;height:72px;
+      background:linear-gradient(135deg,#3b82f6,#2563eb);
+      border-radius:18px;display:flex;align-items:center;justify-content:center;
+      margin:0 auto 20px;font-size:32px;
+    }
+    h1{font-size:22px;font-weight:700;margin-bottom:6px}
+    .subtitle{font-size:14px;color:#94a3b8;margin-bottom:28px}
+    .status{
+      display:inline-flex;align-items:center;gap:8px;
+      padding:8px 16px;border-radius:20px;font-size:13px;font-weight:600;
+      margin-bottom:24px;background:rgba(34,197,94,.15);color:#4ade80;border:1px solid rgba(34,197,94,.3)
+    }
+    .dot{width:8px;height:8px;border-radius:50%;background:#4ade80}
+    .divider{height:1px;background:#2a2a4a;margin:20px 0}
+    .label{font-size:13px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
+    .btn{
+      display:flex;align-items:center;justify-content:center;gap:10px;
+      width:100%;padding:14px 20px;border-radius:12px;font-size:16px;font-weight:600;
+      text-decoration:none;border:none;cursor:pointer;transition:all .2s;
+    }
+    .btn-primary{background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff}
+    .btn-primary:hover{opacity:.9}
+    .btn-disabled{background:#2a2a4a;color:#64748b;cursor:not-allowed}
+    .btn svg{width:20px;height:20px;flex-shrink:0}
+    .info-box{background:#16163a;border:1px solid #2a2a4a;border-radius:10px;padding:14px;margin-top:16px}
+    .info-row{display:flex;justify-content:space-between;align-items:center;font-size:13px}
+    .info-row+.info-row{margin-top:8px}
+    .info-label{color:#94a3b8}.info-value{color:#e2e8f0;font-family:monospace;font-size:12px}
+    .steps{text-align:left;margin-top:20px}
+    .step{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px}
+    .step-num{
+      width:26px;height:26px;border-radius:50%;background:#2a2a4a;color:#3b82f6;
+      display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;
+    }
+    .step-text{font-size:14px;color:#cbd5e1;line-height:1.4;padding-top:2px}
+    .footer{margin-top:24px;font-size:12px;color:#475569}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">&#9874;</div>
+    <h1>Fuchs Metallbau</h1>
+    <p class="subtitle">Mobile App f\u00fcr Fotos &amp; Projekte</p>
+
+    <div class="status">
+      <span class="dot"></span>
+      Verbindung bereit \u2013 ${driveName}
+    </div>
+
+    <div class="divider"></div>
+
+    <p class="label">Schritt 1 \u2013 App installieren</p>
+    ${apkExists ? `
+    <a href="${serverUrl}/api/mobile/app.apk" class="btn btn-primary" download="FuchsMetallbau.apk">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+      APK herunterladen (${apkSize})
+    </a>
+    ` : `
+    <div class="btn btn-disabled">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      APK noch nicht verf\u00fcgbar
+    </div>
+    <p style="font-size:12px;color:#94a3b8;margin-top:8px">Die APK muss zuerst am Server gebaut werden.</p>
+    `}
+
+    <div class="divider"></div>
+
+    <p class="label">Schritt 2 \u2013 Mit Server verbinden</p>
+    <div class="steps">
+      <div class="step">
+        <span class="step-num">1</span>
+        <span class="step-text">Installiere und \u00f6ffne die App</span>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <span class="step-text">Scanne <strong>denselben QR-Code</strong> nochmal \u2013 diesmal in der App</span>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <span class="step-text">Melde dich mit deinem Google-Konto an</span>
+      </div>
+    </div>
+
+    <div class="info-box">
+      <div class="info-row">
+        <span class="info-label">Server</span>
+        <span class="info-value">${serverUrl}</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Drive-Ordner</span>
+        <span class="info-value">${driveName}</span>
+      </div>
+    </div>
+  </div>
+
+  <p class="footer">Fuchs Metallbau</p>
 </body>
 </html>`;
 }
@@ -2920,6 +3091,7 @@ module.exports = {
   generateConnectToken,
   getConnectInfo,
   connectLandingPage,
+  connectSetupPage,
   registerDevice,
   authenticateDevice,
   getDevices,

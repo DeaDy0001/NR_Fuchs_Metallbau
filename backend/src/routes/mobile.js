@@ -38,6 +38,7 @@ router.get('/connect-info', mobile.getConnectInfo);
 router.post('/connect-token', mobile.generateConnectToken);
 
 // Landing page when QR code is scanned with phone camera
+router.get('/connect/setup', mobile.connectSetupPage);
 router.get('/connect/:token', mobile.connectLandingPage);
 
 // Mobile OAuth - auth code exchange (for Desktop app type client IDs)
