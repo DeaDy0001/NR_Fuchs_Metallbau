@@ -151,15 +151,17 @@ const connectLandingPage = (req, res) => {
     const apkPath = path.join(__dirname, '../../../mobile-app/android/app.apk');
     const apkExists = fs.existsSync(apkPath);
     let apkSize = '';
+    let apkTimestamp = '';
     if (apkExists) {
       const stats = fs.statSync(apkPath);
       const mb = (stats.size / (1024 * 1024)).toFixed(1);
       apkSize = `${mb} MB`;
+      apkTimestamp = String(stats.mtimeMs | 0);
     }
 
     const connectionData = JSON.stringify({ token, serverUrl });
 
-    res.send(buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, connectionData }));
+    res.send(buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, apkTimestamp, connectionData }));
   } catch (error) {
     console.error('Error serving connect page:', error);
     res.status(500).send('Fehler beim Laden der Seite');
@@ -195,23 +197,25 @@ const connectSetupPage = (req, res) => {
     const apkPath = path.join(__dirname, '../../../mobile-app/android/app.apk');
     const apkExists = fs.existsSync(apkPath);
     let apkSize = '';
+    let apkTimestamp = '';
     if (apkExists) {
       const stats = fs.statSync(apkPath);
       const mb = (stats.size / (1024 * 1024)).toFixed(1);
       apkSize = `${mb} MB`;
+      apkTimestamp = String(stats.mtimeMs | 0);
     }
 
     // The same QR URL that brought the user here - they'll scan it again in the app
     const qrUrl = `${serverUrl}/api/mobile/connect/setup?d=${d}`;
 
-    res.send(buildSetupPageHtml({ serverUrl, driveName, apkExists, apkSize, qrUrl }));
+    res.send(buildSetupPageHtml({ serverUrl, driveName, apkExists, apkSize, apkTimestamp, qrUrl }));
   } catch (error) {
     console.error('Error serving setup page:', error);
     res.status(500).send('Fehler beim Laden der Seite');
   }
 };
 
-function buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, connectionData }) {
+function buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, apkTimestamp, connectionData }) {
   return `<!DOCTYPE html>
 <html lang="de">
 <head>
@@ -295,7 +299,7 @@ function buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, connecti
 
     <p class="label">Schritt 1 \u2013 App installieren</p>
     ${apkExists ? `
-    <a href="${serverUrl}/api/mobile/app.apk" class="btn btn-primary" download="FuchsMetallbau.apk">
+    <a href="${serverUrl}/api/mobile/app.apk?v=${apkTimestamp}" class="btn btn-primary" download="FuchsMetallbau.apk">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
       APK herunterladen (${apkSize})
     </a>
@@ -362,7 +366,7 @@ function buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, connecti
 </html>`;
 }
 
-function buildSetupPageHtml({ serverUrl, driveName, apkExists, apkSize, qrUrl }) {
+function buildSetupPageHtml({ serverUrl, driveName, apkExists, apkSize, apkTimestamp, qrUrl }) {
   return `<!DOCTYPE html>
 <html lang="de">
 <head>
@@ -435,7 +439,7 @@ function buildSetupPageHtml({ serverUrl, driveName, apkExists, apkSize, qrUrl })
 
     <p class="label">Schritt 1 \u2013 App installieren</p>
     ${apkExists ? `
-    <a href="${serverUrl}/api/mobile/app.apk" class="btn btn-primary" download="FuchsMetallbau.apk">
+    <a href="${serverUrl}/api/mobile/app.apk?v=${apkTimestamp}" class="btn btn-primary" download="FuchsMetallbau.apk">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
       APK herunterladen (${apkSize})
     </a>

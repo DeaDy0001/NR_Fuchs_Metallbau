@@ -99,6 +99,12 @@ router.post('/admin/credentials', mobile.saveAdminCredentials);
 router.get('/app.apk', (req, res) => {
   const apkPath = path.join(__dirname, '../../../mobile-app/android/app.apk');
   if (fs.existsSync(apkPath)) {
+    // Prevent browser from caching old APK versions
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
     res.download(apkPath, 'FuchsMetallbau.apk');
   } else {
     res.status(404).json({ error: 'APK nicht verfügbar' });
