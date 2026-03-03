@@ -32,7 +32,9 @@ export default function LoginScreen() {
   // Device Flow state
   const [userCode, setUserCode] = useState(null);
   const [verificationUrl, setVerificationUrl] = useState(null);
+  const [verificationUrlComplete, setVerificationUrlComplete] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [browserOpened, setBrowserOpened] = useState(false);
 
   // Debug state - shows polling status on screen
   const [debugLog, setDebugLog] = useState([]);
@@ -162,15 +164,18 @@ export default function LoginScreen() {
       pollIntervalRef.current = (interval || 5) * 1000;
       expiresAtRef.current = Date.now() + (expires_in * 1000);
 
-      setUserCode(user_code);
-      setVerificationUrl(verification_url);
-
       const verifyUrl = deviceData.verification_url_complete ||
         `${verification_url}?user_code=${user_code}`;
-      console.log('[Fuchs] Opening verification URL:', verifyUrl);
-      await Linking.openURL(verifyUrl);
 
-      pollForToken();
+      setUserCode(user_code);
+      setVerificationUrl(verification_url);
+      setVerificationUrlComplete(verifyUrl);
+      setBrowserOpened(false);
+      setAuthLoading(false);
+
+      // Don't open browser immediately - let user see the code first
+      // Polling starts after user taps the "copy + open browser" button
+      console.log('[Fuchs] Device code received, waiting for user to open browser');
     } catch (error) {
       console.error('[Fuchs] Device flow error:', error);
       if (isMountedRef.current) {
@@ -220,6 +225,11 @@ export default function LoginScreen() {
           if (tokenData.access_token) {
             addDebug('Token erhalten! Lade User-Info...');
             deviceCodeRef.current = null;
+
+            // Bring app to foreground (user is likely still in browser)
+            if (Platform.OS === 'android') {
+              try { await Linking.openURL('com.fuchsmetallbau.app://auth-success'); } catch {}
+            }
 
             // Fetch user info directly from Google
             let userName = '', userEmail = '', userPhoto = '';
@@ -401,7 +411,21 @@ export default function LoginScreen() {
     isPollingRef.current = false;
     setAuthLoading(false);
     setUserCode(null);
+    setBrowserOpened(false);
     setWebViewAuth(null);
+  };
+
+  const openBrowserWithCode = async () => {
+    await Clipboard.setStringAsync(userCode);
+    setCopied(true);
+    setBrowserOpened(true);
+    setTimeout(() => setCopied(false), 3000);
+
+    const url = verificationUrlComplete || verificationUrl;
+    if (url) await Linking.openURL(url);
+
+    // Start polling after browser is opened
+    pollForToken();
   };
 
   // ---- Render ----
@@ -429,57 +453,61 @@ export default function LoginScreen() {
           {userCode ? (
             // Device Flow mode
             <>
-              <Text style={styles.loginTitle}>Im Browser anmelden</Text>
+              <Text style={styles.loginTitle}>
+                {browserOpened ? 'Im Browser anmelden' : 'Bestätigungscode'}
+              </Text>
               <Text style={styles.loginDesc}>
-                Ein Browser-Fenster wurde geöffnet. Melde dich dort mit deinem Google-Konto an.
+                {browserOpened
+                  ? 'Gib den Code im Browser ein und melde dich mit deinem Google-Konto an.'
+                  : 'Diesen Code brauchst du gleich im Browser. Tippe auf den Button um fortzufahren.'}
               </Text>
 
-              <TouchableOpacity
-                style={styles.codeBox}
-                activeOpacity={0.7}
-                onPress={async () => {
-                  await Clipboard.setStringAsync(userCode);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 2000);
-                }}
-              >
-                <Text style={styles.codeLabel}>Bestätigungscode:</Text>
+              <View style={styles.codeBox}>
+                <Text style={styles.codeLabel}>Dein Code:</Text>
                 <Text selectable style={styles.codeText}>{userCode}</Text>
-                <View style={styles.copyRow}>
-                  <Ionicons
-                    name={copied ? 'checkmark-circle' : 'copy-outline'}
-                    size={16}
-                    color={copied ? '#22c55e' : colors.textTertiary}
-                  />
-                  <Text style={[styles.copyHint, copied && { color: '#22c55e' }]}>
-                    {copied ? 'Kopiert!' : 'Tippen zum Kopieren'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-
-              <View style={styles.waitingRow}>
-                <ActivityIndicator size="small" color={colors.accent} />
-                <Text style={styles.waitingText}>Warte auf Anmeldung...</Text>
+                {copied && (
+                  <View style={styles.copyRow}>
+                    <Ionicons name="checkmark-circle" size={16} color="#22c55e" />
+                    <Text style={[styles.copyHint, { color: '#22c55e' }]}>In Zwischenablage kopiert!</Text>
+                  </View>
+                )}
               </View>
 
-              {debugLog.length > 0 && (
-                <View style={styles.debugBox}>
-                  {debugLog.map((line, i) => (
-                    <Text key={i} style={styles.debugText}>{line}</Text>
-                  ))}
-                </View>
-              )}
+              {!browserOpened ? (
+                <TouchableOpacity style={styles.googleButton} onPress={openBrowserWithCode}>
+                  <Ionicons name="copy-outline" size={20} color="white" />
+                  <Text style={styles.googleButtonText}>Code kopieren & Browser öffnen</Text>
+                </TouchableOpacity>
+              ) : (
+                <>
+                  <View style={styles.waitingRow}>
+                    <ActivityIndicator size="small" color={colors.accent} />
+                    <Text style={styles.waitingText}>Warte auf Anmeldung...</Text>
+                  </View>
 
-              <TouchableOpacity
-                style={styles.reopenButton}
-                onPress={() => {
-                  const url = verificationUrl;
-                  if (url) Linking.openURL(url);
-                }}
-              >
-                <Ionicons name="open-outline" size={18} color={colors.accent} />
-                <Text style={styles.reopenText}>Browser erneut öffnen</Text>
-              </TouchableOpacity>
+                  {debugLog.length > 0 && (
+                    <View style={styles.debugBox}>
+                      {debugLog.map((line, i) => (
+                        <Text key={i} style={styles.debugText}>{line}</Text>
+                      ))}
+                    </View>
+                  )}
+
+                  <TouchableOpacity
+                    style={styles.reopenButton}
+                    onPress={async () => {
+                      await Clipboard.setStringAsync(userCode);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                      const url = verificationUrlComplete || verificationUrl;
+                      if (url) Linking.openURL(url);
+                    }}
+                  >
+                    <Ionicons name="open-outline" size={18} color={colors.accent} />
+                    <Text style={styles.reopenText}>Code kopieren & Browser erneut öffnen</Text>
+                  </TouchableOpacity>
+                </>
+              )}
 
               <TouchableOpacity style={styles.cancelButton} onPress={cancelAuth}>
                 <Text style={styles.cancelText}>Abbrechen</Text>
