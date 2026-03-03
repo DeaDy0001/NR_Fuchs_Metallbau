@@ -9,9 +9,9 @@ echo    Fuchs Metallbau - Dev Tools
 echo  ========================================
 echo.
 
-:: ── 1. Node.js pruefen ──
+REM ── 1. Node.js pruefen ──
 where node >nul 2>&1
-if %ERRORLEVEL% neq 0 (
+if !ERRORLEVEL! neq 0 (
     echo  [FEHLER] Node.js ist nicht installiert!
     echo  Download: https://nodejs.org
     pause
@@ -20,7 +20,7 @@ if %ERRORLEVEL% neq 0 (
 for /f "tokens=*" %%i in ('node -v') do set NODE_VER=%%i
 echo  [OK] Node.js %NODE_VER%
 
-:: ── 2. Was moechtest du tun? ──
+REM ── 2. Was moechtest du tun? ──
 echo.
 echo  ========================================
 echo   Was moechtest du tun?
@@ -42,18 +42,18 @@ if "!MAIN_CHOICE!"=="2" goto :SETUP_BUILD
 if "!MAIN_CHOICE!"=="3" goto :SETUP_BUILD
 goto :START_EXPO
 
-:: ══════════════════════════════════════════
-::  Gemeinsame Build-Vorbereitung (Option 2+3)
-:: ══════════════════════════════════════════
+REM ══════════════════════════════════════════
+REM  Gemeinsame Build-Vorbereitung (Option 2+3)
+REM ══════════════════════════════════════════
 :SETUP_BUILD
 
-:: EAS CLI pruefen
+REM EAS CLI pruefen
 where eas >nul 2>&1
-if %ERRORLEVEL% neq 0 (
+if !ERRORLEVEL! neq 0 (
     echo  [..] EAS CLI wird installiert...
     call npm install -g eas-cli
     where eas >nul 2>&1
-    if %ERRORLEVEL% neq 0 (
+    if !ERRORLEVEL! neq 0 (
         echo  [FEHLER] EAS CLI Installation fehlgeschlagen.
         pause
         exit /b 1
@@ -64,23 +64,23 @@ if %ERRORLEVEL% neq 0 (
     echo  [OK] EAS CLI !EAS_VER!
 )
 
-:: Expo Login pruefen
+REM Expo Login pruefen
 echo.
 echo  Pruefe Expo Login...
 call eas whoami >nul 2>&1
-if %ERRORLEVEL% neq 0 (
+if !ERRORLEVEL! neq 0 (
     echo.
     echo  Du musst dich bei Expo einloggen.
     echo  Falls du noch keinen Account hast: https://expo.dev/signup
     echo.
     call eas login
-    if %ERRORLEVEL% neq 0 (
+    if !ERRORLEVEL! neq 0 (
         echo  [FEHLER] Login fehlgeschlagen.
         pause
         exit /b 1
     )
     call eas whoami >nul 2>&1
-    if %ERRORLEVEL% neq 0 (
+    if !ERRORLEVEL! neq 0 (
         echo  [FEHLER] Login fehlgeschlagen.
         pause
         exit /b 1
@@ -89,17 +89,17 @@ if %ERRORLEVEL% neq 0 (
 for /f "tokens=*" %%i in ('eas whoami 2^>nul') do set EAS_USER=%%i
 echo  [OK] Eingeloggt als: !EAS_USER!
 
-:: EAS Projekt pruefen
+REM EAS Projekt pruefen
 echo.
 echo  Pruefe EAS Projekt-Konfiguration...
 findstr /c:"projectId" app.json >nul 2>&1
-if %ERRORLEVEL% neq 0 (
+if !ERRORLEVEL! neq 0 (
     echo.
     echo  EAS Projekt muss einmalig konfiguriert werden.
     echo  Waehle "Create a new EAS project" wenn gefragt.
     echo.
     call eas init
-    :: Exit-Code von eas init ist unzuverlaessig, pruefen ob projectId jetzt da ist
+    REM Exit-Code von eas init ist unzuverlaessig, pruefen ob projectId jetzt da ist
     findstr /c:"projectId" app.json >nul 2>&1
     if !ERRORLEVEL! neq 0 (
         echo  [FEHLER] Projekt-Konfiguration fehlgeschlagen.
@@ -111,115 +111,49 @@ if %ERRORLEVEL% neq 0 (
     echo  [OK] EAS Projekt bereits konfiguriert
 )
 
-:: Dependencies installieren
+REM Dependencies installieren
 echo.
 echo  [..] Installiere Abhaengigkeiten...
 call npm install --silent 2>nul
 echo  [OK] Abhaengigkeiten installiert
 
-:: Output-Ordner
+REM Output-Ordner
 if not exist android mkdir android
 set "APK_DEST=%CD%\android\app.apk"
 if exist "%APK_DEST%" del "%APK_DEST%"
 
-:: Zur gewaehlten Build-Methode springen
+REM Zur gewaehlten Build-Methode springen
 if "!MAIN_CHOICE!"=="3" goto :BUILD_LOCAL
 goto :BUILD_CLOUD
 
-:: ══════════════════════════════════════════
-::  Option 3: APK lokal bauen via WSL
-:: ══════════════════════════════════════════
+REM ══════════════════════════════════════════
+REM  Option 3: APK lokal bauen via WSL
+REM ══════════════════════════════════════════
 :BUILD_LOCAL
 echo.
 echo  [INFO] Lokaler Android-Build braucht Linux.
 echo         Auf Windows wird dafuer WSL verwendet.
 echo.
 
-:: Check WSL
+REM Pruefe ob WSL installiert ist
 where wsl >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo  [FEHLER] WSL ist nicht installiert!
-    echo.
-    echo  Soll WSL jetzt installiert werden?
-    echo  (Braucht Admin-Rechte, PC-Neustart danach noetig)
-    echo.
-    set "INSTALL_WSL="
-    set /p "INSTALL_WSL=  WSL installieren? [j/n]: "
-    if /i "!INSTALL_WSL!"=="j" (
-        echo.
-        echo  [..] Starte WSL-Installation...
-        echo  (Ein Admin-Fenster wird sich oeffnen)
-        echo.
-        powershell -Command "Start-Process cmd -ArgumentList '/c wsl --install && pause' -Verb RunAs"
-        echo.
-        echo  Nach der Installation: PC neu starten,
-        echo  dann dieses Script erneut ausfuehren.
-        pause
-        exit /b 0
-    )
-    echo.
-    echo  [INFO] Ohne WSL kein lokaler Build. Wechsle zu Cloud-Build...
-    goto :BUILD_CLOUD
-)
+if !ERRORLEVEL! neq 0 goto :WSL_NOT_FOUND
+
 echo  [OK] WSL vorhanden
 
-:: WSL path ermitteln
-for /f "tokens=*" %%p in ('wsl wslpath -u "%CD%"') do set "WSL_PATH=%%p"
+REM WSL-Pfad ermitteln
+for /f "tokens=*" %%p in ('wsl wslpath -u "!CD!"') do set "WSL_PATH=%%p"
 
-:: Check Node.js in WSL
+REM Pruefe Node.js in WSL
 wsl bash -c "command -v node" >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo.
-    echo  [FEHLER] Node.js fehlt in WSL!
-    echo.
-    echo  Soll Node.js in WSL installiert werden?
-    set "INSTALL_NODE="
-    set /p "INSTALL_NODE=  Installieren? [j/n]: "
-    if /i "!INSTALL_NODE!"=="j" (
-        echo.
-        echo  [..] Installiere Node.js in WSL...
-        wsl bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs"
-        wsl bash -c "command -v node" >nul 2>&1
-        if %ERRORLEVEL% neq 0 (
-            echo  [FEHLER] Installation fehlgeschlagen.
-            pause
-            exit /b 1
-        )
-        echo  [OK] Node.js installiert
-    ) else (
-        echo.
-        echo  [INFO] Ohne Node.js kein lokaler Build. Wechsle zu Cloud-Build...
-        goto :BUILD_CLOUD
-    )
-)
+if !ERRORLEVEL! neq 0 goto :WSL_NO_NODE
+
 for /f "tokens=*" %%v in ('wsl bash -c "node -v"') do echo  [OK] Node.js in WSL: %%v
 
-:: Check Java in WSL
+REM Pruefe Java in WSL
 wsl bash -c "command -v java" >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo.
-    echo  [FEHLER] Java fehlt in WSL!
-    echo.
-    echo  Soll Java in WSL installiert werden?
-    set "INSTALL_JAVA="
-    set /p "INSTALL_JAVA=  Installieren? [j/n]: "
-    if /i "!INSTALL_JAVA!"=="j" (
-        echo.
-        echo  [..] Installiere Java in WSL (kann etwas dauern)...
-        wsl bash -c "sudo apt-get update -qq && sudo apt-get install -y openjdk-17-jdk"
-        wsl bash -c "command -v java" >nul 2>&1
-        if %ERRORLEVEL% neq 0 (
-            echo  [FEHLER] Installation fehlgeschlagen.
-            pause
-            exit /b 1
-        )
-        echo  [OK] Java installiert
-    ) else (
-        echo.
-        echo  [INFO] Ohne Java kein lokaler Build. Wechsle zu Cloud-Build...
-        goto :BUILD_CLOUD
-    )
-)
+if !ERRORLEVEL! neq 0 goto :WSL_NO_JAVA
+
 echo  [OK] Java in WSL vorhanden
 
 echo.
@@ -233,10 +167,9 @@ echo   Expo-Login gefragt und ob ein Keystore
 echo   generiert werden soll - waehle Yes.
 echo.
 
-:: npm install + Build in WSL
+REM npm install in WSL + Build starten
 wsl bash -c "cd '!WSL_PATH!' && npm install --silent 2>/dev/null && npx eas build -p android --profile preview --local --output android/app.apk"
 
-:: Pruefen ob APK erstellt wurde
 if exist "%APK_DEST%" goto :BUILD_SUCCESS
 echo.
 echo  [FEHLER] Lokaler Build via WSL fehlgeschlagen.
@@ -248,9 +181,81 @@ echo   - Oder starte das Script erneut mit Option 2
 echo.
 goto :DONE
 
-:: ══════════════════════════════════════════
-::  Option 2: APK bauen in Expo Cloud
-:: ══════════════════════════════════════════
+:WSL_NOT_FOUND
+echo  [FEHLER] WSL ist nicht installiert!
+echo.
+echo  Soll WSL jetzt installiert werden?
+echo  (Braucht Admin-Rechte, PC-Neustart danach noetig)
+echo.
+set "INSTALL_WSL="
+set /p "INSTALL_WSL=  WSL installieren? [j/n]: "
+if /i "!INSTALL_WSL!"=="j" (
+    echo.
+    echo  [..] Starte WSL-Installation...
+    echo  (Ein Admin-Fenster wird sich oeffnen)
+    echo.
+    powershell -Command "Start-Process cmd -ArgumentList '/c wsl --install && pause' -Verb RunAs"
+    echo.
+    echo  Nach der Installation: PC neu starten,
+    echo  dann dieses Script erneut ausfuehren.
+    pause
+    exit /b 0
+)
+echo.
+echo  [INFO] Ohne WSL kein lokaler Build. Wechsle zu Cloud-Build...
+goto :BUILD_CLOUD
+
+:WSL_NO_NODE
+echo.
+echo  [FEHLER] Node.js fehlt in WSL!
+echo.
+echo  Soll Node.js in WSL installiert werden?
+set "INSTALL_NODE="
+set /p "INSTALL_NODE=  Installieren? [j/n]: "
+if /i "!INSTALL_NODE!"=="j" (
+    echo.
+    echo  [..] Installiere Node.js in WSL...
+    wsl bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs"
+    wsl bash -c "command -v node" >nul 2>&1
+    if !ERRORLEVEL! neq 0 (
+        echo  [FEHLER] Installation fehlgeschlagen.
+        pause
+        exit /b 1
+    )
+    echo  [OK] Node.js installiert
+    goto :BUILD_LOCAL
+)
+echo.
+echo  [INFO] Ohne Node.js kein lokaler Build. Wechsle zu Cloud-Build...
+goto :BUILD_CLOUD
+
+:WSL_NO_JAVA
+echo.
+echo  [FEHLER] Java fehlt in WSL!
+echo.
+echo  Soll Java in WSL installiert werden?
+set "INSTALL_JAVA="
+set /p "INSTALL_JAVA=  Installieren? [j/n]: "
+if /i "!INSTALL_JAVA!"=="j" (
+    echo.
+    echo  [..] Installiere Java in WSL (kann etwas dauern)...
+    wsl bash -c "sudo apt-get update -qq && sudo apt-get install -y openjdk-17-jdk"
+    wsl bash -c "command -v java" >nul 2>&1
+    if !ERRORLEVEL! neq 0 (
+        echo  [FEHLER] Installation fehlgeschlagen.
+        pause
+        exit /b 1
+    )
+    echo  [OK] Java installiert
+    goto :BUILD_LOCAL
+)
+echo.
+echo  [INFO] Ohne Java kein lokaler Build. Wechsle zu Cloud-Build...
+goto :BUILD_CLOUD
+
+REM ══════════════════════════════════════════
+REM  Option 2: APK bauen in Expo Cloud
+REM ══════════════════════════════════════════
 :BUILD_CLOUD
 echo.
 echo  ========================================
@@ -263,10 +268,9 @@ echo   Beim ersten Mal wirst du gefragt ob ein
 echo   Keystore generiert werden soll - waehle Yes.
 echo.
 
-:: Build starten (non-interactive verhindert Emulator-Frage)
 call eas build -p android --profile preview --non-interactive
 
-:: APK herunterladen
+REM APK herunterladen
 echo.
 echo  [..] Suche Download-Link...
 
@@ -290,7 +294,6 @@ powershell -Command ^
 
 if exist "%TEMP_JSON%" del "%TEMP_JSON%"
 
-:: Pruefen ob APK heruntergeladen wurde
 if exist "%APK_DEST%" goto :BUILD_SUCCESS
 
 echo.
@@ -305,9 +308,9 @@ echo   %APK_DEST%
 echo  ========================================
 goto :DONE
 
-:: ══════════════════════════════════════════
-::  Build erfolgreich (Option 2+3)
-:: ══════════════════════════════════════════
+REM ══════════════════════════════════════════
+REM  Build erfolgreich (Option 2+3)
+REM ══════════════════════════════════════════
 :BUILD_SUCCESS
 for %%F in ("%APK_DEST%") do set "APK_SIZE=%%~zF"
 set /a APK_MB=!APK_SIZE! / 1048576
@@ -326,12 +329,12 @@ echo   - Handy:   QR-Code scannen ^> Download
 echo.
 goto :DONE
 
-:: ══════════════════════════════════════════
-::  Option 1: Testen mit Expo Go (Handy)
-:: ══════════════════════════════════════════
+REM ══════════════════════════════════════════
+REM  Option 1: Testen mit Expo Go (Handy)
+REM ══════════════════════════════════════════
 :START_EXPO
 
-:: Abhaengigkeiten installieren
+REM Abhaengigkeiten installieren
 set "NEEDS_INSTALL=0"
 if not exist "node_modules\expo" set "NEEDS_INSTALL=1"
 if not exist "node_modules\expo-navigation-bar" set "NEEDS_INSTALL=1"
@@ -363,7 +366,7 @@ if "!NEEDS_INSTALL!"=="1" (
     echo  [OK] Abhaengigkeiten vorhanden
 )
 
-:: Netzwerk-Adapter auswaehlen
+REM Netzwerk-Adapter auswaehlen
 echo.
 echo  ========================================
 echo   Netzwerk-Adapter auswaehlen
@@ -387,19 +390,16 @@ for /f "tokens=1,2 delims=|" %%a in (%TEMPFILE%) do (
     echo.
 )
 
-:: Add tunnel option
 set /a IP_COUNT+=1
 echo   !IP_COUNT!^) Tunnel-Modus
 echo      ^(Oeffentlicher Tunnel - funktioniert immer^)
 echo.
 
-:: User selection
 set "CHOICE="
 set /p "CHOICE=  Deine Wahl [1-!IP_COUNT!]: "
 
 if "!CHOICE!"=="" set "CHOICE=1"
 
-:: Check if tunnel was selected
 if "!CHOICE!"=="!IP_COUNT!" (
     echo.
     echo  [OK] Tunnel-Modus gewaehlt
@@ -407,7 +407,6 @@ if "!CHOICE!"=="!IP_COUNT!" (
     goto :start_server
 )
 
-:: Get selected IP using call trick for nested variables
 call set "SELECTED_IP=%%IP_!CHOICE!%%"
 call set "SELECTED_NAME=%%NAME_!CHOICE!%%"
 
@@ -422,7 +421,6 @@ echo  [OK] Verwende !SELECTED_IP! ^(!SELECTED_NAME!^)
 set "REACT_NATIVE_PACKAGER_HOSTNAME=!SELECTED_IP!"
 set "EXPO_ARGS="
 
-:: Dev Server starten
 :start_server
 echo.
 echo  ========================================
@@ -455,7 +453,6 @@ echo.
 
 call npx expo start %EXPO_ARGS%
 
-:: ══════════════════════════════════════════
 :DONE
 echo.
 pause
