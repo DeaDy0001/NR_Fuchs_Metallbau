@@ -168,6 +168,14 @@ if !ERRORLEVEL! neq 0 (
     echo  [OK] EAS CLI in WSL installiert
 )
 
+REM Pruefe Yarn in WSL (wird von EAS Build benoetigt)
+wsl -d Ubuntu -e /bin/bash -c "command -v yarn" >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo  [..] Yarn in WSL wird installiert...
+    wsl -d Ubuntu -e /bin/bash -c "npm install -g yarn"
+    echo  [OK] Yarn in WSL installiert
+)
+
 echo.
 echo  ========================================
 echo   Starte lokalen APK Build via WSL...
