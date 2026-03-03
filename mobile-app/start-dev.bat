@@ -20,8 +20,116 @@ if %ERRORLEVEL% neq 0 (
 for /f "tokens=*" %%i in ('node -v') do set NODE_VER=%%i
 echo  [OK] Node.js %NODE_VER%
 
-:: ── 2. Abhaengigkeiten installieren ──
-:: Pruefen ob node_modules fehlt oder ob neue Pakete in package.json dazukamen
+:: ── 2. Startmodus auswaehlen ──
+echo.
+echo  ========================================
+echo   Wie moechtest du entwickeln?
+echo  ========================================
+echo.
+echo   1) Expo Go (Handy)
+echo      App auf dem Handy testen via QR-Code
+echo.
+echo   2) Lokal (WSL)
+echo      Dev-Server in WSL starten
+echo      (fuer lokale Builds / Linux-Umgebung)
+echo.
+set "DEV_CHOICE="
+set /p "DEV_CHOICE=  Deine Wahl [1/2]: "
+
+if "!DEV_CHOICE!"=="2" goto :START_WSL
+goto :START_EXPO
+
+:: ══════════════════════════════════════════
+::  Option 2: Lokal via WSL
+:: ══════════════════════════════════════════
+:START_WSL
+echo.
+echo  Pruefe WSL...
+
+:: Check ob WSL installiert ist
+where wsl >nul 2>&1
+if %ERRORLEVEL% neq 0 (
+    echo  [FEHLER] WSL ist nicht installiert!
+    echo.
+    echo  Soll WSL jetzt installiert werden?
+    echo  (Braucht Admin-Rechte, PC-Neustart danach noetig)
+    echo.
+    set "INSTALL_WSL="
+    set /p "INSTALL_WSL=  WSL installieren? [j/n]: "
+    if /i "!INSTALL_WSL!"=="j" (
+        echo.
+        echo  [..] Starte WSL-Installation...
+        echo  (Ein Admin-Fenster wird sich oeffnen)
+        echo.
+        powershell -Command "Start-Process cmd -ArgumentList '/c wsl --install && pause' -Verb RunAs"
+        echo.
+        echo  Nach der Installation: PC neu starten,
+        echo  dann dieses Script erneut ausfuehren.
+        pause
+        exit /b 0
+    )
+    echo.
+    echo  [INFO] Ohne WSL wird Expo Go gestartet.
+    goto :START_EXPO
+)
+echo  [OK] WSL vorhanden
+
+:: WSL path ermitteln
+for /f "tokens=*" %%p in ('wsl wslpath -u "%CD%"') do set "WSL_PATH=%%p"
+
+:: Check Node.js in WSL
+wsl bash -c "command -v node" >nul 2>&1
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo  [FEHLER] Node.js fehlt in WSL!
+    echo.
+    echo  Soll Node.js in WSL installiert werden?
+    set "INSTALL_NODE="
+    set /p "INSTALL_NODE=  Installieren? [j/n]: "
+    if /i "!INSTALL_NODE!"=="j" (
+        echo.
+        echo  [..] Installiere Node.js in WSL...
+        wsl bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs"
+        wsl bash -c "command -v node" >nul 2>&1
+        if %ERRORLEVEL% neq 0 (
+            echo  [FEHLER] Installation fehlgeschlagen.
+            echo  Bitte manuell in WSL installieren.
+            pause
+            exit /b 1
+        )
+        echo  [OK] Node.js installiert
+    ) else (
+        echo.
+        echo  [INFO] Ohne Node.js in WSL wird Expo Go gestartet.
+        goto :START_EXPO
+    )
+)
+for /f "tokens=*" %%v in ('wsl bash -c "node -v"') do echo  [OK] Node.js in WSL: %%v
+
+:: Abhaengigkeiten in WSL installieren + Dev Server starten
+echo.
+echo  ========================================
+echo   Starte Dev Server via WSL...
+echo  ========================================
+echo.
+echo   Aenderungen am Code werden sofort
+echo   auf dem Handy sichtbar (Live Reload)
+echo.
+echo   Zum Beenden: Strg+C druecken
+echo  ========================================
+echo.
+
+wsl bash -c "cd '!WSL_PATH!' && npm install --silent 2>/dev/null && npx expo start"
+
+pause
+exit /b 0
+
+:: ══════════════════════════════════════════
+::  Option 1: Expo Go (Handy)
+:: ══════════════════════════════════════════
+:START_EXPO
+
+:: ── Abhaengigkeiten installieren ──
 set "NEEDS_INSTALL=0"
 if not exist "node_modules\expo" set "NEEDS_INSTALL=1"
 if not exist "node_modules\expo-navigation-bar" set "NEEDS_INSTALL=1"
@@ -53,7 +161,7 @@ if "!NEEDS_INSTALL!"=="1" (
     echo  [OK] Abhaengigkeiten vorhanden
 )
 
-:: ── 3. Netzwerk-Adapter auswaehlen ──
+:: ── Netzwerk-Adapter auswaehlen ──
 echo.
 echo  ========================================
 echo   Netzwerk-Adapter auswaehlen
@@ -113,7 +221,7 @@ echo  [OK] Verwende !SELECTED_IP! ^(!SELECTED_NAME!^)
 set "REACT_NATIVE_PACKAGER_HOSTNAME=!SELECTED_IP!"
 set "EXPO_ARGS="
 
-:: ── 4. Dev Server starten ──
+:: ── Dev Server starten ──
 :start_server
 echo.
 echo  ========================================
