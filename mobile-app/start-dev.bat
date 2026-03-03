@@ -220,6 +220,29 @@ wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && npm install 2>&1"
 echo  [OK] Abhaengigkeiten in WSL installiert
 echo.
 
+REM Pruefe Expo-Login in WSL (separat von Windows-Login)
+:WSL_LOGIN_CHECK
+wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && npx eas whoami" >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo  [INFO] Du bist in WSL nicht bei Expo eingeloggt.
+    echo         Bitte melde dich jetzt an:
+    echo.
+    wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && npx eas login 2>&1"
+    wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && npx eas whoami" >nul 2>&1
+    if !ERRORLEVEL! neq 0 (
+        echo.
+        echo  [FEHLER] Login fehlgeschlagen.
+        set "RETRY_LOGIN="
+        set /p "RETRY_LOGIN=  Erneut versuchen? [j/n]: "
+        if /i "!RETRY_LOGIN!"=="j" goto :WSL_LOGIN_CHECK
+        echo.
+        echo  [INFO] Ohne Login kein Build. Wechsle zu Cloud-Build...
+        goto :BUILD_CLOUD
+    )
+)
+for /f "tokens=*" %%u in ('wsl -d Ubuntu -e /bin/bash -c "cd ''!WSL_PATH!'' && npx eas whoami 2>/dev/null"') do echo  [OK] Expo-Login in WSL: %%u
+echo.
+
 REM Schritt 2: EAS Build starten
 echo  [2/2] Baue APK... (Ausgabe von EAS folgt unten)
 echo  ----------------------------------------
@@ -230,11 +253,14 @@ if exist "%APK_DEST%" goto :BUILD_SUCCESS
 echo.
 echo  [FEHLER] Lokaler Build via WSL fehlgeschlagen.
 echo.
-echo  Tipps:
-echo   - Stelle sicher dass du in WSL bei Expo
-echo     eingeloggt bist: eas login
-echo   - Oder starte das Script erneut mit Option 2
-echo.
+echo  Was moechtest du tun?
+echo   1) Erneut versuchen (lokaler Build)
+echo   2) Cloud-Build starten
+echo   3) Beenden
+set "RETRY_BUILD="
+set /p "RETRY_BUILD=  Wahl [1/2/3]: "
+if "!RETRY_BUILD!"=="1" goto :WSL_LOGIN_CHECK
+if "!RETRY_BUILD!"=="2" goto :BUILD_CLOUD
 goto :DONE
 
 :WSL_NO_DISTRO
