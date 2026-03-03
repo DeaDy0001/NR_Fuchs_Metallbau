@@ -137,6 +137,14 @@ export default function LoginScreen() {
     return { ok: res.ok, data };
   };
 
+  /** Fetch with timeout (default 8s) */
+  const fetchWithTimeout = (url, options = {}, timeoutMs = 8000) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, { ...options, signal: controller.signal })
+      .finally(() => clearTimeout(timer));
+  };
+
   const startGoogleSignIn = async () => {
     if (!clientId) {
       alert('Fehler', 'Keine Google Client-ID konfiguriert. Bitte zuerst QR-Code scannen.');
@@ -148,36 +156,41 @@ export default function LoginScreen() {
     setWebViewAuth(null);
 
     // Priority 1: WebView OAuth via Desktop-Server (supports full drive scope)
+    addDebug(`serverUrl: ${serverUrl || 'NICHT GESETZT'}`);
+
     if (serverUrl) {
       try {
-        console.log('[Fuchs] Trying WebView OAuth via server:', serverUrl);
-        const res = await fetch(`${serverUrl}/api/mobile/auth/init-login`, {
+        addDebug(`Verbinde mit Server...`);
+        const res = await fetchWithTimeout(`${serverUrl}/api/mobile/auth/init-login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
         });
 
         if (res.ok) {
           const { sessionId, authUrl, redirectUri } = await res.json();
-          console.log('[Fuchs] WebView OAuth session created:', sessionId.substring(0, 8) + '...');
+          addDebug('WebView OAuth gestartet (drive-Scope)');
           setWebViewAuth({ authUrl, redirectUri, sessionId });
           setAuthLoading(false);
           return; // WebView OAuth started successfully
         }
-        console.log('[Fuchs] Server returned error, falling back to Device Flow');
+        const errBody = await res.text().catch(() => '');
+        addDebug(`Server-Fehler ${res.status}: ${errBody.substring(0, 60)}`);
       } catch (e) {
-        console.log('[Fuchs] Server not reachable (' + e.message + '), falling back to Device Flow');
+        const reason = e.name === 'AbortError' ? 'Timeout (8s)' : e.message;
+        addDebug(`Server NICHT erreichbar: ${reason}`);
       }
     }
+
+    addDebug('Fallback: Device Flow (eingeschränkter Scope)');
 
     // Priority 2: Device Flow (works without server, but limited drive.file scope)
     try {
       const scopes = config.google.scopes;
-      console.log('[Fuchs] Trying device flow with scopes:', scopes);
       let result = await requestDeviceCode(scopes);
 
       // If full scope fails, retry with limited scope
       if (!result.ok) {
-        console.log('[Fuchs] Full scope failed, trying drive.file...');
+        addDebug('drive-Scope abgelehnt, versuche drive.file...');
         result = await requestDeviceCode([
           'https://www.googleapis.com/auth/drive.file',
           'https://www.googleapis.com/auth/userinfo.profile',
@@ -198,6 +211,7 @@ export default function LoginScreen() {
       const verifyUrl = result.data.verification_url_complete ||
         `${verification_url}?user_code=${user_code}`;
 
+      addDebug('Device Flow: Code erhalten');
       setUserCode(user_code);
       setVerificationUrl(verification_url);
       setVerificationUrlComplete(verifyUrl);
