@@ -178,7 +178,7 @@ echo   generiert werden soll - waehle Yes.
 echo.
 
 REM npm install in WSL + Build starten
-wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && npm install --silent 2>/dev/null && npx eas build -p android --profile preview --local --output android/app.apk"
+wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && npm install --silent 2>/dev/null && eas build -p android --profile preview --local --output android/app.apk"
 
 if exist "%APK_DEST%" goto :BUILD_SUCCESS
 echo.
