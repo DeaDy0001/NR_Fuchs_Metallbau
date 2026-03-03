@@ -119,7 +119,7 @@ export default function LoginScreen() {
     }
   };
 
-  // ---- Device Authorization Flow ----
+  // ---- Device Authorization Flow (fallback when server not reachable) ----
 
   const requestDeviceCode = async (scopes) => {
     const deviceId = `fuchs_mobile_${clientId.substring(0, 12)}`;
@@ -147,27 +147,46 @@ export default function LoginScreen() {
     setUserCode(null);
     setWebViewAuth(null);
 
-    try {
-      // Try full drive scope first (needed to access shared folders)
-      const fullScopes = config.google.scopes;
-      console.log('[Fuchs] Trying device flow with full scopes:', fullScopes);
-      let result = await requestDeviceCode(fullScopes);
+    // Priority 1: WebView OAuth via Desktop-Server (supports full drive scope)
+    if (serverUrl) {
+      try {
+        console.log('[Fuchs] Trying WebView OAuth via server:', serverUrl);
+        const res = await fetch(`${serverUrl}/api/mobile/auth/init-login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
 
-      // If full scope fails, retry with limited scope (drive.file)
+        if (res.ok) {
+          const { sessionId, authUrl, redirectUri } = await res.json();
+          console.log('[Fuchs] WebView OAuth session created:', sessionId.substring(0, 8) + '...');
+          setWebViewAuth({ authUrl, redirectUri, sessionId });
+          setAuthLoading(false);
+          return; // WebView OAuth started successfully
+        }
+        console.log('[Fuchs] Server returned error, falling back to Device Flow');
+      } catch (e) {
+        console.log('[Fuchs] Server not reachable (' + e.message + '), falling back to Device Flow');
+      }
+    }
+
+    // Priority 2: Device Flow (works without server, but limited drive.file scope)
+    try {
+      const scopes = config.google.scopes;
+      console.log('[Fuchs] Trying device flow with scopes:', scopes);
+      let result = await requestDeviceCode(scopes);
+
+      // If full scope fails, retry with limited scope
       if (!result.ok) {
-        console.log('[Fuchs] Full scope failed (' + (result.data.error || 'unknown') + '), trying drive.file...');
-        const limitedScopes = [
+        console.log('[Fuchs] Full scope failed, trying drive.file...');
+        result = await requestDeviceCode([
           'https://www.googleapis.com/auth/drive.file',
           'https://www.googleapis.com/auth/userinfo.profile',
           'https://www.googleapis.com/auth/userinfo.email',
-        ];
-        result = await requestDeviceCode(limitedScopes);
+        ]);
       }
 
       if (!result.ok) {
-        // Both scopes failed - fall back to WebView OAuth
-        console.log('[Fuchs] Device flow failed completely, falling back to WebView OAuth');
-        return startWebViewAuth();
+        throw new Error('Google-Anmeldung konnte nicht gestartet werden. Bitte stelle sicher, dass die Desktop-Software läuft und beide Geräte im selben Netzwerk sind.');
       }
 
       const { device_code, user_code, verification_url, expires_in, interval } = result.data;
@@ -184,12 +203,8 @@ export default function LoginScreen() {
       setVerificationUrlComplete(verifyUrl);
       setBrowserOpened(false);
       setAuthLoading(false);
-
-      // Don't open browser immediately - let user see the code first
-      // Polling starts after user taps the "copy + open browser" button
-      console.log('[Fuchs] Device code received, waiting for user to open browser');
     } catch (error) {
-      console.error('[Fuchs] Device flow error:', error);
+      console.error('[Fuchs] Sign-in error:', error);
       if (isMountedRef.current) {
         setAuthLoading(false);
         setUserCode(null);
@@ -306,49 +321,6 @@ export default function LoginScreen() {
       }
     } finally {
       isPollingRef.current = false;
-    }
-  };
-
-  // ---- In-App WebView OAuth (fallback when Device Flow not supported) ----
-
-  const startWebViewAuth = async () => {
-    if (!serverUrl) {
-      setAuthLoading(false);
-      alert(
-        'Server nicht erreichbar',
-        'Die Anmeldung benötigt eine Verbindung zum Desktop-Server.\n\nBitte stelle sicher, dass die Desktop-Software läuft und scanne den QR-Code erneut.'
-      );
-      return;
-    }
-
-    try {
-      console.log('[Fuchs] Starting In-App WebView OAuth...');
-      const res = await fetch(`${serverUrl}/api/mobile/auth/init-login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Server-Fehler: ${res.status}`);
-      }
-
-      const { sessionId, authUrl, redirectUri } = await res.json();
-      console.log('[Fuchs] WebView OAuth session created:', sessionId.substring(0, 8) + '...');
-      console.log('[Fuchs] Auth URL:', authUrl.substring(0, 80) + '...');
-      console.log('[Fuchs] Redirect URI:', redirectUri);
-
-      setWebViewAuth({ authUrl, redirectUri, sessionId });
-      setAuthLoading(false);
-    } catch (error) {
-      console.error('[Fuchs] WebView OAuth init error:', error);
-      if (isMountedRef.current) {
-        setAuthLoading(false);
-        const hint = error.message?.includes('Network')
-          ? `Desktop-Server nicht erreichbar (${serverUrl}).\n\nStelle sicher, dass:\n• Die Desktop-Software läuft\n• Handy und PC im selben WLAN sind\n• Windows-Firewall Port 3001 erlaubt`
-          : error.message;
-        alert('Anmeldung fehlgeschlagen', hint);
-      }
     }
   };
 
