@@ -161,7 +161,7 @@ if !ERRORLEVEL! neq 0 goto :WSL_NO_JAVA
 echo  [OK] Java in WSL vorhanden
 
 REM Pruefe Android SDK in WSL
-wsl -d Ubuntu -e /bin/bash -c "test -f \$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager" >nul 2>&1
+wsl -d Ubuntu -e /bin/bash -c "test -f $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager" >nul 2>&1
 if !ERRORLEVEL! neq 0 goto :WSL_NO_SDK
 echo  [OK] Android SDK in WSL vorhanden
 
@@ -208,7 +208,7 @@ echo.
 REM Schritt 2: EAS Build starten
 echo  [2/2] Baue APK... (Ausgabe von EAS folgt unten)
 echo  ----------------------------------------
-wsl -d Ubuntu -e /bin/bash -c "export ANDROID_HOME=\$HOME/android-sdk && export PATH=\$ANDROID_HOME/cmdline-tools/latest/bin:\$ANDROID_HOME/platform-tools:\$PATH && cd '!WSL_PATH!' && eas build -p android --profile preview --local --output android/app.apk 2>&1"
+wsl -d Ubuntu -e /bin/bash -c "export ANDROID_HOME=$HOME/android-sdk && export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH && cd '!WSL_PATH!' && eas build -p android --profile preview --local --output android/app.apk 2>&1"
 echo  ----------------------------------------
 
 if exist "%APK_DEST%" goto :BUILD_SUCCESS
@@ -341,8 +341,8 @@ if /i "!INSTALL_SDK!"=="j" (
     echo  [..] Installiere Voraussetzungen...
     wsl -d Ubuntu -u root -e /bin/bash -c "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH && apt-get update -qq && apt-get install -y unzip curl"
     echo  [..] Lade Android Command-Line Tools herunter...
-    wsl -d Ubuntu -e /bin/bash -c "mkdir -p \$HOME/android-sdk/cmdline-tools && cd /tmp && curl -fL -o cmdline-tools.zip 'https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip' && unzip -qo cmdline-tools.zip -d cmdline-tools-tmp && rm -rf \$HOME/android-sdk/cmdline-tools/latest && mv cmdline-tools-tmp/cmdline-tools \$HOME/android-sdk/cmdline-tools/latest && rm -f cmdline-tools.zip && rm -rf cmdline-tools-tmp"
-    wsl -d Ubuntu -e /bin/bash -c "test -f \$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager" >nul 2>&1
+    wsl -d Ubuntu -e /bin/bash -c "mkdir -p $HOME/android-sdk/cmdline-tools && cd /tmp && curl -fL -o cmdline-tools.zip 'https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip' && unzip -qo cmdline-tools.zip -d cmdline-tools-tmp && rm -rf $HOME/android-sdk/cmdline-tools/latest && mv cmdline-tools-tmp/cmdline-tools $HOME/android-sdk/cmdline-tools/latest && rm -f cmdline-tools.zip && rm -rf cmdline-tools-tmp"
+    wsl -d Ubuntu -e /bin/bash -c "test -f $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager" >nul 2>&1
     if !ERRORLEVEL! neq 0 (
         echo  [FEHLER] Download fehlgeschlagen.
         pause
@@ -350,10 +350,10 @@ if /i "!INSTALL_SDK!"=="j" (
     )
     echo  [OK] Command-Line Tools installiert
     echo  [..] Akzeptiere Android-Lizenzen...
-    wsl -d Ubuntu -e /bin/bash -c "yes 2>/dev/null | \$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=\$HOME/android-sdk --licenses >/dev/null 2>&1"
+    wsl -d Ubuntu -e /bin/bash -c "yes 2>/dev/null | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk --licenses >/dev/null 2>&1"
     echo  [..] Installiere Build-Tools und Platform...
     echo      (Das kann 1-2 Minuten dauern)
-    wsl -d Ubuntu -e /bin/bash -c "\$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=\$HOME/android-sdk 'platform-tools' 'build-tools;36.0.0' 'platforms;android-36' 2>&1"
+    wsl -d Ubuntu -e /bin/bash -c "$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk 'platform-tools' 'build-tools;36.0.0' 'platforms;android-36' 2>&1"
     echo  [OK] Android SDK installiert
     goto :BUILD_LOCAL
 )
