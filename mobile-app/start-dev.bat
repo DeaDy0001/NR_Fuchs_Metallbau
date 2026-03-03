@@ -172,7 +172,13 @@ REM Pruefe Yarn in WSL (wird von EAS Build benoetigt)
 wsl -d Ubuntu -e /bin/bash -c "command -v yarn" >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo  [..] Yarn in WSL wird installiert...
-    wsl -d Ubuntu -e /bin/bash -c "npm install -g yarn"
+    wsl -d Ubuntu -u root -e /bin/bash -c "npm install -g yarn"
+    wsl -d Ubuntu -e /bin/bash -c "command -v yarn" >nul 2>&1
+    if !ERRORLEVEL! neq 0 (
+        echo  [FEHLER] Yarn konnte nicht installiert werden.
+        pause
+        exit /b 1
+    )
     echo  [OK] Yarn in WSL installiert
 )
 
