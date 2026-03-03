@@ -292,25 +292,25 @@ echo.
 echo  Soll Node.js in WSL installiert werden?
 set "INSTALL_NODE="
 set /p "INSTALL_NODE=  Installieren? [j/n]: "
-if /i "!INSTALL_NODE!"=="j" (
+if /i not "!INSTALL_NODE!"=="j" goto :WSL_NO_NODE_SKIP
+echo.
+echo  [..] Installiere Grundpakete in WSL...
+wsl -d Ubuntu -u root -e /bin/bash -c "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH && apt-get update -qq && apt-get install -y curl ca-certificates gnupg"
+echo  [..] Installiere Node.js in WSL...
+wsl -d Ubuntu -u root -e /bin/bash -c "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs"
+wsl -d Ubuntu -e /bin/bash -c "command -v node" >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo  [FEHLER] Installation fehlgeschlagen.
     echo.
-    echo  [..] Installiere Grundpakete in WSL...
-    wsl -d Ubuntu -u root -e /bin/bash -c "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH && apt-get update -qq && apt-get install -y curl ca-certificates gnupg"
-    echo  [..] Installiere Node.js in WSL...
-    wsl -d Ubuntu -u root -e /bin/bash -c "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs"
-    wsl -d Ubuntu -e /bin/bash -c "command -v node" >nul 2>&1
-    if !ERRORLEVEL! neq 0 (
-        echo  [FEHLER] Installation fehlgeschlagen.
-        echo.
-        echo  Versuche manuell in WSL:
-        echo    wsl
-        echo    apt-get update ^&^& apt-get install -y nodejs npm
-        pause
-        exit /b 1
-    )
-    echo  [OK] Node.js installiert
-    goto :BUILD_LOCAL
+    echo  Versuche manuell in WSL:
+    echo    wsl
+    echo    apt-get update ^&^& apt-get install -y nodejs npm
+    pause
+    exit /b 1
 )
+echo  [OK] Node.js installiert
+goto :BUILD_LOCAL
+:WSL_NO_NODE_SKIP
 echo.
 echo  [INFO] Ohne Node.js kein lokaler Build. Wechsle zu Cloud-Build...
 goto :BUILD_CLOUD
@@ -322,23 +322,23 @@ echo.
 echo  Soll Java in WSL installiert werden?
 set "INSTALL_JAVA="
 set /p "INSTALL_JAVA=  Installieren? [j/n]: "
-if /i "!INSTALL_JAVA!"=="j" (
+if /i not "!INSTALL_JAVA!"=="j" goto :WSL_NO_JAVA_SKIP
+echo.
+echo  [..] Installiere Java in WSL (kann etwas dauern)...
+wsl -d Ubuntu -u root -e /bin/bash -c "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH && apt-get update -qq && apt-get install -y openjdk-17-jdk"
+wsl -d Ubuntu -e /bin/bash -c "command -v java" >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo  [FEHLER] Installation fehlgeschlagen.
     echo.
-    echo  [..] Installiere Java in WSL (kann etwas dauern)...
-    wsl -d Ubuntu -u root -e /bin/bash -c "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH && apt-get update -qq && apt-get install -y openjdk-17-jdk"
-    wsl -d Ubuntu -e /bin/bash -c "command -v java" >nul 2>&1
-    if !ERRORLEVEL! neq 0 (
-        echo  [FEHLER] Installation fehlgeschlagen.
-        echo.
-        echo  Versuche manuell in WSL:
-        echo    wsl
-        echo    apt-get update ^&^& apt-get install -y openjdk-17-jdk
-        pause
-        exit /b 1
-    )
-    echo  [OK] Java installiert
-    goto :BUILD_LOCAL
+    echo  Versuche manuell in WSL:
+    echo    wsl
+    echo    apt-get update ^&^& apt-get install -y openjdk-17-jdk
+    pause
+    exit /b 1
 )
+echo  [OK] Java installiert
+goto :BUILD_LOCAL
+:WSL_NO_JAVA_SKIP
 echo.
 echo  [INFO] Ohne Java kein lokaler Build. Wechsle zu Cloud-Build...
 goto :BUILD_CLOUD
@@ -351,27 +351,27 @@ echo  Soll das Android SDK in WSL installiert werden?
 echo  (Einmalig, ca. 500 MB Download)
 set "INSTALL_SDK="
 set /p "INSTALL_SDK=  Installieren? [j/n]: "
-if /i "!INSTALL_SDK!"=="j" (
-    echo.
-    echo  [..] Installiere Voraussetzungen...
-    wsl -d Ubuntu -u root -e /bin/bash -c "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH && apt-get update -qq && apt-get install -y unzip curl"
-    echo  [..] Lade Android Command-Line Tools herunter...
-    wsl -d Ubuntu -e /bin/bash -c "mkdir -p $HOME/android-sdk/cmdline-tools && cd /tmp && curl -fL -o cmdline-tools.zip 'https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip' && unzip -qo cmdline-tools.zip -d cmdline-tools-tmp && rm -rf $HOME/android-sdk/cmdline-tools/latest && mv cmdline-tools-tmp/cmdline-tools $HOME/android-sdk/cmdline-tools/latest && rm -f cmdline-tools.zip && rm -rf cmdline-tools-tmp"
-    wsl -d Ubuntu -e /bin/bash -c "test -f $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager" >nul 2>&1
-    if !ERRORLEVEL! neq 0 (
-        echo  [FEHLER] Download fehlgeschlagen.
-        pause
-        exit /b 1
-    )
-    echo  [OK] Command-Line Tools installiert
-    echo  [..] Akzeptiere Android-Lizenzen...
-    wsl -d Ubuntu -e /bin/bash -c "yes 2>/dev/null | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk --licenses >/dev/null 2>&1"
-    echo  [..] Installiere Build-Tools, Platform und NDK...
-    echo      (Das kann 2-3 Minuten dauern)
-    wsl -d Ubuntu -e /bin/bash -c "$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk 'platform-tools' 'build-tools;36.0.0' 'platforms;android-36' 'ndk;27.1.12297006' 2>&1"
-    echo  [OK] Android SDK installiert
-    goto :BUILD_LOCAL
+if /i not "!INSTALL_SDK!"=="j" goto :WSL_NO_SDK_SKIP
+echo.
+echo  [..] Installiere Voraussetzungen...
+wsl -d Ubuntu -u root -e /bin/bash -c "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH && apt-get update -qq && apt-get install -y unzip curl"
+echo  [..] Lade Android Command-Line Tools herunter...
+wsl -d Ubuntu -e /bin/bash -c "mkdir -p $HOME/android-sdk/cmdline-tools && cd /tmp && curl -fL -o cmdline-tools.zip 'https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip' && unzip -qo cmdline-tools.zip -d cmdline-tools-tmp && rm -rf $HOME/android-sdk/cmdline-tools/latest && mv cmdline-tools-tmp/cmdline-tools $HOME/android-sdk/cmdline-tools/latest && rm -f cmdline-tools.zip && rm -rf cmdline-tools-tmp"
+wsl -d Ubuntu -e /bin/bash -c "test -f $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager" >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo  [FEHLER] Download fehlgeschlagen.
+    pause
+    exit /b 1
 )
+echo  [OK] Command-Line Tools installiert
+echo  [..] Akzeptiere Android-Lizenzen...
+wsl -d Ubuntu -e /bin/bash -c "yes 2>/dev/null | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk --licenses >/dev/null 2>&1"
+echo  [..] Installiere Build-Tools, Platform und NDK...
+echo      (Das kann 2-3 Minuten dauern)
+wsl -d Ubuntu -e /bin/bash -c "$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk 'platform-tools' 'build-tools;36.0.0' 'platforms;android-36' 'ndk;27.1.12297006' 2>&1"
+echo  [OK] Android SDK installiert
+goto :BUILD_LOCAL
+:WSL_NO_SDK_SKIP
 echo.
 echo  [INFO] Ohne Android SDK kein lokaler Build. Wechsle zu Cloud-Build...
 goto :BUILD_CLOUD
