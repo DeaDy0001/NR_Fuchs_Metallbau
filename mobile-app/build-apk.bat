@@ -113,11 +113,68 @@ set "APK_DEST=%CD%\android\app.apk"
 :: Alte APK loeschen damit wir sicher wissen ob der neue Build geklappt hat
 if exist "%APK_DEST%" del "%APK_DEST%"
 
-:: ── 7. APK bauen ──
+:: ── 7. Build-Methode auswaehlen ──
+echo.
+echo  ========================================
+echo   Wie soll die APK gebaut werden?
+echo  ========================================
+echo.
+echo   1) Lokal bauen (2-5 Min, braucht Java)
+echo   2) Expo Cloud (15-40 Min, kein Java)
+echo.
+set "BUILD_CHOICE="
+set /p "BUILD_CHOICE=  Deine Wahl [1/2]: "
+
+if "!BUILD_CHOICE!"=="1" goto :BUILD_LOCAL
+goto :BUILD_CLOUD
+
+:: ── 7a. LOKAL bauen ──
+:BUILD_LOCAL
+echo.
+echo  Pruefe Java...
+where java >nul 2>&1
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo  [FEHLER] Java ist nicht installiert!
+    echo.
+    echo  Fuer den lokalen Build wird Java JDK 17 benoetigt.
+    echo  Download: https://adoptium.net
+    echo.
+    echo  Nach der Installation dieses Script neu starten.
+    echo.
+    echo  Alternativ: Script neu starten und Option 2 waehlen.
+    pause
+    exit /b 1
+)
+for /f "tokens=*" %%i in ('java -version 2^>^&1') do (
+    if not defined JAVA_VER set "JAVA_VER=%%i"
+)
+echo  [OK] %JAVA_VER%
+
+echo.
+echo  ========================================
+echo   Starte lokalen APK Build...
+echo   (Das dauert ca. 2-5 Minuten)
+echo  ========================================
+echo.
+echo   Beim ersten Mal wirst du gefragt ob ein
+echo   Keystore generiert werden soll - waehle Yes.
+echo.
+
+call eas build -p android --profile preview --local --output "%APK_DEST%"
+
+:: Pruefen ob APK erstellt wurde
+if exist "%APK_DEST%" goto :BUILD_SUCCESS
+echo.
+echo  [FEHLER] Lokaler Build fehlgeschlagen.
+goto :NO_URL
+
+:: ── 7b. CLOUD bauen ──
+:BUILD_CLOUD
 echo.
 echo  ========================================
 echo   Starte APK Build in der Expo Cloud...
-echo   (Das dauert ca. 5-15 Minuten)
+echo   (Das dauert ca. 15-40 Minuten)
 echo   Die APK wird danach automatisch geladen.
 echo  ========================================
 echo.
