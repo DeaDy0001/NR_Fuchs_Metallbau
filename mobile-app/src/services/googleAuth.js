@@ -75,15 +75,19 @@ export const getAccessToken = async () => {
 const refreshAccessToken = async (refreshToken) => {
   const clientId = await getGoogleClientId();
   if (!clientId) throw new Error('Keine Google Client ID konfiguriert');
+  const clientSecret = await getSetting('googleClientSecret');
+
+  const params = [
+    'grant_type=refresh_token',
+    `refresh_token=${encodeURIComponent(refreshToken)}`,
+    `client_id=${encodeURIComponent(clientId)}`,
+  ];
+  if (clientSecret) params.push(`client_secret=${encodeURIComponent(clientSecret)}`);
 
   const response = await fetch(TOKEN_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: [
-      'grant_type=refresh_token',
-      `refresh_token=${encodeURIComponent(refreshToken)}`,
-      `client_id=${encodeURIComponent(clientId)}`,
-    ].join('&'),
+    body: params.join('&'),
   });
 
   if (!response.ok) {
@@ -103,16 +107,20 @@ const refreshAccessToken = async (refreshToken) => {
 export const exchangeCodeForTokens = async (code, redirectUri) => {
   const clientId = await getGoogleClientId();
   if (!clientId) throw new Error('Keine Google Client ID konfiguriert');
+  const clientSecret = await getSetting('googleClientSecret');
+
+  const params = [
+    'grant_type=authorization_code',
+    `code=${encodeURIComponent(code)}`,
+    `client_id=${encodeURIComponent(clientId)}`,
+    `redirect_uri=${encodeURIComponent(redirectUri)}`,
+  ];
+  if (clientSecret) params.push(`client_secret=${encodeURIComponent(clientSecret)}`);
 
   const response = await fetch(TOKEN_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: [
-      'grant_type=authorization_code',
-      `code=${encodeURIComponent(code)}`,
-      `client_id=${encodeURIComponent(clientId)}`,
-      `redirect_uri=${encodeURIComponent(redirectUri)}`,
-    ].join('&'),
+    body: params.join('&'),
   });
 
   if (!response.ok) {

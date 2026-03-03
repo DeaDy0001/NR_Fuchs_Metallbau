@@ -56,8 +56,10 @@ const getNetworkAddresses = () => {
  */
 const generateConnectToken = (req, res) => {
   try {
-    // Use unified GOOGLE_CLIENT_ID for both desktop and mobile
-    const googleClientId = process.env.GOOGLE_CLIENT_ID;
+    // Use GOOGLE_MOBILE_CLIENT_ID (TV/Limited Input type) for mobile Device Flow,
+    // fall back to GOOGLE_CLIENT_ID if not set
+    const googleClientId = process.env.GOOGLE_MOBILE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
+    const googleClientSecret = process.env.GOOGLE_MOBILE_CLIENT_SECRET || '';
     if (!googleClientId) {
       return res.status(400).json({
         error: 'Google OAuth nicht konfiguriert. Bitte Google Credentials im Dev-Tab der Einstellungen konfigurieren.'
@@ -102,6 +104,7 @@ const generateConnectToken = (req, res) => {
     const qrPayload = {
       type: 'fuchs_drive',
       googleClientId,
+      googleClientSecret: googleClientSecret || undefined,
       rootFolderId,
       name: drivePath.name || 'Fuchs Metallbau',
       serverUrl,

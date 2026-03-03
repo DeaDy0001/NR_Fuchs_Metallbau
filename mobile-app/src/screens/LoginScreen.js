@@ -24,6 +24,7 @@ export default function LoginScreen() {
   const { alert } = useDialog();
   const { onGoogleLogin, resetSetup } = useApp();
   const [clientId, setClientId] = useState(null);
+  const [clientSecret, setClientSecret] = useState(null);
   const [serverUrl, setServerUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [authLoading, setAuthLoading] = useState(false);
@@ -67,10 +68,13 @@ export default function LoginScreen() {
 
   const loadConfig = async () => {
     const id = await getSetting('googleClientId');
+    const secret = await getSetting('googleClientSecret');
     const url = await getSetting('serverUrl');
     console.log('[Fuchs] LoginScreen - clientId:', id ? id.substring(0, 20) + '...' : 'none');
+    console.log('[Fuchs] LoginScreen - clientSecret:', secret ? 'set' : 'none');
     console.log('[Fuchs] LoginScreen - serverUrl:', url);
     setClientId(id);
+    setClientSecret(secret);
     setServerUrl(url);
     setLoading(false);
   };
@@ -196,14 +200,16 @@ export default function LoginScreen() {
             tokenData = await res.json();
           } else {
             console.log('[Fuchs] Polling Google directly for device token...');
+            const tokenParams = {
+              client_id: clientId,
+              device_code: deviceCodeRef.current,
+              grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+            };
+            if (clientSecret) tokenParams.client_secret = clientSecret;
             const res = await fetch('https://oauth2.googleapis.com/token', {
               method: 'POST',
               headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: new URLSearchParams({
-                client_id: clientId,
-                device_code: deviceCodeRef.current,
-                grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-              }).toString(),
+              body: new URLSearchParams(tokenParams).toString(),
             });
             tokenData = await res.json();
           }

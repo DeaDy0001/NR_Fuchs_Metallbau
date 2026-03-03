@@ -53,6 +53,7 @@ export default function ConnectScreen() {
             name: decoded.name || 'Drive-Verbindung',
             rootFolderId: decoded.rootFolderId,
             googleClientId: decoded.googleClientId || null,
+            googleClientSecret: decoded.googleClientSecret || null,
             serverUrl: decoded.serverUrl || null,
           };
         }
@@ -68,6 +69,7 @@ export default function ConnectScreen() {
           name: parsed.name || 'Drive-Verbindung',
           rootFolderId: parsed.rootFolderId,
           googleClientId: parsed.googleClientId || null,
+          googleClientSecret: parsed.googleClientSecret || null,
           serverUrl: parsed.serverUrl || null,
         };
       }
@@ -131,6 +133,11 @@ export default function ConnectScreen() {
           await setSetting('serverUrl', parsed.serverUrl);
         }
 
+        // Store client secret for Device Flow token exchange
+        if (parsed.googleClientSecret) {
+          await setSetting('googleClientSecret', parsed.googleClientSecret);
+        }
+
         // Save the Drive connection (without meta/inbox folders - will be created after Google Sign-In)
         await addDriveConnection(parsed.name, parsed.rootFolderId);
 
@@ -185,6 +192,11 @@ export default function ConnectScreen() {
         // Update server URL if provided
         if (parsed.serverUrl) {
           await setSetting('serverUrl', parsed.serverUrl);
+        }
+
+        // Update client secret if provided
+        if (parsed.googleClientSecret) {
+          await setSetting('googleClientSecret', parsed.googleClientSecret);
         }
 
         alert('Verbunden!', `"${connectionName}" wurde verbunden.`);
