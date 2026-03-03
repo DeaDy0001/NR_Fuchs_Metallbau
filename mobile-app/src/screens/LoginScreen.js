@@ -34,6 +34,13 @@ export default function LoginScreen() {
   const [verificationUrl, setVerificationUrl] = useState(null);
   const [copied, setCopied] = useState(false);
 
+  // Debug state - shows polling status on screen
+  const [debugLog, setDebugLog] = useState([]);
+  const addDebug = (msg) => {
+    const time = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    setDebugLog(prev => [`${time} ${msg}`, ...prev].slice(0, 8));
+  };
+
   // WebView OAuth state
   const [webViewAuth, setWebViewAuth] = useState(null); // { authUrl, redirectUri, sessionId }
 
@@ -58,7 +65,7 @@ export default function LoginScreen() {
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active' && deviceCodeRef.current && Date.now() < expiresAtRef.current) {
-        console.log('[Fuchs] App foregrounded, force-restarting poll...');
+        addDebug('App im Vordergrund - starte Polling neu');
         // Kill any stuck timer from background
         if (pollTimerRef.current) {
           clearTimeout(pollTimerRef.current);
@@ -191,10 +198,8 @@ export default function LoginScreen() {
         if (!isMountedRef.current || !deviceCodeRef.current) break;
 
         try {
-          // Always poll Google directly (not through local backend) - more reliable:
-          // 1. Google is always reachable (no local network dependency)
-          // 2. No credential mismatch issues between mobile/web client secrets
-          console.log('[Fuchs] Polling Google for device token...');
+          // Always poll Google directly (not through local backend) - more reliable
+          addDebug('Polling Google...');
           const tokenParams = {
             client_id: clientId,
             device_code: deviceCodeRef.current,
@@ -208,10 +213,12 @@ export default function LoginScreen() {
           });
           const tokenData = await res.json();
 
-          console.log('[Fuchs] Poll response:', tokenData.error || 'got token!');
+          const pollResult = tokenData.error || 'TOKEN ERHALTEN!';
+          console.log('[Fuchs] Poll response:', pollResult);
+          addDebug(`Antwort: ${pollResult}`);
 
           if (tokenData.access_token) {
-            console.log('[Fuchs] Token received, fetching user info...');
+            addDebug('Token erhalten! Lade User-Info...');
             deviceCodeRef.current = null;
 
             // Fetch user info directly from Google
@@ -256,7 +263,7 @@ export default function LoginScreen() {
             pollError.message?.includes('Failed to connect') ||
             pollError.message?.includes('Unable to resolve')
           ) {
-            console.log('[Fuchs] Network error during poll, retrying...');
+            addDebug(`Netzwerkfehler: ${pollError.message?.substring(0, 30)}`);
             continue;
           }
           throw pollError;
@@ -268,6 +275,7 @@ export default function LoginScreen() {
       }
     } catch (error) {
       console.error('[Fuchs] Poll error:', error);
+      addDebug(`FEHLER: ${error.message?.substring(0, 40)}`);
       if (isMountedRef.current) {
         deviceCodeRef.current = null;
         setAuthLoading(false);
@@ -453,6 +461,14 @@ export default function LoginScreen() {
                 <ActivityIndicator size="small" color={colors.accent} />
                 <Text style={styles.waitingText}>Warte auf Anmeldung...</Text>
               </View>
+
+              {debugLog.length > 0 && (
+                <View style={styles.debugBox}>
+                  {debugLog.map((line, i) => (
+                    <Text key={i} style={styles.debugText}>{line}</Text>
+                  ))}
+                </View>
+              )}
 
               <TouchableOpacity
                 style={styles.reopenButton}
@@ -686,6 +702,20 @@ const styles = StyleSheet.create({
   cancelText: {
     fontSize: 14,
     color: colors.textTertiary,
+  },
+  debugBox: {
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 12,
+    marginBottom: 4,
+    width: '100%',
+  },
+  debugText: {
+    fontSize: 11,
+    color: '#94a3b8',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    lineHeight: 16,
   },
   footerText: {
     fontSize: 12,
