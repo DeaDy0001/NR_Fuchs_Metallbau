@@ -160,7 +160,7 @@ export default function LoginScreen() {
         setAuthLoading(false);
         setUserCode(null);
         const hint = error.message?.includes('Network')
-          ? 'Keine Internetverbindung. Bitte prüfe dein WLAN.'
+          ? 'Keine Internetverbindung.\n\nBitte prüfe, ob dein Handy mit dem Internet verbunden ist (WLAN oder mobile Daten).'
           : error.message;
         alert('Anmeldung fehlgeschlagen', hint);
       }
@@ -294,7 +294,7 @@ export default function LoginScreen() {
       if (isMountedRef.current) {
         setAuthLoading(false);
         const hint = error.message?.includes('Network')
-          ? 'Desktop-Server nicht erreichbar.\n\nStelle sicher, dass:\n• Die Desktop-Software läuft\n• Handy und PC im selben WLAN sind'
+          ? `Desktop-Server nicht erreichbar (${serverUrl}).\n\nStelle sicher, dass:\n• Die Desktop-Software läuft\n• Handy und PC im selben WLAN sind\n• Windows-Firewall Port 3001 erlaubt`
           : error.message;
         alert('Anmeldung fehlgeschlagen', hint);
       }
