@@ -139,7 +139,14 @@ if !ERRORLEVEL! neq 0 goto :NO_WSL
 
 REM Pruefe ob Ubuntu in WSL vorhanden ist
 wsl -d Ubuntu -e /bin/bash -c "echo ok" >nul 2>&1
-if !ERRORLEVEL! neq 0 goto :NO_WSL_DISTRO
+if !ERRORLEVEL! neq 0 (
+    REM Erster Versuch fehlgeschlagen - WSL neustarten und nochmal pruefen
+    echo  [..] WSL antwortet nicht - starte WSL neu...
+    wsl --shutdown >nul 2>&1
+    timeout /t 3 /nobreak >nul
+    wsl -d Ubuntu -e /bin/bash -c "echo ok" >nul 2>&1
+    if !ERRORLEVEL! neq 0 goto :NO_WSL_DISTRO
+)
 
 echo  [OK] WSL Ubuntu vorhanden
 
