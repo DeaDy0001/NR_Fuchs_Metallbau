@@ -177,8 +177,18 @@ echo   Expo-Login gefragt und ob ein Keystore
 echo   generiert werden soll - waehle Yes.
 echo.
 
-REM npm install in WSL + Build starten
-wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && npm install --silent 2>/dev/null && eas build -p android --profile preview --local --output android/app.apk"
+REM Schritt 1: npm install in WSL
+echo  [1/2] Installiere Abhaengigkeiten in WSL...
+echo        (Das kann beim ersten Mal 1-2 Min dauern)
+wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && npm install 2>&1"
+echo  [OK] Abhaengigkeiten in WSL installiert
+echo.
+
+REM Schritt 2: EAS Build starten
+echo  [2/2] Baue APK... (Ausgabe von EAS folgt unten)
+echo  ----------------------------------------
+wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && eas build -p android --profile preview --local --output android/app.apk 2>&1"
+echo  ----------------------------------------
 
 if exist "%APK_DEST%" goto :BUILD_SUCCESS
 echo.
