@@ -1996,6 +1996,10 @@ const mobileDeviceToken = async (req, res) => {
       ? (process.env.GOOGLE_MOBILE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET)
       : process.env.GOOGLE_CLIENT_SECRET;
 
+    console.log('[Fuchs] Device token exchange - clientId match:',
+      useClientId === process.env.GOOGLE_MOBILE_CLIENT_ID ? 'MOBILE' : 'WEB',
+      '| secret type:', useClientSecret === process.env.GOOGLE_MOBILE_CLIENT_SECRET ? 'MOBILE' : 'WEB');
+
     if (!useClientId || !useClientSecret) {
       return res.status(500).json({ error: 'Google OAuth nicht konfiguriert. Bitte Credentials im Dev-Tab konfigurieren.' });
     }

@@ -54,17 +54,23 @@ export default function LoginScreen() {
   }, []);
 
   // Poll immediately when app comes back to foreground
+  // On Android, setTimeout gets suspended in background - force restart polling
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active' && !isPollingRef.current) {
-        if (deviceCodeRef.current) {
-          console.log('[Fuchs] App foregrounded, resuming device flow poll...');
-          pollForToken();
+      if (nextState === 'active' && deviceCodeRef.current && Date.now() < expiresAtRef.current) {
+        console.log('[Fuchs] App foregrounded, force-restarting poll...');
+        // Kill any stuck timer from background
+        if (pollTimerRef.current) {
+          clearTimeout(pollTimerRef.current);
+          pollTimerRef.current = null;
         }
+        // Reset polling flag so pollForToken can start fresh
+        isPollingRef.current = false;
+        pollForToken();
       }
     });
     return () => subscription?.remove();
-  }, [serverUrl, clientId]);
+  }, [clientId, clientSecret]);
 
   const loadConfig = async () => {
     const id = await getSetting('googleClientId');
@@ -185,40 +191,49 @@ export default function LoginScreen() {
         if (!isMountedRef.current || !deviceCodeRef.current) break;
 
         try {
-          let tokenData;
+          // Always poll Google directly (not through local backend) - more reliable:
+          // 1. Google is always reachable (no local network dependency)
+          // 2. No credential mismatch issues between mobile/web client secrets
+          console.log('[Fuchs] Polling Google for device token...');
+          const tokenParams = {
+            client_id: clientId,
+            device_code: deviceCodeRef.current,
+            grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+          };
+          if (clientSecret) tokenParams.client_secret = clientSecret;
+          const res = await fetch('https://oauth2.googleapis.com/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(tokenParams).toString(),
+          });
+          const tokenData = await res.json();
 
-          if (serverUrl) {
-            console.log('[Fuchs] Polling backend for device token...');
-            const res = await fetch(`${serverUrl}/api/mobile/auth/device-token`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                device_code: deviceCodeRef.current,
-                client_id: clientId,
-              }),
-            });
-            tokenData = await res.json();
-          } else {
-            console.log('[Fuchs] Polling Google directly for device token...');
-            const tokenParams = {
-              client_id: clientId,
-              device_code: deviceCodeRef.current,
-              grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-            };
-            if (clientSecret) tokenParams.client_secret = clientSecret;
-            const res = await fetch('https://oauth2.googleapis.com/token', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: new URLSearchParams(tokenParams).toString(),
-            });
-            tokenData = await res.json();
-          }
-
-          console.log('[Fuchs] Poll response:', tokenData.error || 'success');
+          console.log('[Fuchs] Poll response:', tokenData.error || 'got token!');
 
           if (tokenData.access_token) {
+            console.log('[Fuchs] Token received, fetching user info...');
             deviceCodeRef.current = null;
-            await handleTokenSuccess(tokenData);
+
+            // Fetch user info directly from Google
+            let userName = '', userEmail = '', userPhoto = '';
+            try {
+              const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                headers: { Authorization: `Bearer ${tokenData.access_token}` },
+              });
+              const userInfo = await userRes.json();
+              userName = userInfo.name || '';
+              userEmail = userInfo.email || '';
+              userPhoto = userInfo.picture || '';
+            } catch (e) {
+              console.log('[Fuchs] User info fetch failed (non-critical):', e.message);
+            }
+
+            await handleTokenSuccess({
+              ...tokenData,
+              user_name: userName,
+              user_email: userEmail,
+              user_photo: userPhoto,
+            });
             return;
           }
 
