@@ -88,6 +88,18 @@ function InboxBanner() {
   );
 }
 
+/**
+ * Parse [FUCHS_META] from Google Drive file description
+ */
+function parseFuchsMeta(description) {
+  if (!description || !description.startsWith('[FUCHS_META]')) return null;
+  try {
+    return JSON.parse(description.substring('[FUCHS_META]'.length));
+  } catch {
+    return null;
+  }
+}
+
 /* ========== Image Lightbox ========== */
 function ImageLightbox({ images, startIndex, onClose, imageUrlFn }) {
   const [currentIndex, setCurrentIndex] = useState(startIndex);
@@ -207,6 +219,9 @@ function ImageLightbox({ images, startIndex, onClose, imageUrlFn }) {
     ? imageUrlFn(currentImage)
     : (currentImage.id ? `/api/mobile/inbox/image-proxy/${currentImage.id}` : null);
 
+  const meta = parseFuchsMeta(currentImage.description);
+  const displayName = meta?.title || currentImage.name;
+
   return (
     <div className="image-lightbox-overlay" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div
@@ -214,12 +229,13 @@ function ImageLightbox({ images, startIndex, onClose, imageUrlFn }) {
         className="image-lightbox-container"
         onClick={e => e.stopPropagation()}
         onMouseDown={e => { if (e.button === 1) e.preventDefault(); }}
+        style={meta ? { marginRight: '320px' } : undefined}
       >
         {proxyUrl && (
           <img
             ref={imgRef}
             src={proxyUrl}
-            alt={currentImage.name}
+            alt={displayName}
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
               cursor: zoom > 1 ? (isPanningRef.current ? 'grabbing' : 'grab') : 'default'
@@ -228,6 +244,51 @@ function ImageLightbox({ images, startIndex, onClose, imageUrlFn }) {
           />
         )}
       </div>
+
+      {/* Metadata sidebar */}
+      {meta && (
+        <div className="lightbox-sidebar" onClick={e => e.stopPropagation()}>
+          <div className="lightbox-sidebar-section">
+            <label>Name</label>
+            <div className="lightbox-sidebar-value">{displayName}</div>
+          </div>
+
+          {meta.gps && meta.gps.latitude != null && (
+            <div className="lightbox-sidebar-section">
+              <label>GPS-Standort</label>
+              <button
+                className="gps-map-btn"
+                onClick={() => window.open(
+                  `https://www.google.com/maps?q=${meta.gps.latitude},${meta.gps.longitude}`,
+                  '_blank'
+                )}
+              >
+                <span className="gps-icon">📍</span>
+                <span>Auf Google Maps öffnen</span>
+                <span className="gps-coords">
+                  {meta.gps.latitude.toFixed(5)}, {meta.gps.longitude.toFixed(5)}
+                </span>
+              </button>
+            </div>
+          )}
+
+          {meta.notes && (
+            <div className="lightbox-sidebar-section">
+              <label>Notizen</label>
+              <div className="image-notes-display">{meta.notes}</div>
+            </div>
+          )}
+
+          {currentImage.name && (
+            <div className="lightbox-sidebar-section">
+              <label>Dateiname</label>
+              <div className="lightbox-sidebar-value" style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                {currentImage.name}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <button className="image-lightbox-close" onClick={(e) => { e.stopPropagation(); onClose(); }}>
         <X size={20} />
@@ -247,7 +308,7 @@ function ImageLightbox({ images, startIndex, onClose, imageUrlFn }) {
 
       <div className="image-lightbox-zoom-hint">Shift + Mausrad zum Zoomen · Mittlere Maustaste zum Verschieben</div>
       <div className="image-lightbox-name">
-        {currentImage.name} ({currentIndex + 1}/{images.length})
+        {displayName} ({currentIndex + 1}/{images.length})
       </div>
     </div>
   );
@@ -1010,7 +1071,7 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
                       <div
                         key={img.id}
                         className={cardClass}
-                        title={img.name}
+                        title={parseFuchsMeta(img.description)?.title || img.name}
                         onClick={isMarkedDelete
                           ? () => toggleDeleteMark(folderId, img.id)
                           : isUserInbox
@@ -1035,7 +1096,7 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
                             <Trash2 size={16} />
                           </div>
                         )}
-                        <div className={`pending-image-name${isMarkedDelete ? ' delete-name' : ''}`}>{img.name}</div>
+                        <div className={`pending-image-name${isMarkedDelete ? ' delete-name' : ''}`}>{parseFuchsMeta(img.description)?.title || img.name}</div>
                         <button
                           className={`pending-image-delete-toggle ${isMarkedDelete ? 'active' : ''}`}
                           onClick={(e) => { e.stopPropagation(); toggleDeleteMark(folderId, img.id); }}
@@ -1307,7 +1368,7 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
                                 <div
                                   key={img.id}
                                   className="pending-image-card project-change-image"
-                                  title={img.name}
+                                  title={parseFuchsMeta(img.description)?.title || img.name}
                                   onClick={() => setProjectChangeLightbox({
                                     images: change.new_images,
                                     startIndex: idx,
@@ -1317,7 +1378,7 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
                                     src={`/api/mobile/project-changes/image-proxy/${img.id}`}
                                     alt={img.name}
                                   />
-                                  <div className="pending-image-name">{img.name}</div>
+                                  <div className="pending-image-name">{parseFuchsMeta(img.description)?.title || img.name}</div>
                                 </div>
                               ))}
                             </div>

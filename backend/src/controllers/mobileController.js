@@ -844,9 +844,15 @@ const sanitizeFilename = (filename) => {
 
 /**
  * Helper: Download a Drive file locally, generate thumbnail, register in drive_images
+ * @param {string} driveFileId - Google Drive file ID
+ * @param {string} fileName - Original file name
+ * @param {string} mimeType - MIME type
+ * @param {number} drivePathId - DB drive_path ID
+ * @param {string} drivePathName - Drive path name (for local directory)
+ * @param {string|null} driveDescription - Google Drive file description (may contain [FUCHS_META])
  * Returns the new drive_images row ID
  */
-const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePathId, drivePathName) => {
+const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePathId, drivePathName, driveDescription = null) => {
   const uploadBaseDir = path.join(__dirname, '../../../uploads/drive');
   const drivePathDir = path.join(uploadBaseDir, sanitizeFilename(drivePathName));
   await fs.ensureDir(drivePathDir);
@@ -860,17 +866,75 @@ const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePa
   await downloadFile(driveFileId, localFilePath);
   const stats = await fs.stat(localFilePath);
 
-  // Extract EXIF date
+  // Extract EXIF data (GPS, date, notes)
   let photoTakenAt = null;
+  let gpsLatitude = null;
+  let gpsLongitude = null;
+  let gpsAltitude = null;
+  let imageNotes = null;
+  let customTitle = null;
   try {
-    const exifr = require('exifr');
-    const exifData = await exifr.parse(localFilePath, {
-      pick: ['DateTimeOriginal', 'DateTime', 'CreateDate']
-    });
-    if (exifData) {
-      const dateValue = exifData.DateTimeOriginal || exifData.DateTime || exifData.CreateDate;
-      if (dateValue) photoTakenAt = new Date(dateValue).toISOString();
+    const exifData = await readExifData(localFilePath);
+    if (exifData.photoTakenAt) {
+      photoTakenAt = exifData.photoTakenAt;
     }
+    if (exifData.latitude != null && exifData.longitude != null) {
+      gpsLatitude = exifData.latitude;
+      gpsLongitude = exifData.longitude;
+      gpsAltitude = exifData.altitude;
+    }
+    if (exifData.userComment) {
+      imageNotes = exifData.userComment;
+    }
+  } catch {}
+
+  // Parse FUCHS_META from Drive file description
+  if (driveDescription && driveDescription.startsWith('[FUCHS_META]')) {
+    try {
+      const metaJson = driveDescription.substring('[FUCHS_META]'.length);
+      const meta = JSON.parse(metaJson);
+      if (meta.gps && gpsLatitude == null) {
+        gpsLatitude = meta.gps.latitude;
+        gpsLongitude = meta.gps.longitude;
+        gpsAltitude = meta.gps.altitude || null;
+      }
+      if (meta.notes && !imageNotes) {
+        imageNotes = meta.notes;
+      }
+      if (meta.title) {
+        customTitle = meta.title;
+      }
+    } catch (e) {
+      // Invalid JSON - ignore
+    }
+  }
+
+  // Check pending_image_metadata table
+  try {
+    const pending = db.prepare(
+      'SELECT * FROM pending_image_metadata WHERE drive_file_id = ? OR file_name = ? LIMIT 1'
+    ).get(driveFileId, fileName);
+    if (pending) {
+      if (pending.gps_latitude != null && gpsLatitude == null) {
+        gpsLatitude = pending.gps_latitude;
+        gpsLongitude = pending.gps_longitude;
+        gpsAltitude = pending.gps_altitude;
+      }
+      if (pending.notes && !imageNotes) imageNotes = pending.notes;
+      if (pending.custom_title && !customTitle) customTitle = pending.custom_title;
+      db.prepare('DELETE FROM pending_image_metadata WHERE id = ?').run(pending.id);
+    }
+  } catch {}
+
+  // Write metadata into EXIF (so it persists in the file)
+  try {
+    await writeExifData(localFilePath, {
+      latitude: gpsLatitude,
+      longitude: gpsLongitude,
+      altitude: gpsAltitude,
+      description: customTitle || null,
+      userComment: imageNotes || null
+    });
   } catch {}
 
   // Generate thumbnail
@@ -887,18 +951,23 @@ const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePa
   const result = db.prepare(`
     INSERT INTO drive_images
     (drive_path_id, name, original_name, local_path, thumbnail_url,
-     file_size, mime_type, is_compressed, drive_file_id, photo_taken_at, subfolder)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL)
+     file_size, mime_type, is_compressed, drive_file_id, photo_taken_at, subfolder,
+     gps_latitude, gps_longitude, gps_altitude, image_notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?, ?, ?)
   `).run(
     drivePathId,
-    fileBaseName,
+    customTitle || fileBaseName,
     fileName,
     localPath,
     thumbnailUrl,
     stats.size,
     mimeType || 'image/jpeg',
     driveFileId,
-    photoTakenAt
+    photoTakenAt,
+    gpsLatitude,
+    gpsLongitude,
+    gpsAltitude,
+    imageNotes
   );
 
   return result.lastInsertRowid;
@@ -1095,14 +1164,37 @@ const confirmInboxProject = async (req, res) => {
               fileSize = stats.size;
             } catch (e) { /* ignore */ }
 
+            // Extract metadata from EXIF + Drive description
+            let imgPhotoTakenAt = null;
+            let imgGpsLat = null, imgGpsLon = null, imgGpsAlt = null;
+            let imgNotes = null;
+            let imgTitle = null;
+            try {
+              const exif = await readExifData(destPath);
+              if (exif.photoTakenAt) imgPhotoTakenAt = exif.photoTakenAt;
+              if (exif.latitude != null) { imgGpsLat = exif.latitude; imgGpsLon = exif.longitude; imgGpsAlt = exif.altitude; }
+              if (exif.userComment) imgNotes = exif.userComment;
+            } catch {}
+            if (img.description && img.description.startsWith('[FUCHS_META]')) {
+              try {
+                const meta = JSON.parse(img.description.substring('[FUCHS_META]'.length));
+                if (meta.gps && imgGpsLat == null) { imgGpsLat = meta.gps.latitude; imgGpsLon = meta.gps.longitude; imgGpsAlt = meta.gps.altitude || null; }
+                if (meta.notes && !imgNotes) imgNotes = meta.notes;
+                if (meta.title) imgTitle = meta.title;
+              } catch {}
+            }
+
+            const displayName = imgTitle || path.basename(img.name, path.extname(img.name));
             const imgResult = db.prepare(`
               INSERT INTO drive_images (
                 name, original_name, local_path, thumbnail_url, file_url,
-                mime_type, drive_file_id, drive_path_id, file_size, created_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                mime_type, drive_file_id, drive_path_id, file_size, created_at,
+                photo_taken_at, gps_latitude, gps_longitude, gps_altitude, image_notes
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
             `).run(
-              img.name, img.name, projectImageUrl, projectImageUrl, projectImageUrl,
-              img.mimeType || 'image/jpeg', img.id, fileSize, now
+              displayName, img.name, projectImageUrl, projectImageUrl, projectImageUrl,
+              img.mimeType || 'image/jpeg', img.id, fileSize, now,
+              imgPhotoTakenAt, imgGpsLat, imgGpsLon, imgGpsAlt, imgNotes
             );
             imageId = imgResult.lastInsertRowid;
           } else {
@@ -1185,7 +1277,8 @@ const addToLibrary = async (req, res) => {
           file.name,
           file.mimeType,
           drivePath.id,
-          drivePath.name
+          drivePath.name,
+          file.description || null
         );
 
         addedCount++;
@@ -1279,7 +1372,8 @@ const mergeFilesToProject = async (files, sourceFolderId, targetProjectId) => {
         file.name,
         file.mimeType,
         drivePath.id,
-        drivePath.name
+        drivePath.name,
+        file.description || null
       );
 
       // 3. Copy to local project Bilder/ folder
@@ -2552,6 +2646,7 @@ const getProjectChanges = async (req, res) => {
               id: img.id,
               name: img.name,
               size: img.size,
+              description: img.description || null,
             })),
             total_drive_images: driveImages.length,
             total_local_images: localImageNames.size,
@@ -2644,14 +2739,37 @@ const confirmProjectChanges = async (req, res) => {
             fileSize = stats.size;
           } catch (e) { /* ignore */ }
 
+          // Extract metadata from EXIF + Drive description
+          let pcPhotoTakenAt = null;
+          let pcGpsLat = null, pcGpsLon = null, pcGpsAlt = null;
+          let pcNotes = null;
+          let pcTitle = null;
+          try {
+            const exif = await readExifData(destPath);
+            if (exif.photoTakenAt) pcPhotoTakenAt = exif.photoTakenAt;
+            if (exif.latitude != null) { pcGpsLat = exif.latitude; pcGpsLon = exif.longitude; pcGpsAlt = exif.altitude; }
+            if (exif.userComment) pcNotes = exif.userComment;
+          } catch {}
+          if (meta.description && meta.description.startsWith('[FUCHS_META]')) {
+            try {
+              const fmeta = JSON.parse(meta.description.substring('[FUCHS_META]'.length));
+              if (fmeta.gps && pcGpsLat == null) { pcGpsLat = fmeta.gps.latitude; pcGpsLon = fmeta.gps.longitude; pcGpsAlt = fmeta.gps.altitude || null; }
+              if (fmeta.notes && !pcNotes) pcNotes = fmeta.notes;
+              if (fmeta.title) pcTitle = fmeta.title;
+            } catch {}
+          }
+
+          const displayName = pcTitle || path.basename(meta.name, path.extname(meta.name));
           const imgResult = db.prepare(`
             INSERT INTO drive_images (
               name, original_name, local_path, thumbnail_url, file_url,
-              mime_type, drive_file_id, drive_path_id, file_size, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+              mime_type, drive_file_id, drive_path_id, file_size, created_at,
+              photo_taken_at, gps_latitude, gps_longitude, gps_altitude, image_notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
           `).run(
-            meta.name, meta.name, projectImageUrl, projectImageUrl, projectImageUrl,
-            meta.mimeType || 'image/jpeg', fileId, fileSize, now
+            displayName, meta.name, projectImageUrl, projectImageUrl, projectImageUrl,
+            meta.mimeType || 'image/jpeg', fileId, fileSize, now,
+            pcPhotoTakenAt, pcGpsLat, pcGpsLon, pcGpsAlt, pcNotes
           );
 
           // Create project assignment

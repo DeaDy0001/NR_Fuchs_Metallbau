@@ -454,7 +454,7 @@ const getFileMetadata = async (fileId) => {
     const drive = await getDriveClient();
     const response = await drive.files.get({
       fileId,
-      fields: 'id, name, parents, mimeType',
+      fields: 'id, name, parents, mimeType, description',
     });
 
     return response.data;
