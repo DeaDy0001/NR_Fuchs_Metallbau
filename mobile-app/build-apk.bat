@@ -209,25 +209,44 @@ exit /b 1
 echo.
 echo  [FEHLER] Node.js fehlt in WSL!
 echo.
-echo  Oeffne ein WSL-Terminal und fuehre aus:
-echo    curl -fsSL https://deb.nodesource.com/setup_22.x ^| sudo -E bash -
-echo    sudo apt-get install -y nodejs
-echo    npm install -g eas-cli
-echo.
-echo  Danach dieses Script erneut starten.
-pause
-exit /b 1
+echo  [..] Installiere Node.js automatisch in WSL...
+wsl -e sh -c "apt-get update -qq && apt-get install -y curl sudo ca-certificates gnupg 2>/dev/null || sudo apt-get update -qq && sudo apt-get install -y curl sudo ca-certificates gnupg"
+wsl -e sh -c "curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs 2>/dev/null || curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs"
+wsl -e sh -c "command -v node" >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo  [FEHLER] Automatische Installation fehlgeschlagen.
+    echo.
+    echo  Oeffne ein WSL-Terminal (wsl) und fuehre aus:
+    echo    apt-get update ^&^& apt-get install -y curl
+    echo    curl -fsSL https://deb.nodesource.com/setup_22.x ^| bash -
+    echo    apt-get install -y nodejs
+    echo.
+    echo  Danach dieses Script erneut starten.
+    pause
+    exit /b 1
+)
+for /f "tokens=*" %%v in ('wsl -e sh -c "node -v"') do echo  [OK] Node.js in WSL: %%v
+goto :BUILD_LOCAL
 
 :NO_WSL_JAVA
 echo.
 echo  [FEHLER] Java fehlt in WSL!
 echo.
-echo  Oeffne ein WSL-Terminal und fuehre aus:
-echo    sudo apt-get install -y openjdk-17-jdk
-echo.
-echo  Danach dieses Script erneut starten.
-pause
-exit /b 1
+echo  [..] Installiere Java automatisch in WSL...
+wsl -e sh -c "apt-get update -qq && apt-get install -y openjdk-17-jdk 2>/dev/null || sudo apt-get update -qq && sudo apt-get install -y openjdk-17-jdk"
+wsl -e sh -c "command -v java" >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo  [FEHLER] Automatische Installation fehlgeschlagen.
+    echo.
+    echo  Oeffne ein WSL-Terminal (wsl) und fuehre aus:
+    echo    apt-get update ^&^& apt-get install -y openjdk-17-jdk
+    echo.
+    echo  Danach dieses Script erneut starten.
+    pause
+    exit /b 1
+)
+echo  [OK] Java installiert
+goto :BUILD_LOCAL
 
 REM ── 7b. CLOUD bauen ──
 :BUILD_CLOUD

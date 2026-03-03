@@ -242,11 +242,17 @@ set "INSTALL_NODE="
 set /p "INSTALL_NODE=  Installieren? [j/n]: "
 if /i "!INSTALL_NODE!"=="j" (
     echo.
+    echo  [..] Installiere Grundpakete in WSL...
+    wsl -e sh -c "apt-get update -qq && apt-get install -y curl sudo ca-certificates gnupg 2>/dev/null || sudo apt-get update -qq && sudo apt-get install -y curl sudo ca-certificates gnupg"
     echo  [..] Installiere Node.js in WSL...
-    wsl -e sh -c "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E sh - && sudo apt-get install -y nodejs"
+    wsl -e sh -c "curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs 2>/dev/null || curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs"
     wsl -e sh -c "command -v node" >nul 2>&1
     if !ERRORLEVEL! neq 0 (
         echo  [FEHLER] Installation fehlgeschlagen.
+        echo.
+        echo  Versuche manuell in WSL:
+        echo    wsl
+        echo    apt-get update ^&^& apt-get install -y nodejs npm
         pause
         exit /b 1
     )
@@ -267,10 +273,14 @@ set /p "INSTALL_JAVA=  Installieren? [j/n]: "
 if /i "!INSTALL_JAVA!"=="j" (
     echo.
     echo  [..] Installiere Java in WSL (kann etwas dauern)...
-    wsl -e sh -c "sudo apt-get update -qq && sudo apt-get install -y openjdk-17-jdk"
+    wsl -e sh -c "apt-get update -qq && apt-get install -y openjdk-17-jdk 2>/dev/null || sudo apt-get update -qq && sudo apt-get install -y openjdk-17-jdk"
     wsl -e sh -c "command -v java" >nul 2>&1
     if !ERRORLEVEL! neq 0 (
         echo  [FEHLER] Installation fehlgeschlagen.
+        echo.
+        echo  Versuche manuell in WSL:
+        echo    wsl
+        echo    apt-get update ^&^& apt-get install -y openjdk-17-jdk
         pause
         exit /b 1
     )
