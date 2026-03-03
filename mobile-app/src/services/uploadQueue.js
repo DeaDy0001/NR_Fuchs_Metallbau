@@ -142,10 +142,13 @@ export const processUploadQueue = async () => {
           item.file_name,
           item.mime_type,
           item.project_folder_id || item.project_id,
-          item.project_name
+          item.project_name,
+          item.gps_data || null,
+          item.custom_title || null,
+          item.notes || null
         );
 
-        // Step 3: Report metadata (GPS, title, notes) to desktop server
+        // Step 3: Report metadata (GPS, title, notes) to desktop server (optional/best-effort)
         if (item.gps_data || item.custom_title || item.notes) {
           reportMetadataToServer(item, uploadResult?.fileId || null);
         }

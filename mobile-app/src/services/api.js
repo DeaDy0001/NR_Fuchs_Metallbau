@@ -240,7 +240,7 @@ export const deletePendingProject = async (folderId) => {
  * - With project: directly into the project folder
  * - Without project: into inbox folder
  */
-export const uploadImage = async (fileUri, fileName, mimeType, projectId = null, projectName = null, gpsData = null) => {
+export const uploadImage = async (fileUri, fileName, mimeType, projectId = null, projectName = null, gpsData = null, customTitle = null, notes = null) => {
   const connection = await getActiveDriveConnection();
   if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
 
@@ -274,12 +274,30 @@ export const uploadImage = async (fileUri, fileName, mimeType, projectId = null,
     }
   }
 
+  // Build metadata description (GPS, title, notes) to store on Drive
+  let description = null;
+  const parsedGps = gpsData ? (typeof gpsData === 'string' ? JSON.parse(gpsData) : gpsData) : null;
+  if (parsedGps || customTitle || notes) {
+    const meta = {};
+    if (parsedGps) {
+      meta.gps = {
+        latitude: parsedGps.latitude,
+        longitude: parsedGps.longitude,
+        altitude: parsedGps.altitude || null,
+      };
+    }
+    if (customTitle) meta.title = customTitle;
+    if (notes) meta.notes = notes;
+    description = `[FUCHS_META]${JSON.stringify(meta)}`;
+  }
+
   // Upload the actual image file
   const uploadedFile = await uploadFile(
     targetFolderId,
     fileName,
     fileUri,
-    mimeType || 'image/jpeg'
+    mimeType || 'image/jpeg',
+    description
   );
 
   return { success: true, fileId: uploadedFile.id };

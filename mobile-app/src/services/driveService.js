@@ -131,11 +131,14 @@ export const getFileMetadata = async (fileId) => {
 /**
  * Upload a file to Drive using resumable upload (good for large files)
  */
-export const uploadFile = async (folderId, fileName, fileUri, mimeType = 'image/jpeg') => {
+export const uploadFile = async (folderId, fileName, fileUri, mimeType = 'image/jpeg', description = null) => {
   const token = await getAccessToken();
   if (!token) throw new Error('Nicht mit Google angemeldet');
 
   // Step 1: Initiate resumable upload
+  const metadata = { name: fileName, parents: [folderId] };
+  if (description) metadata.description = description;
+
   const initResponse = await fetch(
     `${DRIVE_UPLOAD_API}/files?uploadType=resumable&fields=id,name,size`,
     {
@@ -144,10 +147,7 @@ export const uploadFile = async (folderId, fileName, fileUri, mimeType = 'image/
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json; charset=UTF-8',
       },
-      body: JSON.stringify({
-        name: fileName,
-        parents: [folderId],
-      }),
+      body: JSON.stringify(metadata),
     }
   );
 

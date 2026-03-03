@@ -116,6 +116,7 @@ const syncDrivePath = async (drivePathId) => {
         let gpsLongitude = null;
         let gpsAltitude = null;
         let imageNotes = null;
+        let customTitle = null;
         try {
           const exifData = await readExifData(tempFilePath);
           if (exifData.photoTakenAt) {
@@ -133,6 +134,28 @@ const syncDrivePath = async (drivePathId) => {
           }
         } catch (err) {
           console.warn(`Could not extract EXIF data from ${file.name}:`, err.message);
+        }
+
+        // Parse metadata from Drive file description (set by mobile app)
+        if (file.description && file.description.startsWith('[FUCHS_META]')) {
+          try {
+            const metaJson = file.description.substring('[FUCHS_META]'.length);
+            const meta = JSON.parse(metaJson);
+            if (meta.gps && !gpsLatitude) {
+              gpsLatitude = meta.gps.latitude;
+              gpsLongitude = meta.gps.longitude;
+              gpsAltitude = meta.gps.altitude || null;
+              console.log(`📍 GPS from Drive description: ${gpsLatitude}, ${gpsLongitude}`);
+            }
+            if (meta.notes && !imageNotes) {
+              imageNotes = meta.notes;
+            }
+            if (meta.title) {
+              customTitle = meta.title;
+            }
+          } catch (e) {
+            // Invalid JSON in description - ignore
+          }
         }
 
         let finalPath = tempFilePath;
@@ -191,7 +214,7 @@ const syncDrivePath = async (drivePathId) => {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           drivePathId,
-          fileBaseName,
+          customTitle || fileBaseName,
           file.name,
           file.downloadUrl,
           localPath,
