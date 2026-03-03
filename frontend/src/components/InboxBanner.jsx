@@ -224,75 +224,75 @@ function ImageLightbox({ images, startIndex, onClose, imageUrlFn }) {
 
   return (
     <div className="image-lightbox-overlay" onClick={(e) => { e.stopPropagation(); onClose(); }}>
-      <div
-        ref={containerRef}
-        className="image-lightbox-container"
-        onClick={e => e.stopPropagation()}
-        onMouseDown={e => { if (e.button === 1) e.preventDefault(); }}
-        style={meta ? { marginRight: '320px' } : undefined}
-      >
-        {proxyUrl && (
-          <img
-            ref={imgRef}
-            src={proxyUrl}
-            alt={displayName}
-            style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-              cursor: zoom > 1 ? (isPanningRef.current ? 'grabbing' : 'grab') : 'default'
-            }}
-            draggable={false}
-          />
-        )}
-      </div>
-
-      {/* Metadata sidebar */}
-      {meta && (
-        <div className="lightbox-sidebar" onClick={e => e.stopPropagation()}>
-          <div className="lightbox-sidebar-section">
-            <label>Name</label>
-            <div className="lightbox-sidebar-value">{displayName}</div>
-          </div>
-
-          {meta.gps && meta.gps.latitude != null && (
-            <div className="lightbox-sidebar-section">
-              <label>GPS-Standort</label>
-              <button
-                className="gps-map-btn"
-                onClick={() => window.open(
-                  `https://www.google.com/maps?q=${meta.gps.latitude},${meta.gps.longitude}`,
-                  '_blank'
-                )}
-              >
-                <span className="gps-icon">📍</span>
-                <span>Auf Google Maps öffnen</span>
-                <span className="gps-coords">
-                  {meta.gps.latitude.toFixed(5)}, {meta.gps.longitude.toFixed(5)}
-                </span>
-              </button>
-            </div>
-          )}
-
-          {meta.notes && (
-            <div className="lightbox-sidebar-section">
-              <label>Notizen</label>
-              <div className="image-notes-display">{meta.notes}</div>
-            </div>
-          )}
-
-          {currentImage.name && (
-            <div className="lightbox-sidebar-section">
-              <label>Dateiname</label>
-              <div className="lightbox-sidebar-value" style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                {currentImage.name}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
       <button className="image-lightbox-close" onClick={(e) => { e.stopPropagation(); onClose(); }}>
         <X size={20} />
       </button>
+
+      <div className="image-lightbox-body" onClick={e => e.stopPropagation()}>
+        <div
+          ref={containerRef}
+          className="image-lightbox-container"
+          onMouseDown={e => { if (e.button === 1) e.preventDefault(); }}
+        >
+          {proxyUrl && (
+            <img
+              ref={imgRef}
+              src={proxyUrl}
+              alt={displayName}
+              style={{
+                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                cursor: zoom > 1 ? (isPanningRef.current ? 'grabbing' : 'grab') : 'default'
+              }}
+              draggable={false}
+            />
+          )}
+        </div>
+
+        {/* Metadata sidebar */}
+        {meta && (
+          <div className="lightbox-sidebar">
+            <div className="lightbox-sidebar-section">
+              <label>Name</label>
+              <div className="lightbox-sidebar-value">{displayName}</div>
+            </div>
+
+            {meta.gps && meta.gps.latitude != null && (
+              <div className="lightbox-sidebar-section">
+                <label>GPS-Standort</label>
+                <button
+                  className="gps-map-btn"
+                  onClick={() => window.open(
+                    `https://www.google.com/maps?q=${meta.gps.latitude},${meta.gps.longitude}`,
+                    '_blank'
+                  )}
+                >
+                  <span className="gps-icon">📍</span>
+                  <span>Auf Google Maps öffnen</span>
+                  <span className="gps-coords">
+                    {meta.gps.latitude.toFixed(5)}, {meta.gps.longitude.toFixed(5)}
+                  </span>
+                </button>
+              </div>
+            )}
+
+            {meta.notes && (
+              <div className="lightbox-sidebar-section">
+                <label>Notizen</label>
+                <div className="image-notes-display">{meta.notes}</div>
+              </div>
+            )}
+
+            {currentImage.name && (
+              <div className="lightbox-sidebar-section">
+                <label>Dateiname</label>
+                <div className="lightbox-sidebar-value" style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                  {currentImage.name}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {images.length > 1 && currentIndex > 0 && (
         <button className="image-lightbox-nav prev" onClick={goPrev}>

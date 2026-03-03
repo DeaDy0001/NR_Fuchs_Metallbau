@@ -29,6 +29,7 @@ export default function CameraScreen({ navigation, route }) {
   const [gpsEnabled, setGpsEnabled] = useState(false);
   const [locationPermission, setLocationPermission] = useState(null);
   const cameraRef = useRef(null);
+  const metadataInputRef = useRef(null);
 
   // Project assignment
   const [projectId, setProjectId] = useState(route.params?.projectId || null);
@@ -518,7 +519,13 @@ export default function CameraScreen({ navigation, route }) {
 
         {/* Metadata editing modal */}
         {editingField && (
-          <Modal transparent animationType="slide">
+          <Modal
+            transparent
+            animationType="slide"
+            onShow={() => {
+              setTimeout(() => metadataInputRef.current?.focus(), 100);
+            }}
+          >
             <TouchableOpacity style={styles.metadataModalOverlay} activeOpacity={1} onPress={saveEditField}>
               <View style={styles.metadataModalContent} onStartShouldSetResponder={() => true}>
                 <View style={styles.metadataModalHeader}>
@@ -530,6 +537,7 @@ export default function CameraScreen({ navigation, route }) {
                   </TouchableOpacity>
                 </View>
                 <TextInput
+                  ref={metadataInputRef}
                   style={[
                     styles.metadataModalInput,
                     editingField === 'notes' && { height: 120, textAlignVertical: 'top' }

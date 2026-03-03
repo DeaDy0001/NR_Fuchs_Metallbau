@@ -1078,6 +1078,28 @@ const bulkConvertImages = async (req, res) => {
   }
 };
 
+const updateImageNotes = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { notes } = req.body;
+
+    const image = db.prepare('SELECT * FROM drive_images WHERE id = ?').get(id);
+    if (!image) {
+      return res.status(404).json({ error: 'Image not found' });
+    }
+
+    db.prepare("UPDATE drive_images SET image_notes = ?, updated_at = datetime('now') WHERE id = ?")
+      .run(notes || null, id);
+
+    const result = db.prepare('SELECT * FROM drive_images WHERE id = ?').get(id);
+    result.is_compressed = !!result.is_compressed;
+    res.json(result);
+  } catch (error) {
+    console.error('Error updating image notes:', error);
+    res.status(500).json({ error: 'Failed to update image notes' });
+  }
+};
+
 module.exports = {
   getDriveSettings,
   addDrivePath,
@@ -1091,5 +1113,6 @@ module.exports = {
   refreshImages,
   assignImageToProject,
   unassignImageFromProject,
-  bulkConvertImages
+  bulkConvertImages,
+  updateImageNotes
 };

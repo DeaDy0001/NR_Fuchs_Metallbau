@@ -170,11 +170,18 @@ function MainTabs() {
         options={{
           title: 'Start',
           headerTitle: () => (
-            <Image
-              source={require('./assets/Fuchs Metallbau.jpg')}
-              style={{ height: 34, width: 140, resizeMode: 'contain' }}
-            />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Image
+                source={require('./assets/Fuchs Metallbau.jpg')}
+                style={{ height: 32, width: 32, borderRadius: 8 }}
+                resizeMode="cover"
+              />
+              <Text style={{ color: colors.textPrimary, fontSize: 17, fontWeight: '700' }}>
+                Fuchs Metallbau
+              </Text>
+            </View>
           ),
+          headerTitleAlign: 'center',
         }}
       />
       <Tab.Screen name="Camera" component={DummyScreen} options={{ tabBarLabel: 'Foto' }} />

@@ -414,6 +414,14 @@ export const updateRecentPhotoProject = async (photoId, projectId, projectName) 
   );
 };
 
+export const updateRecentPhotoMetadata = async (photoId, customTitle, notes) => {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE recent_photos SET custom_title = ?, notes = ? WHERE id = ?',
+    [customTitle || null, notes || null, photoId]
+  );
+};
+
 export const deleteRecentPhoto = async (photoId) => {
   const db = await getDb();
   await db.runAsync('DELETE FROM recent_photos WHERE id = ?', [photoId]);

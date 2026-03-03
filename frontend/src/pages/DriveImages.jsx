@@ -90,6 +90,8 @@ function DriveImages() {
   const [showAllProjectsInSidebar, setShowAllProjectsInSidebar] = useState(false); // Alle Projekte in Modal-Sidebar
   const [sidebarProjectSearch, setSidebarProjectSearch] = useState(''); // Suche in Modal-Sidebar Projekte
   const [selectedProjectId, setSelectedProjectId] = useState(null); // Aktives Projekt für Quick-Assign
+  const [editingNotes, setEditingNotes] = useState(false); // Notizen bearbeiten
+  const [notesValue, setNotesValue] = useState(''); // Aktueller Notizen-Text
 
   // Keep refs in sync for event handlers
   useEffect(() => { zoomRef.current = zoomLevel; }, [zoomLevel]);
@@ -913,9 +915,29 @@ function DriveImages() {
     }
   };
 
+  const handleSaveNotes = async () => {
+    if (!selectedImage) return;
+    try {
+      const response = await fetch(`/api/drive/images/${selectedImage.id}/notes`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: notesValue.trim() })
+      });
+      if (response.ok) {
+        const updatedImage = await response.json();
+        setSelectedImage(updatedImage);
+        setEditingNotes(false);
+        loadImages(true);
+      }
+    } catch (error) {
+      console.error('Error saving notes:', error);
+    }
+  };
+
   const closeModal = () => {
     setSelectedImage(null);
     setEditingName('');
+    setEditingNotes(false);
   };
 
   return (
@@ -1951,14 +1973,47 @@ function DriveImages() {
                   </div>
 
                   {/* Notes */}
-                  {selectedImage.image_notes && (
-                    <div className="modal-section">
+                  <div className="modal-section">
+                    <div className="notes-header">
                       <label>Notizen</label>
+                      {!editingNotes ? (
+                        <button
+                          className="notes-edit-btn"
+                          onClick={() => { setEditingNotes(true); setNotesValue(selectedImage.image_notes || ''); }}
+                          title="Notizen bearbeiten"
+                        >
+                          <Pencil size={12} />
+                        </button>
+                      ) : (
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <button className="notes-edit-btn notes-save-btn" onClick={handleSaveNotes} title="Speichern">
+                            <Check size={12} />
+                          </button>
+                          <button className="notes-edit-btn" onClick={() => setEditingNotes(false)} title="Abbrechen">
+                            <X size={12} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    {editingNotes ? (
+                      <textarea
+                        className="notes-edit-textarea"
+                        value={notesValue}
+                        onChange={(e) => setNotesValue(e.target.value)}
+                        placeholder="Notizen eingeben..."
+                        rows={3}
+                        autoFocus
+                      />
+                    ) : selectedImage.image_notes ? (
                       <div className="image-notes-display">
                         {selectedImage.image_notes}
                       </div>
-                    </div>
-                  )}
+                    ) : (
+                      <div className="detail-text" style={{ color: 'var(--text-tertiary)', fontStyle: 'italic', fontSize: '0.8125rem' }}>
+                        Keine Notizen
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Lower section: Project assignment */}

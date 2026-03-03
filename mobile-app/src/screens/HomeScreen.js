@@ -123,6 +123,11 @@ export default function HomeScreen({ navigation }) {
         id: p.id,
         name: p.file_name,
         localUri: p.thumbnail_uri || p.file_uri,
+        customTitle: p.custom_title || null,
+        notes: p.notes || null,
+        gpsData: p.gps_data || null,
+        createdAt: p.created_at || null,
+        isLocal: true,
       }));
       navigation.navigate('ImageView', {
         images: imagesList,
