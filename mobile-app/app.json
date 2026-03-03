@@ -30,6 +30,7 @@
     },
     "scheme": "com.fuchsmetallbau.app",
     "plugins": [
+      "./plugins/withCleartextTraffic",
       [
         "expo-camera",
         {

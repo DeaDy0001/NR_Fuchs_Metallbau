@@ -159,7 +159,10 @@ export default function LoginScreen() {
       if (isMountedRef.current) {
         setAuthLoading(false);
         setUserCode(null);
-        alert('Anmeldung fehlgeschlagen', error.message);
+        const hint = error.message?.includes('Network')
+          ? 'Keine Internetverbindung. Bitte prüfe dein WLAN.'
+          : error.message;
+        alert('Anmeldung fehlgeschlagen', hint);
       }
     }
   };
@@ -290,7 +293,10 @@ export default function LoginScreen() {
       console.error('[Fuchs] WebView OAuth init error:', error);
       if (isMountedRef.current) {
         setAuthLoading(false);
-        alert('Anmeldung fehlgeschlagen', error.message);
+        const hint = error.message?.includes('Network')
+          ? 'Desktop-Server nicht erreichbar.\n\nStelle sicher, dass:\n• Die Desktop-Software läuft\n• Handy und PC im selben WLAN sind'
+          : error.message;
+        alert('Anmeldung fehlgeschlagen', hint);
       }
     }
   };
