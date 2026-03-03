@@ -226,13 +226,13 @@ echo.
 
 REM Pruefe Expo-Login in WSL (separat von Windows-Login)
 :WSL_LOGIN_CHECK
-wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && npx eas whoami" >nul 2>&1
+wsl -d Ubuntu -e /bin/bash -c "eas whoami" >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo  [INFO] Du bist in WSL nicht bei Expo eingeloggt.
     echo         Bitte melde dich jetzt an:
     echo.
-    wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && npx eas login 2>&1"
-    wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && npx eas whoami" >nul 2>&1
+    wsl -d Ubuntu -e /bin/bash -c "eas login 2>&1"
+    wsl -d Ubuntu -e /bin/bash -c "eas whoami" >nul 2>&1
     if !ERRORLEVEL! neq 0 (
         echo.
         echo  [FEHLER] Login fehlgeschlagen.
@@ -244,7 +244,7 @@ if !ERRORLEVEL! neq 0 (
         goto :BUILD_CLOUD
     )
 )
-for /f "tokens=*" %%u in ('wsl -d Ubuntu -e /bin/bash -c "cd ''!WSL_PATH!'' && npx eas whoami 2>/dev/null"') do echo  [OK] Expo-Login in WSL: %%u
+for /f "tokens=*" %%u in ('wsl -d Ubuntu -e /bin/bash -c "eas whoami 2>/dev/null"') do echo  [OK] Expo-Login in WSL: %%u
 echo.
 
 REM Schritt 3: EAS Build starten
