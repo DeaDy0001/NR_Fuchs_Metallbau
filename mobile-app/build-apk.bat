@@ -158,6 +158,14 @@ if !ERRORLEVEL! neq 0 goto :NO_WSL_JAVA
 
 echo  [OK] Java in WSL vorhanden
 
+REM Pruefe EAS CLI in WSL
+wsl -d Ubuntu -e /bin/bash -c "command -v eas" >nul 2>&1
+if !ERRORLEVEL! neq 0 (
+    echo  [..] EAS CLI in WSL wird installiert...
+    wsl -d Ubuntu -e /bin/bash -c "npm install -g eas-cli"
+    echo  [OK] EAS CLI in WSL installiert
+)
+
 echo.
 echo  ========================================
 echo   Starte lokalen APK Build via WSL...
