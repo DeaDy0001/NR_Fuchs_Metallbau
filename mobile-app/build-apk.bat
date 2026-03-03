@@ -128,46 +128,88 @@ set /p "BUILD_CHOICE=  Deine Wahl [1/2]: "
 if "!BUILD_CHOICE!"=="1" goto :BUILD_LOCAL
 goto :BUILD_CLOUD
 
-:: ── 7a. LOKAL bauen ──
+:: ── 7a. LOKAL bauen (via WSL, da Windows kein --local unterstuetzt) ──
 :BUILD_LOCAL
 echo.
-echo  Pruefe Java...
-where java >nul 2>&1
+echo  [INFO] Lokaler Android-Build braucht Linux.
+echo         Auf Windows wird dafuer WSL verwendet.
+echo.
+
+:: Check WSL
+where wsl >nul 2>&1
 if %ERRORLEVEL% neq 0 (
+    echo  [FEHLER] WSL ist nicht installiert!
     echo.
-    echo  [FEHLER] Java ist nicht installiert!
+    echo  Installation (PowerShell als Admin oeffnen):
+    echo    wsl --install
+    echo  Danach PC neu starten.
     echo.
-    echo  Fuer den lokalen Build wird Java JDK 17 benoetigt.
-    echo  Download: https://adoptium.net
-    echo.
-    echo  Nach der Installation dieses Script neu starten.
-    echo.
-    echo  Alternativ: Script neu starten und Option 2 waehlen.
+    echo  Alternativ: Script neu starten, Option 2 waehlen.
     pause
     exit /b 1
 )
-for /f "tokens=*" %%i in ('java -version 2^>^&1') do (
-    if not defined JAVA_VER set "JAVA_VER=%%i"
+echo  [OK] WSL vorhanden
+
+:: Get WSL path for current directory
+for /f "tokens=*" %%p in ('wsl wslpath -u "%CD%"') do set "WSL_PATH=%%p"
+
+:: Check Node.js in WSL
+wsl bash -c "command -v node" >nul 2>&1
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo  [FEHLER] Node.js fehlt in WSL!
+    echo.
+    echo  Oeffne ein WSL-Terminal und fuehre aus:
+    echo    curl -fsSL https://deb.nodesource.com/setup_22.x ^| sudo -E bash -
+    echo    sudo apt-get install -y nodejs
+    echo    npm install -g eas-cli
+    echo.
+    echo  Danach dieses Script erneut starten.
+    pause
+    exit /b 1
 )
-echo  [OK] %JAVA_VER%
+for /f "tokens=*" %%v in ('wsl bash -c "node -v"') do echo  [OK] Node.js in WSL: %%v
+
+:: Check Java in WSL
+wsl bash -c "command -v java" >nul 2>&1
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo  [FEHLER] Java fehlt in WSL!
+    echo.
+    echo  Oeffne ein WSL-Terminal und fuehre aus:
+    echo    sudo apt-get install -y openjdk-17-jdk
+    echo.
+    echo  Danach dieses Script erneut starten.
+    pause
+    exit /b 1
+)
+echo  [OK] Java in WSL vorhanden
 
 echo.
 echo  ========================================
-echo   Starte lokalen APK Build...
+echo   Starte lokalen APK Build via WSL...
 echo   (Das dauert ca. 2-5 Minuten)
 echo  ========================================
 echo.
-echo   Beim ersten Mal wirst du gefragt ob ein
-echo   Keystore generiert werden soll - waehle Yes.
+echo   Beim ersten Mal wirst du evtl. nach
+echo   Expo-Login gefragt und ob ein Keystore
+echo   generiert werden soll - waehle Yes.
 echo.
 
-call eas build -p android --profile preview --local --output "%APK_DEST%"
+:: npm install in WSL (Linux braucht eigene native Binaries) + Build starten
+wsl bash -c "cd '!WSL_PATH!' && npm install --silent 2>/dev/null && npx eas build -p android --profile preview --local --output android/app.apk"
 
 :: Pruefen ob APK erstellt wurde
 if exist "%APK_DEST%" goto :BUILD_SUCCESS
 echo.
-echo  [FEHLER] Lokaler Build fehlgeschlagen.
-goto :NO_URL
+echo  [FEHLER] Lokaler Build via WSL fehlgeschlagen.
+echo.
+echo  Tipps:
+echo   - Stelle sicher dass du in WSL bei Expo
+echo     eingeloggt bist: eas login
+echo   - Oder starte das Script erneut mit Option 2
+echo.
+goto :CLEANUP
 
 :: ── 7b. CLOUD bauen ──
 :BUILD_CLOUD
