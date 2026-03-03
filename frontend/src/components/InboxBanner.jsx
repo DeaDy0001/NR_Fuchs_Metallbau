@@ -908,7 +908,7 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
               <div className="pending-project-meta">
                 <Image size={12} />
                 {project.image_count || 0} {(project.image_count || 0) === 1 ? 'Bild' : 'Bilder'}
-                {isUserInbox && selectedCount < totalCount && totalCount > 0 && (
+                {selectedCount < totalCount && totalCount > 0 && (
                   <span className="pending-selection-count">
                     · {selectedCount} ausgewählt
                   </span>
@@ -941,7 +941,7 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
                   title={isUserInbox ? 'Ausgewählte Bilder einem Projekt zuordnen' : 'Mit bestehendem Projekt zusammenführen'}
                 >
                   <GitMerge size={16} />
-                  Zusammenführen{isUserInbox && selectedCount > 0 ? ` (${selectedCount})` : ''}
+                  Zusammenführen{selectedCount > 0 ? ` (${selectedCount})` : ''}
                 </button>
                 {isUserInbox && project.drive_folder_id && (
                   <button
@@ -971,7 +971,7 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
         {/* Merge picker */}
         {mergeTarget?.id === project.id && (
           <div className="pending-merge-section">
-            {isUserInbox && selectedCount === 0 && (
+            {selectedCount === 0 && (
               <div className="pending-merge-hint">
                 Bitte mindestens ein Bild unten auswählen
               </div>
@@ -991,10 +991,7 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
                 <div
                   key={ep.id}
                   className="pending-merge-item"
-                  onClick={() => isUserInbox
-                    ? handleSelectiveMerge(project, ep)
-                    : handleMerge(project, ep)
-                  }
+                  onClick={() => handleSelectiveMerge(project, ep)}
                 >
                   <div
                     className="pending-merge-color"
@@ -1033,40 +1030,36 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
               </div>
             ) : folderImages.length > 0 ? (
               <>
-                {(isUserInbox || deleteCount > 0) && (
-                  <div className="pending-images-toolbar">
-                    {isUserInbox && (
-                      <button
-                        className="btn-select-all"
-                        onClick={() => selectedCount === totalCount ? deselectAllImages(folderId) : selectAllImages(folderId)}
-                      >
-                        {selectedCount === totalCount ? <CheckSquare size={14} /> : <Square size={14} />}
-                        {selectedCount === totalCount ? 'Alle abwählen' : 'Alle auswählen'}
-                      </button>
-                    )}
-                    <span className="pending-images-count">
-                      {isUserInbox && <>{selectedCount} / {totalCount} ausgewählt</>}
-                      {deleteCount > 0 && isUserInbox && ' · '}
-                      {deleteCount > 0 && <span className="delete-count-label">{deleteCount} zum Löschen</span>}
-                    </span>
-                    {deleteCount > 0 && (
-                      <button
-                        className="btn-delete-marked"
-                        onClick={() => handleDeleteMarked(folderId, project)}
-                      >
-                        <Trash2 size={14} />
-                        Löschen bestätigen
-                      </button>
-                    )}
-                  </div>
-                )}
+                <div className="pending-images-toolbar">
+                  <button
+                    className="btn-select-all"
+                    onClick={() => selectedCount === totalCount ? deselectAllImages(folderId) : selectAllImages(folderId)}
+                  >
+                    {selectedCount === totalCount ? <CheckSquare size={14} /> : <Square size={14} />}
+                    {selectedCount === totalCount ? 'Alle abwählen' : 'Alle auswählen'}
+                  </button>
+                  <span className="pending-images-count">
+                    {selectedCount} / {totalCount} ausgewählt
+                    {deleteCount > 0 && ' · '}
+                    {deleteCount > 0 && <span className="delete-count-label">{deleteCount} zum Löschen</span>}
+                  </span>
+                  {deleteCount > 0 && (
+                    <button
+                      className="btn-delete-marked"
+                      onClick={() => handleDeleteMarked(folderId, project)}
+                    >
+                      <Trash2 size={14} />
+                      Löschen bestätigen
+                    </button>
+                  )}
+                </div>
                 <div className="pending-images-grid">
                   {folderImages.map((img, idx) => {
                     const isSelected = selected.has(img.id);
                     const isMarkedDelete = deleteMarked.has(img.id);
                     const cardClass = isMarkedDelete
-                      ? `pending-image-card marked-delete${isUserInbox ? ' selectable' : ''}`
-                      : `pending-image-card ${isUserInbox ? (isSelected ? 'selectable selected' : 'selectable') : ''}`;
+                      ? 'pending-image-card marked-delete selectable'
+                      : `pending-image-card selectable${isSelected ? ' selected' : ''}`;
                     return (
                       <div
                         key={img.id}
@@ -1074,9 +1067,7 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
                         title={parseFuchsMeta(img.description)?.title || img.name}
                         onClick={isMarkedDelete
                           ? () => toggleDeleteMark(folderId, img.id)
-                          : isUserInbox
-                            ? () => toggleImageSelection(folderId, img.id)
-                            : () => openLightbox(folderId, idx)
+                          : () => openLightbox(folderId, idx)
                         }
                       >
                         {img.id ? (
@@ -1086,8 +1077,11 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
                             <Image size={24} />
                           </div>
                         )}
-                        {isUserInbox && !isMarkedDelete && (
-                          <div className={`pending-image-checkbox ${isSelected ? 'checked' : ''}`}>
+                        {!isMarkedDelete && (
+                          <div
+                            className={`pending-image-checkbox ${isSelected ? 'checked' : ''}`}
+                            onClick={(e) => { e.stopPropagation(); toggleImageSelection(folderId, img.id); }}
+                          >
                             {isSelected ? <CheckSquare size={18} /> : <Square size={18} />}
                           </div>
                         )}
@@ -1104,15 +1098,6 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
                         >
                           <Trash2 size={12} />
                         </button>
-                        {isUserInbox && !isMarkedDelete && (
-                          <button
-                            className="pending-image-zoom"
-                            onClick={(e) => { e.stopPropagation(); openLightbox(folderId, idx); }}
-                            title="Vergrößern"
-                          >
-                            <Search size={12} />
-                          </button>
-                        )}
                       </div>
                     );
                   })}

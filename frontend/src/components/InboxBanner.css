@@ -411,7 +411,7 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
-/* Selectable image cards (user inbox) */
+/* Selectable image cards (all inbox cards) */
 .pending-image-card.selectable {
   cursor: pointer;
   border-color: rgba(100, 100, 100, 0.3);
@@ -441,6 +441,11 @@
   padding: 2px;
   line-height: 0;
   z-index: 1;
+  cursor: pointer;
+}
+
+.pending-image-checkbox:hover {
+  color: #a78bfa;
 }
 
 .pending-image-checkbox.checked {
@@ -448,33 +453,7 @@
   background: rgba(0, 0, 0, 0.7);
 }
 
-.pending-image-zoom {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
-  border: none;
-  border-radius: 4px;
-  color: #a0a0a0;
-  cursor: pointer;
-  z-index: 1;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.pending-image-card:hover .pending-image-zoom {
-  opacity: 1;
-}
-
-.pending-image-zoom:hover {
-  color: white;
-  background: rgba(0, 0, 0, 0.8);
-}
+/* zoom button removed - click on image opens lightbox directly */
 
 .pending-image-card img {
   width: 100%;
