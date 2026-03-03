@@ -156,44 +156,44 @@ REM WSL-Pfad ermitteln
 for /f "tokens=*" %%p in ('wsl -d Ubuntu -- wslpath -u "!CD!"') do set "WSL_PATH=%%p"
 
 REM Pruefe Node.js in WSL
-wsl -d Ubuntu -e /bin/bash -c "command -v node" >nul 2>&1
+wsl -d Ubuntu -e /bin/bash -lc "command -v node" >nul 2>&1
 if !ERRORLEVEL! neq 0 goto :WSL_NO_NODE
 
-for /f "tokens=*" %%v in ('wsl -d Ubuntu -e /bin/bash -c "node -v"') do echo  [OK] Node.js in WSL: %%v
+for /f "tokens=*" %%v in ('wsl -d Ubuntu -e /bin/bash -lc "node -v"') do echo  [OK] Node.js in WSL: %%v
 
 REM Pruefe Java in WSL
-wsl -d Ubuntu -e /bin/bash -c "command -v java" >nul 2>&1
+wsl -d Ubuntu -e /bin/bash -lc "command -v java" >nul 2>&1
 if !ERRORLEVEL! neq 0 goto :WSL_NO_JAVA
 
 echo  [OK] Java in WSL vorhanden
 
 REM Pruefe Android SDK in WSL
-wsl -d Ubuntu -e /bin/bash -c "test -f $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager" >nul 2>&1
+wsl -d Ubuntu -e /bin/bash -lc "test -f $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager" >nul 2>&1
 if !ERRORLEVEL! neq 0 goto :WSL_NO_SDK
 echo  [OK] Android SDK in WSL vorhanden
 
 REM Pruefe NDK in WSL (wird von React Native benoetigt)
-wsl -d Ubuntu -e /bin/bash -c "test -f $HOME/android-sdk/ndk/27.1.12297006/source.properties" >nul 2>&1
+wsl -d Ubuntu -e /bin/bash -lc "test -f $HOME/android-sdk/ndk/27.1.12297006/source.properties" >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo  [..] NDK fehlt - wird nachinstalliert...
-    wsl -d Ubuntu -e /bin/bash -c "$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk 'ndk;27.1.12297006' 2>&1"
+    wsl -d Ubuntu -e /bin/bash -lc "$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk 'ndk;27.1.12297006' 2>&1"
     echo  [OK] NDK installiert
 )
 
 REM Pruefe EAS CLI in WSL
-wsl -d Ubuntu -e /bin/bash -c "command -v eas" >nul 2>&1
+wsl -d Ubuntu -e /bin/bash -lc "command -v eas" >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo  [..] EAS CLI in WSL wird installiert...
-    wsl -d Ubuntu -e /bin/bash -c "npm install -g eas-cli"
+    wsl -d Ubuntu -e /bin/bash -lc "npm install -g eas-cli"
     echo  [OK] EAS CLI in WSL installiert
 )
 
 REM Pruefe Yarn in WSL (wird von EAS Build benoetigt)
-wsl -d Ubuntu -e /bin/bash -c "command -v yarn" >nul 2>&1
+wsl -d Ubuntu -e /bin/bash -lc "command -v yarn" >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo  [..] Yarn in WSL wird installiert...
-    wsl -d Ubuntu -u root -e /bin/bash -c "npm install -g yarn"
-    wsl -d Ubuntu -e /bin/bash -c "command -v yarn" >nul 2>&1
+    wsl -d Ubuntu -u root -e /bin/bash -lc "npm install -g yarn"
+    wsl -d Ubuntu -e /bin/bash -lc "command -v yarn" >nul 2>&1
     if !ERRORLEVEL! neq 0 (
         echo  [FEHLER] Yarn konnte nicht installiert werden.
         pause
@@ -215,24 +215,24 @@ echo.
 
 REM Schritt 1: Cache leeren und Abhaengigkeiten installieren
 echo  [1/3] Loesche Build-Cache...
-wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && rm -rf dist/ .expo/ node_modules/.cache android/ 2>/dev/null; echo ok"
+wsl -d Ubuntu -e /bin/bash -lc "cd '!WSL_PATH!' && rm -rf dist/ .expo/ node_modules/.cache android/ 2>/dev/null; echo ok"
 echo  [OK] Cache geleert
 echo.
 echo  [2/3] Installiere Abhaengigkeiten in WSL...
 echo        (Das kann beim ersten Mal 1-2 Min dauern)
-wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && npm install 2>&1"
+wsl -d Ubuntu -e /bin/bash -lc "cd '!WSL_PATH!' && npm install 2>&1"
 echo  [OK] Abhaengigkeiten in WSL installiert
 echo.
 
 REM Pruefe Expo-Login in WSL (separat von Windows-Login)
 :WSL_LOGIN_CHECK
-wsl -d Ubuntu -e /bin/bash -c "eas whoami" >nul 2>&1
+wsl -d Ubuntu -e /bin/bash -lc "eas whoami" >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo  [INFO] Du bist in WSL nicht bei Expo eingeloggt.
     echo         Bitte melde dich jetzt an:
     echo.
-    wsl -d Ubuntu -e /bin/bash -c "eas login 2>&1"
-    wsl -d Ubuntu -e /bin/bash -c "eas whoami" >nul 2>&1
+    wsl -d Ubuntu -e /bin/bash -lc "eas login 2>&1"
+    wsl -d Ubuntu -e /bin/bash -lc "eas whoami" >nul 2>&1
     if !ERRORLEVEL! neq 0 (
         echo.
         echo  [FEHLER] Login fehlgeschlagen.
@@ -244,13 +244,13 @@ if !ERRORLEVEL! neq 0 (
         goto :BUILD_CLOUD
     )
 )
-for /f "tokens=*" %%u in ('wsl -d Ubuntu -e /bin/bash -c "eas whoami 2>/dev/null"') do echo  [OK] Expo-Login in WSL: %%u
+for /f "tokens=*" %%u in ('wsl -d Ubuntu -e /bin/bash -lc "eas whoami 2>/dev/null"') do echo  [OK] Expo-Login in WSL: %%u
 echo.
 
 REM Schritt 3: EAS Build starten
 echo  [3/3] Baue APK... (Ausgabe von EAS folgt unten)
 echo  ----------------------------------------
-wsl -d Ubuntu -e /bin/bash -c "export ANDROID_HOME=$HOME/android-sdk && export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH && cd '!WSL_PATH!' && eas build -p android --profile preview --local --output android/app.apk 2>&1"
+wsl -d Ubuntu -e /bin/bash -lc "export ANDROID_HOME=$HOME/android-sdk && export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH && cd '!WSL_PATH!' && eas build -p android --profile preview --local --output android/app.apk 2>&1"
 echo  ----------------------------------------
 
 if exist "%APK_DEST%" goto :BUILD_SUCCESS
@@ -328,7 +328,7 @@ echo  [..] Installiere Grundpakete in WSL...
 wsl -d Ubuntu -u root -e /bin/bash -c "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH && apt-get update -qq && apt-get install -y curl ca-certificates gnupg"
 echo  [..] Installiere Node.js in WSL...
 wsl -d Ubuntu -u root -e /bin/bash -c "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs"
-wsl -d Ubuntu -e /bin/bash -c "command -v node" >nul 2>&1
+wsl -d Ubuntu -e /bin/bash -lc "command -v node" >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo  [FEHLER] Installation fehlgeschlagen.
     echo.
@@ -356,7 +356,7 @@ if /i not "!INSTALL_JAVA!"=="j" goto :WSL_NO_JAVA_SKIP
 echo.
 echo  [..] Installiere Java in WSL (kann etwas dauern)...
 wsl -d Ubuntu -u root -e /bin/bash -c "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH && apt-get update -qq && apt-get install -y openjdk-17-jdk"
-wsl -d Ubuntu -e /bin/bash -c "command -v java" >nul 2>&1
+wsl -d Ubuntu -e /bin/bash -lc "command -v java" >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo  [FEHLER] Installation fehlgeschlagen.
     echo.
@@ -386,8 +386,8 @@ echo.
 echo  [..] Installiere Voraussetzungen...
 wsl -d Ubuntu -u root -e /bin/bash -c "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH && apt-get update -qq && apt-get install -y unzip curl"
 echo  [..] Lade Android Command-Line Tools herunter...
-wsl -d Ubuntu -e /bin/bash -c "mkdir -p $HOME/android-sdk/cmdline-tools && cd /tmp && curl -fL -o cmdline-tools.zip 'https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip' && unzip -qo cmdline-tools.zip -d cmdline-tools-tmp && rm -rf $HOME/android-sdk/cmdline-tools/latest && mv cmdline-tools-tmp/cmdline-tools $HOME/android-sdk/cmdline-tools/latest && rm -f cmdline-tools.zip && rm -rf cmdline-tools-tmp"
-wsl -d Ubuntu -e /bin/bash -c "test -f $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager" >nul 2>&1
+wsl -d Ubuntu -e /bin/bash -lc "mkdir -p $HOME/android-sdk/cmdline-tools && cd /tmp && curl -fL -o cmdline-tools.zip 'https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip' && unzip -qo cmdline-tools.zip -d cmdline-tools-tmp && rm -rf $HOME/android-sdk/cmdline-tools/latest && mv cmdline-tools-tmp/cmdline-tools $HOME/android-sdk/cmdline-tools/latest && rm -f cmdline-tools.zip && rm -rf cmdline-tools-tmp"
+wsl -d Ubuntu -e /bin/bash -lc "test -f $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager" >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo  [FEHLER] Download fehlgeschlagen.
     pause
@@ -395,10 +395,10 @@ if !ERRORLEVEL! neq 0 (
 )
 echo  [OK] Command-Line Tools installiert
 echo  [..] Akzeptiere Android-Lizenzen...
-wsl -d Ubuntu -e /bin/bash -c "yes 2>/dev/null | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk --licenses >/dev/null 2>&1"
+wsl -d Ubuntu -e /bin/bash -lc "yes 2>/dev/null | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk --licenses >/dev/null 2>&1"
 echo  [..] Installiere Build-Tools, Platform und NDK...
 echo      (Das kann 2-3 Minuten dauern)
-wsl -d Ubuntu -e /bin/bash -c "$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk 'platform-tools' 'build-tools;36.0.0' 'platforms;android-36' 'ndk;27.1.12297006' 2>&1"
+wsl -d Ubuntu -e /bin/bash -lc "$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/android-sdk 'platform-tools' 'build-tools;36.0.0' 'platforms;android-36' 'ndk;27.1.12297006' 2>&1"
 echo  [OK] Android SDK installiert
 goto :BUILD_LOCAL
 :WSL_NO_SDK_SKIP

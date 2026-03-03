@@ -141,12 +141,12 @@ export default function ConnectScreen() {
         // Save the Drive connection (without meta/inbox folders - will be created after Google Sign-In)
         await addDriveConnection(parsed.name, parsed.rootFolderId);
 
-        alert(
+        await alert(
           'Einrichtung erfolgreich!',
           `Drive-Ordner "${parsed.name}" wurde gespeichert.\n\nMelde dich jetzt mit deinem Google-Konto an.`
         );
 
-        // Transition to LoginScreen
+        // Transition to LoginScreen (after user dismisses dialog)
         onSetupComplete();
       } catch (error) {
         alert('Fehler', error.message);
