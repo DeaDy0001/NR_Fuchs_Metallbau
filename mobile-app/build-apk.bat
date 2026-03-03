@@ -137,23 +137,23 @@ REM Pruefe ob WSL installiert ist
 where wsl >nul 2>&1
 if !ERRORLEVEL! neq 0 goto :NO_WSL
 
-REM Pruefe ob eine Linux-Distribution in WSL vorhanden ist
-wsl -e sh -c "echo ok" >nul 2>&1
+REM Pruefe ob Ubuntu in WSL vorhanden ist
+wsl -d Ubuntu -e /bin/bash -c "echo ok" >nul 2>&1
 if !ERRORLEVEL! neq 0 goto :NO_WSL_DISTRO
 
-echo  [OK] WSL vorhanden
+echo  [OK] WSL Ubuntu vorhanden
 
 REM WSL-Pfad ermitteln
-for /f "tokens=*" %%p in ('wsl wslpath -u "!CD!"') do set "WSL_PATH=%%p"
+for /f "tokens=*" %%p in ('wsl -d Ubuntu -- wslpath -u "!CD!"') do set "WSL_PATH=%%p"
 
 REM Pruefe Node.js in WSL
-wsl -e sh -c "command -v node" >nul 2>&1
+wsl -d Ubuntu -e /bin/bash -c "command -v node" >nul 2>&1
 if !ERRORLEVEL! neq 0 goto :NO_WSL_NODE
 
-for /f "tokens=*" %%v in ('wsl -e sh -c "node -v"') do echo  [OK] Node.js in WSL: %%v
+for /f "tokens=*" %%v in ('wsl -d Ubuntu -e /bin/bash -c "node -v"') do echo  [OK] Node.js in WSL: %%v
 
 REM Pruefe Java in WSL
-wsl -e sh -c "command -v java" >nul 2>&1
+wsl -d Ubuntu -e /bin/bash -c "command -v java" >nul 2>&1
 if !ERRORLEVEL! neq 0 goto :NO_WSL_JAVA
 
 echo  [OK] Java in WSL vorhanden
@@ -170,7 +170,7 @@ echo   generiert werden soll - waehle Yes.
 echo.
 
 REM npm install in WSL + Build starten
-wsl -e sh -c "cd '!WSL_PATH!' && npm install --silent 2>/dev/null && npx eas build -p android --profile preview --local --output android/app.apk"
+wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && npm install --silent 2>/dev/null && npx eas build -p android --profile preview --local --output android/app.apk"
 
 if exist "%APK_DEST%" goto :BUILD_SUCCESS
 echo.
@@ -210,9 +210,9 @@ echo.
 echo  [FEHLER] Node.js fehlt in WSL!
 echo.
 echo  [..] Installiere Node.js automatisch in WSL...
-wsl -e sh -c "apt-get update -qq && apt-get install -y curl sudo ca-certificates gnupg 2>/dev/null || sudo apt-get update -qq && sudo apt-get install -y curl sudo ca-certificates gnupg"
-wsl -e sh -c "curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs 2>/dev/null || curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs"
-wsl -e sh -c "command -v node" >nul 2>&1
+wsl -d Ubuntu -u root -e /bin/bash -c "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH && apt-get update -qq && apt-get install -y curl ca-certificates gnupg"
+wsl -d Ubuntu -u root -e /bin/bash -c "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs"
+wsl -d Ubuntu -e /bin/bash -c "command -v node" >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo  [FEHLER] Automatische Installation fehlgeschlagen.
     echo.
@@ -225,7 +225,7 @@ if !ERRORLEVEL! neq 0 (
     pause
     exit /b 1
 )
-for /f "tokens=*" %%v in ('wsl -e sh -c "node -v"') do echo  [OK] Node.js in WSL: %%v
+for /f "tokens=*" %%v in ('wsl -d Ubuntu -e /bin/bash -c "node -v"') do echo  [OK] Node.js in WSL: %%v
 goto :BUILD_LOCAL
 
 :NO_WSL_JAVA
@@ -233,8 +233,8 @@ echo.
 echo  [FEHLER] Java fehlt in WSL!
 echo.
 echo  [..] Installiere Java automatisch in WSL...
-wsl -e sh -c "apt-get update -qq && apt-get install -y openjdk-17-jdk 2>/dev/null || sudo apt-get update -qq && sudo apt-get install -y openjdk-17-jdk"
-wsl -e sh -c "command -v java" >nul 2>&1
+wsl -d Ubuntu -u root -e /bin/bash -c "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH && apt-get update -qq && apt-get install -y openjdk-17-jdk"
+wsl -d Ubuntu -e /bin/bash -c "command -v java" >nul 2>&1
 if !ERRORLEVEL! neq 0 (
     echo  [FEHLER] Automatische Installation fehlgeschlagen.
     echo.
