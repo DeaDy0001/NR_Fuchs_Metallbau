@@ -139,19 +139,23 @@ REM Pruefe ob WSL installiert ist
 where wsl >nul 2>&1
 if !ERRORLEVEL! neq 0 goto :WSL_NOT_FOUND
 
+REM Pruefe ob eine Linux-Distribution in WSL vorhanden ist
+wsl -e sh -c "echo ok" >nul 2>&1
+if !ERRORLEVEL! neq 0 goto :WSL_NO_DISTRO
+
 echo  [OK] WSL vorhanden
 
 REM WSL-Pfad ermitteln
 for /f "tokens=*" %%p in ('wsl wslpath -u "!CD!"') do set "WSL_PATH=%%p"
 
 REM Pruefe Node.js in WSL
-wsl bash -c "command -v node" >nul 2>&1
+wsl -e sh -c "command -v node" >nul 2>&1
 if !ERRORLEVEL! neq 0 goto :WSL_NO_NODE
 
-for /f "tokens=*" %%v in ('wsl bash -c "node -v"') do echo  [OK] Node.js in WSL: %%v
+for /f "tokens=*" %%v in ('wsl -e sh -c "node -v"') do echo  [OK] Node.js in WSL: %%v
 
 REM Pruefe Java in WSL
-wsl bash -c "command -v java" >nul 2>&1
+wsl -e sh -c "command -v java" >nul 2>&1
 if !ERRORLEVEL! neq 0 goto :WSL_NO_JAVA
 
 echo  [OK] Java in WSL vorhanden
@@ -168,7 +172,7 @@ echo   generiert werden soll - waehle Yes.
 echo.
 
 REM npm install in WSL + Build starten
-wsl bash -c "cd '!WSL_PATH!' && npm install --silent 2>/dev/null && npx eas build -p android --profile preview --local --output android/app.apk"
+wsl -e sh -c "cd '!WSL_PATH!' && npm install --silent 2>/dev/null && npx eas build -p android --profile preview --local --output android/app.apk"
 
 if exist "%APK_DEST%" goto :BUILD_SUCCESS
 echo.
@@ -180,6 +184,30 @@ echo     eingeloggt bist: eas login
 echo   - Oder starte das Script erneut mit Option 2
 echo.
 goto :DONE
+
+:WSL_NO_DISTRO
+echo  [FEHLER] Keine Linux-Distribution in WSL gefunden!
+echo.
+echo  Soll Ubuntu in WSL installiert werden?
+echo  (Braucht Admin-Rechte, ca. 1-2 GB Download)
+echo.
+set "INSTALL_DISTRO="
+set /p "INSTALL_DISTRO=  Ubuntu installieren? [j/n]: "
+if /i "!INSTALL_DISTRO!"=="j" (
+    echo.
+    echo  [..] Starte Ubuntu-Installation...
+    echo  (Ein Admin-Fenster wird sich oeffnen)
+    echo.
+    powershell -Command "Start-Process cmd -ArgumentList '/c wsl --install -d Ubuntu && pause' -Verb RunAs"
+    echo.
+    echo  Nach der Installation: PC neu starten,
+    echo  dann dieses Script erneut ausfuehren.
+    pause
+    exit /b 0
+)
+echo.
+echo  [INFO] Ohne Linux-Distribution kein lokaler Build. Wechsle zu Cloud-Build...
+goto :BUILD_CLOUD
 
 :WSL_NOT_FOUND
 echo  [FEHLER] WSL ist nicht installiert!
@@ -215,8 +243,8 @@ set /p "INSTALL_NODE=  Installieren? [j/n]: "
 if /i "!INSTALL_NODE!"=="j" (
     echo.
     echo  [..] Installiere Node.js in WSL...
-    wsl bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs"
-    wsl bash -c "command -v node" >nul 2>&1
+    wsl -e sh -c "curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E sh - && sudo apt-get install -y nodejs"
+    wsl -e sh -c "command -v node" >nul 2>&1
     if !ERRORLEVEL! neq 0 (
         echo  [FEHLER] Installation fehlgeschlagen.
         pause
@@ -239,8 +267,8 @@ set /p "INSTALL_JAVA=  Installieren? [j/n]: "
 if /i "!INSTALL_JAVA!"=="j" (
     echo.
     echo  [..] Installiere Java in WSL (kann etwas dauern)...
-    wsl bash -c "sudo apt-get update -qq && sudo apt-get install -y openjdk-17-jdk"
-    wsl bash -c "command -v java" >nul 2>&1
+    wsl -e sh -c "sudo apt-get update -qq && sudo apt-get install -y openjdk-17-jdk"
+    wsl -e sh -c "command -v java" >nul 2>&1
     if !ERRORLEVEL! neq 0 (
         echo  [FEHLER] Installation fehlgeschlagen.
         pause

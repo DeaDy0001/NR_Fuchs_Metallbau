@@ -137,19 +137,23 @@ REM Pruefe ob WSL installiert ist
 where wsl >nul 2>&1
 if !ERRORLEVEL! neq 0 goto :NO_WSL
 
+REM Pruefe ob eine Linux-Distribution in WSL vorhanden ist
+wsl -e sh -c "echo ok" >nul 2>&1
+if !ERRORLEVEL! neq 0 goto :NO_WSL_DISTRO
+
 echo  [OK] WSL vorhanden
 
 REM WSL-Pfad ermitteln
 for /f "tokens=*" %%p in ('wsl wslpath -u "!CD!"') do set "WSL_PATH=%%p"
 
 REM Pruefe Node.js in WSL
-wsl bash -c "command -v node" >nul 2>&1
+wsl -e sh -c "command -v node" >nul 2>&1
 if !ERRORLEVEL! neq 0 goto :NO_WSL_NODE
 
-for /f "tokens=*" %%v in ('wsl bash -c "node -v"') do echo  [OK] Node.js in WSL: %%v
+for /f "tokens=*" %%v in ('wsl -e sh -c "node -v"') do echo  [OK] Node.js in WSL: %%v
 
 REM Pruefe Java in WSL
-wsl bash -c "command -v java" >nul 2>&1
+wsl -e sh -c "command -v java" >nul 2>&1
 if !ERRORLEVEL! neq 0 goto :NO_WSL_JAVA
 
 echo  [OK] Java in WSL vorhanden
@@ -166,7 +170,7 @@ echo   generiert werden soll - waehle Yes.
 echo.
 
 REM npm install in WSL + Build starten
-wsl bash -c "cd '!WSL_PATH!' && npm install --silent 2>/dev/null && npx eas build -p android --profile preview --local --output android/app.apk"
+wsl -e sh -c "cd '!WSL_PATH!' && npm install --silent 2>/dev/null && npx eas build -p android --profile preview --local --output android/app.apk"
 
 if exist "%APK_DEST%" goto :BUILD_SUCCESS
 echo.
@@ -178,6 +182,17 @@ echo     eingeloggt bist: eas login
 echo   - Oder starte das Script erneut mit Option 2
 echo.
 goto :CLEANUP
+
+:NO_WSL_DISTRO
+echo  [FEHLER] Keine Linux-Distribution in WSL gefunden!
+echo.
+echo  Oeffne PowerShell als Admin und fuehre aus:
+echo    wsl --install -d Ubuntu
+echo  Danach PC neu starten.
+echo.
+echo  Alternativ: Script neu starten, Option 2 waehlen.
+pause
+exit /b 1
 
 :NO_WSL
 echo  [FEHLER] WSL ist nicht installiert!
