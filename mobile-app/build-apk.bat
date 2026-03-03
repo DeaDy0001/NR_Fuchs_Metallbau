@@ -137,10 +137,15 @@ set "TEMP_JSON=%TEMP%\eas_build_result.json"
 call eas build:list --platform android --limit 1 --status finished --json > "%TEMP_JSON%" 2>nul
 
 :: PowerShell liest JSON-Datei, extrahiert URL und laedt APK herunter
+:: Hinweis: EAS gibt manchmal Text vor dem JSON aus, daher suchen wir die JSON-Array-Zeile
 powershell -Command ^
-  "$json = Get-Content '%TEMP_JSON%' -Raw -ErrorAction SilentlyContinue; " ^
-  "if (-not $json) { Write-Host '  [FEHLER] Keine Build-Daten gefunden'; exit 1 }; " ^
-  "$url = ($json | ConvertFrom-Json)[0].artifacts.buildUrl; " ^
+  "$raw = Get-Content '%TEMP_JSON%' -Raw -ErrorAction SilentlyContinue; " ^
+  "if (-not $raw) { Write-Host '  [FEHLER] Keine Build-Daten gefunden'; exit 1 }; " ^
+  "$jsonStart = $raw.IndexOf('['); " ^
+  "if ($jsonStart -lt 0) { Write-Host '  [FEHLER] Kein JSON in Build-Ausgabe gefunden'; exit 1 }; " ^
+  "$json = $raw.Substring($jsonStart); " ^
+  "$builds = $json | ConvertFrom-Json; " ^
+  "$url = $builds[0].artifacts.buildUrl; " ^
   "if (-not $url) { Write-Host '  [FEHLER] Kein Download-Link im Build gefunden'; exit 1 }; " ^
   "Write-Host '  [OK] Download-Link:' $url; " ^
   "Write-Host '  [..] Lade APK herunter...'; " ^
