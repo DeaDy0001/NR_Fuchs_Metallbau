@@ -108,38 +108,9 @@ if !ERRORLEVEL! equ 0 (
     goto :PROJECT_READY
 )
 
-echo.
-echo  EAS Projekt muss einmalig konfiguriert werden.
-echo  Waehle "Create a new EAS project" wenn gefragt.
-echo  (Die ID wird in eas-project.json gespeichert, nicht in app.json)
-echo.
-set "TEMP_INIT=%TEMP%\eas_init_output.txt"
-call eas init > "%TEMP_INIT%" 2>&1
-type "%TEMP_INIT%"
-powershell -Command ^
-    "$output = Get-Content '%TEMP_INIT%' -Raw -ErrorAction SilentlyContinue; " ^
-    "$match = [regex]::Match($output, 'ID:\s*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})'); " ^
-    "if ($match.Success) { " ^
-    "  $id = $match.Groups[1].Value; " ^
-    "  Write-Output ('{\"projectId\":\"' + $id + '\"}') | Set-Content 'eas-project.json' -Encoding UTF8; " ^
-    "  Write-Host '  [OK] eas-project.json erstellt (ID:' $id ')'; " ^
-    "  exit 0 " ^
-    "} else { " ^
-    "  Write-Host '  [FEHLER] Keine Project-ID in eas Ausgabe gefunden'; " ^
-    "  exit 1 " ^
-    "}"
-if exist "%TEMP_INIT%" del "%TEMP_INIT%"
-if !ERRORLEVEL! neq 0 (
-    echo  [FEHLER] Projekt-Konfiguration fehlgeschlagen.
-    pause
-    exit /b 1
-)
-if not exist "eas-project.json" (
-    echo  [FEHLER] Projekt-Konfiguration fehlgeschlagen.
-    pause
-    exit /b 1
-)
-echo  [OK] EAS Projekt konfiguriert
+echo  [FEHLER] eas-project.json fehlt! Bitte Repository neu klonen.
+pause
+exit /b 1
 
 :PROJECT_READY
 
