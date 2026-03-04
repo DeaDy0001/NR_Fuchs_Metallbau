@@ -578,7 +578,7 @@ export default function ImageViewScreen({ route, navigation }) {
         >
           <KeyboardAvoidingView
             style={{ flex: 1 }}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            behavior="padding"
           >
             <TouchableOpacity style={styles.editModalOverlay} activeOpacity={1} onPress={saveEditField}>
               <View style={styles.editModalContent} onStartShouldSetResponder={() => true}>

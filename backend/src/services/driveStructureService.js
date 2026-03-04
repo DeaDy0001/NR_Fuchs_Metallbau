@@ -20,8 +20,8 @@
 const path = require('path');
 const fs = require('fs');
 const db = require('../config/database');
+const { isAuthenticated } = require('./authService');
 const {
-  isAuthenticated,
   extractFolderId,
   findOrCreateSubfolder,
   findSubfolder,

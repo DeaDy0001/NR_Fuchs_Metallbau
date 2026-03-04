@@ -13,8 +13,8 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const db = require('../config/database');
+const { isAuthenticated } = require('./authService');
 const {
-  isAuthenticated,
   findOrCreateSubfolder,
   listAllFilesInFolder,
   deleteFileFromDrive,
