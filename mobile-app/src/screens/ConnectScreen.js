@@ -1,12 +1,14 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, FlatList } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, FlatList, Modal, SafeAreaView } from 'react-native';
 import { useDialog } from '../components/CustomDialog';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { setSetting, getDriveConnections, addDriveConnection, setActiveDriveConnection, removeDriveConnection, updateDriveConnectionFolders } from '../services/database';
+import { setSetting, getSetting, getDriveConnections, addDriveConnection, setActiveDriveConnection, removeDriveConnection, updateDriveConnectionFolders } from '../services/database';
 import { verifyConnection, findOrCreateFolder } from '../services/driveService';
+import { hasFullDriveScope, storeTokens, storeUserInfo, storeGrantedScope } from '../services/googleAuth';
 
 export default function ConnectScreen() {
   const { alert } = useDialog();
@@ -17,6 +19,9 @@ export default function ConnectScreen() {
   const [scanned, setScanned] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [scopeUpgrade, setScopeUpgrade] = useState(null); // { authUrl, redirectUri, sessionId }
+  const [scopeUpgradeLoading, setScopeUpgradeLoading] = useState(false);
+  const pendingConnectionRef = useRef(null);
 
   // In setup mode (no Google auth yet), go straight to scanner
   const isSetupMode = !isGoogleAuthed;
@@ -222,21 +227,135 @@ export default function ConnectScreen() {
     try {
       const accessible = await verifyConnection(connection.root_folder_id);
       if (!accessible) {
-        alert('Nicht erreichbar', 'Der Drive-Ordner ist nicht mehr zugänglich.');
+        // Check if the problem is a limited scope (drive.file instead of drive)
+        const fullScope = await hasFullDriveScope();
+        if (!fullScope) {
+          // Token has limited scope - try to upgrade via server
+          pendingConnectionRef.current = connection;
+          setConnecting(false);
+          return startScopeUpgrade();
+        }
+        // Full scope but still can't access - real permission issue
+        alert('Nicht erreichbar', 'Der Drive-Ordner ist nicht mehr zugänglich.\n\nMögliche Ursachen:\n- Der Ordner wurde gelöscht\n- Die Freigabe wurde entfernt');
         setConnecting(false);
         return;
       }
 
-      if (!connection.meta_folder_id || !connection.inbox_folder_id) {
-        const metaFolder = await findOrCreateFolder(connection.root_folder_id, 'NR_Fuchs_Meta');
-        const inboxFolder = await findOrCreateFolder(metaFolder.id, 'inbox');
-        await updateDriveConnectionFolders(connection.id, metaFolder.id, inboxFolder.id);
-        connection.meta_folder_id = metaFolder.id;
-        connection.inbox_folder_id = inboxFolder.id;
+      await activateConnection(connection);
+    } catch (error) {
+      alert('Fehler', error.message);
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const activateConnection = async (connection) => {
+    if (!connection.meta_folder_id || !connection.inbox_folder_id) {
+      const metaFolder = await findOrCreateFolder(connection.root_folder_id, 'NR_Fuchs_Meta');
+      const inboxFolder = await findOrCreateFolder(metaFolder.id, 'inbox');
+      await updateDriveConnectionFolders(connection.id, metaFolder.id, inboxFolder.id);
+      connection.meta_folder_id = metaFolder.id;
+      connection.inbox_folder_id = inboxFolder.id;
+    }
+    await setActiveDriveConnection(connection.id);
+    onDriveConnect(connection);
+  };
+
+  // ---- Scope Upgrade: WebView OAuth to get full drive scope ----
+
+  const startScopeUpgrade = async () => {
+    const serverUrl = await getSetting('serverUrl');
+    if (!serverUrl) {
+      alert(
+        'Eingeschränkter Zugriff',
+        'Dein Login hat nur eingeschränkte Berechtigungen (drive.file statt drive).\n\n' +
+        'Für Zugriff auf freigegebene Ordner muss die Desktop-Software laufen.\n\n' +
+        'Bitte starte die Desktop-Software, scanne den QR-Code erneut und melde dich neu an.'
+      );
+      return;
+    }
+
+    setScopeUpgradeLoading(true);
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(`${serverUrl}/api/mobile/auth/init-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timer));
+
+      if (!res.ok) throw new Error(`Server-Fehler ${res.status}`);
+
+      const { sessionId, authUrl, redirectUri } = await res.json();
+      setScopeUpgrade({ authUrl, redirectUri, sessionId, serverUrl });
+      setScopeUpgradeLoading(false);
+    } catch (e) {
+      setScopeUpgradeLoading(false);
+      const reason = e.name === 'AbortError' ? 'Timeout' : e.message;
+      alert(
+        'Eingeschränkter Zugriff',
+        `Dein Login hat nur eingeschränkte Berechtigungen.\n\n` +
+        `Desktop-Server nicht erreichbar (${reason}).\n\n` +
+        `Bitte stelle sicher, dass:\n` +
+        `- Die Desktop-Software läuft\n` +
+        `- Handy und PC im selben WLAN sind\n` +
+        `- Windows-Firewall Port 3001 erlaubt`
+      );
+    }
+  };
+
+  const handleScopeUpgradeNavigation = (request) => {
+    const { url } = request;
+    if (scopeUpgrade && url.startsWith(scopeUpgrade.redirectUri)) {
+      const urlObj = new URL(url);
+      const code = urlObj.searchParams.get('code');
+      const error = urlObj.searchParams.get('error');
+
+      if (error) {
+        setScopeUpgrade(null);
+        alert('Anmeldung abgebrochen', 'Die Google-Anmeldung wurde abgebrochen.');
+        return false;
       }
 
-      await setActiveDriveConnection(connection.id);
-      onDriveConnect(connection);
+      if (code) {
+        exchangeUpgradeCode(code, scopeUpgrade.redirectUri, scopeUpgrade.serverUrl);
+      }
+      return false;
+    }
+    return true;
+  };
+
+  const exchangeUpgradeCode = async (code, redirectUri, serverUrl) => {
+    setScopeUpgrade(null);
+    setConnecting(true);
+    try {
+      const res = await fetch(`${serverUrl}/api/mobile/auth/exchange`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, redirect_uri: redirectUri }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Token-Austausch fehlgeschlagen');
+
+      // Store new tokens with full drive scope
+      await storeTokens(data.access_token, data.refresh_token, data.expires_in || 3600);
+      if (data.scope) await storeGrantedScope(data.scope);
+      if (data.user_name || data.user_email) {
+        await storeUserInfo({ name: data.user_name || '', email: data.user_email || '', picture: data.user_photo || '' });
+      }
+
+      // Retry the pending connection with new tokens
+      if (pendingConnectionRef.current) {
+        const connection = pendingConnectionRef.current;
+        pendingConnectionRef.current = null;
+        const accessible = await verifyConnection(connection.root_folder_id);
+        if (accessible) {
+          await activateConnection(connection);
+          return;
+        }
+        alert('Nicht erreichbar', 'Der Ordner ist auch mit vollem Zugriff nicht erreichbar. Möglicherweise wurde die Freigabe entfernt.');
+      }
     } catch (error) {
       alert('Fehler', error.message);
     } finally {
@@ -334,6 +453,39 @@ export default function ConnectScreen() {
             )}
           </>
         )}
+      </View>
+    );
+  }
+
+  // Scope upgrade WebView modal
+  if (scopeUpgrade) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bgPrimary }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12, backgroundColor: colors.cardBg, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+          <TouchableOpacity onPress={() => setScopeUpgrade(null)} style={{ padding: 8 }}>
+            <Ionicons name="close" size={24} color={colors.textPrimary} />
+          </TouchableOpacity>
+          <Text style={{ flex: 1, color: colors.textPrimary, fontSize: 16, fontWeight: '600', marginLeft: 8 }}>
+            Google Drive Vollzugriff
+          </Text>
+        </View>
+        <WebView
+          source={{ uri: scopeUpgrade.authUrl }}
+          onShouldStartLoadWithRequest={handleScopeUpgradeNavigation}
+          onNavigationStateChange={(navState) => handleScopeUpgradeNavigation({ url: navState.url })}
+          style={{ flex: 1 }}
+          javaScriptEnabled
+          domStorageEnabled
+        />
+      </SafeAreaView>
+    );
+  }
+
+  if (scopeUpgradeLoading) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator size="large" color={colors.accent} />
+        <Text style={styles.subtitle}>Verbinde mit Desktop-Server...</Text>
       </View>
     );
   }

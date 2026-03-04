@@ -1967,6 +1967,7 @@ const mobileExchangeCode = async (req, res) => {
       access_token: tokenData.access_token,
       refresh_token: tokenData.refresh_token || null,
       expires_in: tokenData.expires_in || 3600,
+      scope: tokenData.scope || '',
       user_name: userInfo.name || '',
       user_email: userInfo.email || '',
       user_photo: userInfo.picture || '',

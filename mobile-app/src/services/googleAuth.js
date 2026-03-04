@@ -21,6 +21,23 @@ export const storeTokens = async (accessToken, refreshToken, expiresIn) => {
 };
 
 /**
+ * Store which OAuth scope was granted (e.g. 'drive' vs 'drive.file')
+ */
+export const storeGrantedScope = async (scopeString) => {
+  await setSetting('grantedScope', scopeString);
+};
+
+/**
+ * Check if the token has full Drive access (not just drive.file)
+ */
+export const hasFullDriveScope = async () => {
+  const scope = await getSetting('grantedScope');
+  if (!scope) return false;
+  const scopes = scope.split(' ');
+  return scopes.includes('https://www.googleapis.com/auth/drive');
+};
+
+/**
  * Get a valid access token (refreshes automatically if expired)
  * Uses the backend OAuth proxy for refresh since Web-type client IDs require client_secret.
  */

@@ -9,7 +9,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { storeTokens, storeUserInfo, fetchUserInfo } from '../services/googleAuth';
+import { storeTokens, storeUserInfo, fetchUserInfo, storeGrantedScope } from '../services/googleAuth';
 import { getSetting } from '../services/database';
 import config from '../config';
 
@@ -98,6 +98,7 @@ export default function LoginScreen() {
 
   const handleTokenSuccess = async (tokenData) => {
     await storeTokens(tokenData.access_token, tokenData.refresh_token, tokenData.expires_in || 3600);
+    if (tokenData.scope) await storeGrantedScope(tokenData.scope);
 
     let userInfo;
     if (tokenData.user_name || tokenData.user_email) {
