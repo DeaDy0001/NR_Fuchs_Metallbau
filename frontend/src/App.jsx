@@ -4,6 +4,7 @@ import Layout from './components/Layout';
 import SettingsModal from './components/SettingsModal';
 import DriveImages from './pages/DriveImages';
 import ProjectsList from './pages/ProjectsList';
+import InboxPage from './pages/InboxPage';
 
 function App() {
   const [settings, setSettings] = useState({
@@ -152,6 +153,9 @@ function App() {
 
           {/* Projekte */}
           <Route path="/projects" element={<ProjectsList />} />
+
+          {/* Inbox */}
+          <Route path="/inbox" element={<InboxPage />} />
 
           {/* Redirect old routes */}
           <Route path="/drive/images" element={<Navigate to="/images" replace />} />

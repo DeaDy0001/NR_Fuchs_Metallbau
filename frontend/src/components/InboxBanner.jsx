@@ -7,7 +7,6 @@ function InboxBanner() {
   const [inboxItems, setInboxItems] = useState([]);
   const [deleteRequests, setDeleteRequests] = useState([]);
   const [projectChanges, setProjectChanges] = useState([]);
-  const [showModal, setShowModal] = useState(false);
   const [scanning, setScanning] = useState(false);
   const navigate = useNavigate();
 
@@ -48,43 +47,25 @@ function InboxBanner() {
   const totalProjectChangeImages = projectChanges.reduce((sum, c) => sum + c.new_images.length, 0);
   const totalCount = inboxItems.length + (deleteRequests.length > 0 ? 1 : 0) + (projectChanges.length > 0 ? 1 : 0);
 
-  // Don't render anything if no items AND modal is closed
-  if (totalCount === 0 && !showModal) return null;
+  // Don't render anything if no items
+  if (totalCount === 0) return null;
 
   const bannerDeleteRequesters = [...new Set(deleteRequests.map(r => r.requested_by).filter(Boolean))];
 
   return (
-    <>
-      {totalCount > 0 && (
-        <div className="inbox-banner" onClick={() => setShowModal(true)}>
-          <div className="inbox-banner-content">
-            <Inbox size={18} />
-            <span>
-              {inboxItems.length > 0 && `Neue Uploads von der Handy-App (${inboxItems.length})`}
-              {inboxItems.length > 0 && (deleteRequests.length > 0 || projectChanges.length > 0) && ' · '}
-              {deleteRequests.length > 0 && `${deleteRequests.length} ${deleteRequests.length === 1 ? 'Löschanfrage' : 'Löschanfragen'}${bannerDeleteRequesters.length > 0 ? ` von ${bannerDeleteRequesters.join(', ')}` : ''}`}
-              {deleteRequests.length > 0 && projectChanges.length > 0 && ' · '}
-              {projectChanges.length > 0 && `${totalProjectChangeImages} neue Bilder in ${projectChanges.length} ${projectChanges.length === 1 ? 'Projekt' : 'Projekten'}`}
-            </span>
-            {scanning && <Loader size={14} className="spinning" />}
-          </div>
-        </div>
-      )}
-
-      {showModal && (
-        <InboxModal
-          projects={inboxItems}
-          deleteRequests={deleteRequests}
-          projectChanges={projectChanges}
-          onClose={() => setShowModal(false)}
-          onRefresh={loadInbox}
-          onNavigateToProject={(projectName) => {
-            setShowModal(false);
-            navigate('/projects', { state: { openProject: projectName } });
-          }}
-        />
-      )}
-    </>
+    <div className="inbox-banner" onClick={() => navigate('/inbox')}>
+      <div className="inbox-banner-content">
+        <Inbox size={18} />
+        <span>
+          {inboxItems.length > 0 && `Neue Uploads von der Handy-App (${inboxItems.length})`}
+          {inboxItems.length > 0 && (deleteRequests.length > 0 || projectChanges.length > 0) && ' · '}
+          {deleteRequests.length > 0 && `${deleteRequests.length} ${deleteRequests.length === 1 ? 'Löschanfrage' : 'Löschanfragen'}${bannerDeleteRequesters.length > 0 ? ` von ${bannerDeleteRequesters.join(', ')}` : ''}`}
+          {deleteRequests.length > 0 && projectChanges.length > 0 && ' · '}
+          {projectChanges.length > 0 && `${totalProjectChangeImages} neue Bilder in ${projectChanges.length} ${projectChanges.length === 1 ? 'Projekt' : 'Projekten'}`}
+        </span>
+        {scanning && <Loader size={14} className="spinning" />}
+      </div>
+    </div>
   );
 }
 
@@ -358,8 +339,8 @@ function DeletePreviewLightbox({ images, startIndex, onClose }) {
   );
 }
 
-/* ========== Inbox Modal ========== */
-function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClose, onRefresh, onNavigateToProject }) {
+/* ========== Inbox Content (used as page) ========== */
+function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClose, onRefresh, onNavigateToProject, asPage = false }) {
   const [expandedProject, setExpandedProject] = useState(null);
   const [images, setImages] = useState({});
   const [loadingImages, setLoadingImages] = useState({});
@@ -475,21 +456,10 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
 
   const handleClose = useCallback(() => {
     if (hasChangesRef.current) {
-      // Trigger Drive sync in background so merged/confirmed images appear in Bilder
       fetch('/api/drive/images/refresh', { method: 'POST' }).catch(() => {});
     }
-    onClose();
+    if (onClose) onClose();
   }, [onClose]);
-
-  // Auto-close modal when all items have been processed
-  useEffect(() => {
-    if (!hasChangesRef.current) return;
-    const totalItems = projects.length + localDeleteRequests.length + localProjectChanges.length;
-    if (totalItems === 0) {
-      const timer = setTimeout(() => handleClose(), 1200);
-      return () => clearTimeout(timer);
-    }
-  }, [projects, localDeleteRequests, localProjectChanges, handleClose]);
 
   useEffect(() => {
     loadExistingProjects();
@@ -1112,23 +1082,15 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
     );
   };
 
-  return (
-    <div className="pending-modal-overlay" onClick={handleClose}>
-      <div className="pending-modal" onClick={e => e.stopPropagation()}>
-        <div className="pending-modal-header">
-          <h2>Inbox - Neue Uploads von der App</h2>
-          <button className="pending-modal-close" onClick={handleClose}>
-            <X size={20} />
-          </button>
+  const bodyContent = (
+    <>
+      {notification && (
+        <div className={`pending-notification ${notification.type}`}>
+          {notification.message}
         </div>
+      )}
 
-        {notification && (
-          <div className={`pending-notification ${notification.type}`}>
-            {notification.message}
-          </div>
-        )}
-
-        <div className="pending-modal-body">
+      <div className={asPage ? 'inbox-page-body' : 'pending-modal-body'}>
           {/* Delete Requests Section - collapsed by default, user must click to expand */}
           {localDeleteRequests.length > 0 && (() => {
             const uniqueRequesters = [...new Set(localDeleteRequests.map(r => r.requested_by).filter(Boolean))];
@@ -1386,7 +1348,6 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
           ) : (
             projects.map(project => renderProjectCard(project))
           )}
-        </div>
       </div>
 
       {lightbox && (
@@ -1413,8 +1374,25 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
           imageUrlFn={(img) => `/api/mobile/project-changes/image-proxy/${img.id}`}
         />
       )}
+    </>
+  );
+
+  if (asPage) return bodyContent;
+
+  return (
+    <div className="pending-modal-overlay" onClick={handleClose}>
+      <div className="pending-modal" onClick={e => e.stopPropagation()}>
+        <div className="pending-modal-header">
+          <h2>Inbox - Neue Uploads von der App</h2>
+          <button className="pending-modal-close" onClick={handleClose}>
+            <X size={20} />
+          </button>
+        </div>
+        {bodyContent}
+      </div>
     </div>
   );
 }
 
+export { InboxModal as InboxContent };
 export default InboxBanner;
