@@ -4,6 +4,18 @@ import { isAuthenticated, clearAuth, getAccessToken } from '../services/googleAu
 import { checkFolderAccess, findOrCreateFolder } from '../services/driveService';
 import { startQueueProcessing, stopQueueProcessing, addUploadListener, forceProcessQueue } from '../services/uploadQueue';
 import { startHeartbeat, stopHeartbeat } from '../services/heartbeat';
+import { checkAppUpdate } from '../services/api';
+import Constants from 'expo-constants';
+
+const isVersionNewer = (serverVersion, localVersion) => {
+  const s = (serverVersion || '0.0.0').split('.').map(Number);
+  const l = (localVersion || '0.0.0').split('.').map(Number);
+  for (let i = 0; i < Math.max(s.length, l.length); i++) {
+    if ((s[i] || 0) > (l[i] || 0)) return true;
+    if ((s[i] || 0) < (l[i] || 0)) return false;
+  }
+  return false;
+};
 
 const ensureDriveFolders = async (connection) => {
   if (!connection.meta_folder_id || !connection.inbox_folder_id) {
@@ -39,6 +51,10 @@ export const AppProvider = ({ children }) => {
   const [queueCount, setQueueCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
+  // App update state
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState(null); // { version, apkFileId }
+
   // Load saved state on mount
   useEffect(() => {
     console.log('[Fuchs] AppProvider useEffect - calling loadState');
@@ -46,10 +62,22 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   // Start upload queue processing and heartbeat when connected to Drive
+  // Also check for app updates in the background
   useEffect(() => {
     if (isConnected && activeConnection) {
       startQueueProcessing();
       startHeartbeat();
+      // Check for app update on Drive (silently in background)
+      checkAppUpdate()
+        .then((update) => {
+          if (!update?.version || !update?.apkFileId) return;
+          const installedVersion = Constants.expoConfig?.version || '0.0.0';
+          if (isVersionNewer(update.version, installedVersion)) {
+            setUpdateAvailable(true);
+            setUpdateInfo(update);
+          }
+        })
+        .catch(() => {}); // silently ignore network errors
     } else {
       stopQueueProcessing();
       stopHeartbeat();
@@ -215,6 +243,25 @@ export const AppProvider = ({ children }) => {
     setQueueCount(uploadCount + deleteCount);
   };
 
+  const recheckUpdate = async () => {
+    try {
+      const update = await checkAppUpdate();
+      if (!update?.version || !update?.apkFileId) {
+        setUpdateAvailable(false);
+        setUpdateInfo(null);
+        return;
+      }
+      const installedVersion = Constants.expoConfig?.version || '0.0.0';
+      if (isVersionNewer(update.version, installedVersion)) {
+        setUpdateAvailable(true);
+        setUpdateInfo(update);
+      } else {
+        setUpdateAvailable(false);
+        setUpdateInfo(null);
+      }
+    } catch {}
+  };
+
   return (
     <AppContext.Provider value={{
       // Auth state
@@ -226,6 +273,10 @@ export const AppProvider = ({ children }) => {
       userEmail,
       queueCount,
       isLoading,
+      // App update
+      updateAvailable,
+      updateInfo,
+      recheckUpdate,
       // Actions
       onSetupComplete,
       onGoogleLogin,

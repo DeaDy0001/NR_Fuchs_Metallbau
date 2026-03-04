@@ -83,6 +83,10 @@ const startServer = async () => {
     const { initializeAutoSync } = require('./services/driveSyncService');
     initializeAutoSync();
 
+    // Watch for new mobile APK and auto-upload to Google Drive
+    const { initializeAppUpdateWatcher } = require('./services/appUpdateService');
+    initializeAppUpdateWatcher();
+
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`
 ╔═══════════════════════════════════════════╗

@@ -30,6 +30,8 @@ import {
   findOrCreateFolder,
   findFolder,
 } from './driveService';
+import * as FileSystem from 'expo-file-system';
+import { getAccessToken } from './googleAuth';
 
 // ============================================================
 // Projects - folder-based
@@ -392,6 +394,80 @@ export const requestDeleteFromSoftware = async (photos) => {
  */
 export const getImageUrl = async (driveFileId) => {
   return getImageSource(driveFileId);
+};
+
+// ============================================================
+// App Update (via Google Drive)
+// ============================================================
+
+const DRIVE_API = 'https://www.googleapis.com/drive/v3';
+
+/**
+ * Check if a newer version of the app is available on Google Drive.
+ * Looks for:  meta_folder_id / src / app update / version.json
+ *             meta_folder_id / src / app update / app.apk
+ *
+ * Returns { version, apkFileId } or null if no update found.
+ */
+export const checkAppUpdate = async () => {
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) return null;
+
+  try {
+    const srcFolder = await findFolder(connection.meta_folder_id, 'src');
+    if (!srcFolder) return null;
+
+    const updateFolder = await findFolder(srcFolder.id, 'app update');
+    if (!updateFolder) return null;
+
+    const files = await listFiles(updateFolder.id, { fields: 'files(id,name)' });
+    const versionFile = files.find(f => f.name === 'version.json');
+    const apkFile    = files.find(f => f.name === 'app.apk');
+
+    if (!versionFile || !apkFile) return null;
+
+    const versionData = await readJsonFile(versionFile.id);
+    return {
+      version:   versionData?.version || '0.0.0',
+      apkFileId: apkFile.id,
+    };
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Download the update APK from Google Drive to the local cache.
+ * @param {string} apkFileId   - Drive file ID of app.apk
+ * @param {function} onProgress - called with (percent 0-100)
+ * @returns {string} local file URI of the downloaded APK
+ */
+export const downloadAppUpdateApk = async (apkFileId, onProgress) => {
+  const destPath = FileSystem.cacheDirectory + 'fuchs-update.apk';
+
+  // Remove old cached APK
+  try {
+    const info = await FileSystem.getInfoAsync(destPath);
+    if (info.exists) await FileSystem.deleteAsync(destPath, { idempotent: true });
+  } catch {}
+
+  const token = await getAccessToken();
+  if (!token) throw new Error('Nicht mit Google angemeldet');
+
+  const dl = FileSystem.createDownloadResumable(
+    `${DRIVE_API}/files/${apkFileId}?alt=media`,
+    destPath,
+    { headers: { Authorization: `Bearer ${token}` } },
+    (progress) => {
+      if (progress.totalBytesExpectedToWrite > 0 && onProgress) {
+        onProgress(Math.round(progress.totalBytesWritten / progress.totalBytesExpectedToWrite * 100));
+      }
+    }
+  );
+
+  const result = await dl.downloadAsync();
+  if (!result?.uri) throw new Error('Download fehlgeschlagen');
+  return result.uri;
 };
 
 /**

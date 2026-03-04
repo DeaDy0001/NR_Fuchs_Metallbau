@@ -5,7 +5,7 @@ import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
-import { View, ActivityIndicator, Platform, ScrollView, TouchableOpacity, Text, Image } from 'react-native';
+import { View, ActivityIndicator, Platform, ScrollView, TouchableOpacity, Text, Image, StyleSheet } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppProvider, useApp } from './src/contexts/AppContext';
 import { colors } from './src/theme/colors';
@@ -158,8 +158,45 @@ function ProjectsStackScreen() {
   );
 }
 
-function MainTabs() {
+function UpdateBanner({ navigation }) {
+  const { updateAvailable, updateInfo } = useApp();
+  if (!updateAvailable || !updateInfo) return null;
+
   return (
+    <TouchableOpacity
+      style={bannerStyles.banner}
+      onPress={() => navigation.navigate('Main', { screen: 'Settings' })}
+      activeOpacity={0.85}
+    >
+      <Ionicons name="arrow-up-circle" size={16} color="white" />
+      <Text style={bannerStyles.text}>
+        Update verfügbar: v{updateInfo.version} – Tippen zum Installieren
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+const bannerStyles = StyleSheet.create({
+  banner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#16a34a',
+  },
+  text: {
+    color: 'white',
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+});
+
+function MainTabs({ navigation }) {
+  return (
+    <View style={{ flex: 1 }}>
+      <UpdateBanner navigation={navigation} />
     <Tab.Navigator
       tabBar={(props) => <CustomTabBar {...props} />}
       screenOptions={screenOptions}
@@ -201,6 +238,7 @@ function MainTabs() {
         options={{ title: 'Einstellungen' }}
       />
     </Tab.Navigator>
+    </View>
   );
 }
 

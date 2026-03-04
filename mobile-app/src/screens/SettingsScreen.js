@@ -6,14 +6,14 @@ import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
 import { getSetting, setSetting, getCachedProjects } from '../services/database';
 import { getCacheSize, clearCache, cleanupCache, downloadProjectImages } from '../services/syncService';
-import { fetchProjectImages } from '../services/api';
+import { fetchProjectImages, downloadAppUpdateApk } from '../services/api';
 import Slider from '../components/Slider';
 import * as FileSystem from 'expo-file-system';
 import Constants from 'expo-constants';
 
 export default function SettingsScreen({ navigation }) {
   const { alert } = useDialog();
-  const { userName, userEmail, updateUserName, disconnectDrive, logout, resetSetup, activeConnection } = useApp();
+  const { userName, userEmail, updateUserName, disconnectDrive, logout, resetSetup, activeConnection, updateAvailable, updateInfo, recheckUpdate } = useApp();
 
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(userName);
@@ -38,8 +38,7 @@ export default function SettingsScreen({ navigation }) {
   const [downloadProgress, setDownloadProgress] = useState('');
   const [downloadMaxDays, setDownloadMaxDays] = useState(60);
 
-  // App update
-  const [updateInfo, setUpdateInfo] = useState(null); // { version, size, changelog, available }
+  // App update download state (checking comes from AppContext)
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateDownloading, setUpdateDownloading] = useState(false);
   const [updateDownloadProgress, setUpdateDownloadProgress] = useState(0);
@@ -48,7 +47,6 @@ export default function SettingsScreen({ navigation }) {
 
   useEffect(() => {
     loadSettings();
-    checkForUpdate();
   }, []);
 
   const loadSettings = async () => {
@@ -72,91 +70,24 @@ export default function SettingsScreen({ navigation }) {
     await setSetting(key, String(value));
   };
 
-  const isVersionNewer = (serverVersion, localVersion) => {
-    const s = (serverVersion || '0.0.0').split('.').map(Number);
-    const l = (localVersion || '0.0.0').split('.').map(Number);
-    for (let i = 0; i < Math.max(s.length, l.length); i++) {
-      if ((s[i] || 0) > (l[i] || 0)) return true;
-      if ((s[i] || 0) < (l[i] || 0)) return false;
-    }
-    return false;
-  };
-
-  const checkForUpdate = async () => {
+  const handleCheckForUpdate = async () => {
+    setUpdateChecking(true);
     try {
-      setUpdateChecking(true);
-      const serverUrl = await getSetting('serverUrl');
-      if (!serverUrl) return;
-
-      const response = await fetch(`${serverUrl}/api/mobile/app-version`);
-      if (!response.ok) return;
-
-      const data = await response.json();
-      if (data.available && isVersionNewer(data.version, installedVersion)) {
-        setUpdateInfo(data);
-      } else {
-        setUpdateInfo(null);
-      }
-    } catch {
-      // Server not reachable, silently skip
+      await recheckUpdate();
     } finally {
       setUpdateChecking(false);
     }
   };
 
-  const formatFileSize = (bytes) => {
-    if (!bytes) return '';
-    const mb = bytes / (1024 * 1024);
-    return ` (${mb.toFixed(1)} MB)`;
-  };
-
-  const handleDownloadUpdate = async () => {
-    const serverUrl = await getSetting('serverUrl');
-    if (!serverUrl) {
-      alert('Fehler', 'Keine Server-Verbindung gefunden.');
-      return;
-    }
-
-    alert(
-      'App-Update',
-      `Version ${updateInfo.version} herunterladen und installieren?${updateInfo.changelog ? '\n\n' + updateInfo.changelog : ''}`,
-      [
-        { text: 'Abbrechen', style: 'cancel' },
-        { text: 'Aktualisieren', onPress: () => startUpdateDownload(serverUrl) },
-      ]
-    );
-  };
-
-  const startUpdateDownload = async (serverUrl) => {
+  const handleDownloadAndInstall = async () => {
+    if (!updateInfo?.apkFileId) return;
     setUpdateDownloading(true);
     setUpdateDownloadProgress(0);
-
-    const apkUri = FileSystem.cacheDirectory + 'fuchs-update.apk';
-
     try {
-      // Delete old cached APK if exists
-      const fileInfo = await FileSystem.getInfoAsync(apkUri);
-      if (fileInfo.exists) await FileSystem.deleteAsync(apkUri, { idempotent: true });
-
-      const downloadResumable = FileSystem.createDownloadResumable(
-        `${serverUrl}/api/mobile/app.apk`,
-        apkUri,
-        {},
-        (progress) => {
-          if (progress.totalBytesExpectedToWrite > 0) {
-            const percent = Math.round(
-              (progress.totalBytesWritten / progress.totalBytesExpectedToWrite) * 100
-            );
-            setUpdateDownloadProgress(percent);
-          }
-        }
-      );
-
-      const result = await downloadResumable.downloadAsync();
-      if (!result?.uri) throw new Error('Download fehlgeschlagen');
-
-      // Get content URI for Android package installer
-      const contentUri = await FileSystem.getContentUriAsync(result.uri);
+      const uri = await downloadAppUpdateApk(updateInfo.apkFileId, (pct) => {
+        setUpdateDownloadProgress(pct);
+      });
+      const contentUri = await FileSystem.getContentUriAsync(uri);
       await Linking.openURL(contentUri);
     } catch (e) {
       alert('Update-Fehler', 'Download fehlgeschlagen: ' + (e.message || 'Unbekannter Fehler'));
@@ -355,7 +286,7 @@ export default function SettingsScreen({ navigation }) {
             <Text style={styles.settingLabel}>Installierte Version</Text>
             <Text style={styles.settingDesc}>v{installedVersion}</Text>
           </View>
-          <TouchableOpacity onPress={checkForUpdate} disabled={updateChecking}>
+          <TouchableOpacity onPress={handleCheckForUpdate} disabled={updateChecking}>
             <Ionicons
               name="refresh-outline"
               size={20}
@@ -367,30 +298,26 @@ export default function SettingsScreen({ navigation }) {
         {updateChecking && (
           <View style={styles.updateRow}>
             <ActivityIndicator size="small" color={colors.accent} />
-            <Text style={styles.updateText}>Prüfe auf Updates...</Text>
+            <Text style={styles.updateText}>Prüfe auf Updates…</Text>
           </View>
         )}
 
-        {!updateChecking && updateInfo && (
+        {!updateChecking && updateAvailable && updateInfo && (
           <View style={styles.updateAvailableBox}>
             <View style={styles.updateAvailableHeader}>
               <Ionicons name="arrow-up-circle" size={20} color={colors.success} />
               <Text style={styles.updateAvailableTitle}>
                 Update verfügbar: v{updateInfo.version}
-                {formatFileSize(updateInfo.size)}
               </Text>
             </View>
-            {updateInfo.changelog ? (
-              <Text style={styles.updateChangelog}>{updateInfo.changelog}</Text>
-            ) : null}
 
             {updateDownloading ? (
               <View style={styles.updateProgressBox}>
                 <View style={[styles.updateProgressBar, { width: `${updateDownloadProgress}%` }]} />
-                <Text style={styles.updateProgressText}>{updateDownloadProgress}% heruntergeladen...</Text>
+                <Text style={styles.updateProgressText}>{updateDownloadProgress}% heruntergeladen…</Text>
               </View>
             ) : (
-              <TouchableOpacity style={styles.updateButton} onPress={handleDownloadUpdate}>
+              <TouchableOpacity style={styles.updateButton} onPress={handleDownloadAndInstall}>
                 <Ionicons name="download-outline" size={18} color="white" />
                 <Text style={styles.updateButtonText}>Herunterladen & Installieren</Text>
               </TouchableOpacity>
@@ -398,7 +325,7 @@ export default function SettingsScreen({ navigation }) {
           </View>
         )}
 
-        {!updateChecking && !updateInfo && (
+        {!updateChecking && !updateAvailable && (
           <Text style={styles.updateUpToDate}>App ist aktuell</Text>
         )}
       </View>

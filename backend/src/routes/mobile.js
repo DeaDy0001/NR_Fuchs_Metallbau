@@ -111,37 +111,15 @@ router.get('/app.apk', (req, res) => {
   }
 });
 
-// APK version check for in-app update system
-router.get('/app-version', (req, res) => {
-  const apkPath = path.join(__dirname, '../../../mobile-app/android/app.apk');
-  const versionPath = path.join(__dirname, '../../../mobile-app/android/version.json');
-
-  if (!fs.existsSync(apkPath)) {
-    return res.json({ available: false });
+// Manually trigger APK upload to Google Drive (called from web frontend)
+router.post('/release-apk', async (req, res) => {
+  try {
+    const { triggerManualUpload } = require('../services/appUpdateService');
+    await triggerManualUpload();
+    res.json({ success: true, message: 'APK wurde zu Google Drive hochgeladen' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
-
-  const stats = fs.statSync(apkPath);
-  let version = '0.0.0';
-  let buildNumber = 0;
-  let changelog = null;
-
-  if (fs.existsSync(versionPath)) {
-    try {
-      const data = JSON.parse(fs.readFileSync(versionPath, 'utf8'));
-      version = data.version || '0.0.0';
-      buildNumber = data.buildNumber || 0;
-      changelog = data.changelog || null;
-    } catch {}
-  }
-
-  res.json({
-    available: true,
-    version,
-    buildNumber,
-    size: stats.size,
-    changelog,
-    updatedAt: stats.mtime.toISOString(),
-  });
 });
 
 // ---- Authenticated routes (mobile app) ----
