@@ -551,6 +551,31 @@ const migrations = [
 
       console.log('✓ Migration create_pending_image_metadata_table completed');
     }
+  },
+  {
+    id: 23,
+    name: 'add_year_fields',
+    up: () => {
+      console.log('Running migration: add_year_fields');
+
+      const projectsCols = db.pragma('table_info(projects)').map(col => col.name);
+      if (!projectsCols.includes('year')) {
+        db.exec('ALTER TABLE projects ADD COLUMN year INTEGER');
+      }
+      if (!projectsCols.includes('local_base_path')) {
+        db.exec('ALTER TABLE projects ADD COLUMN local_base_path TEXT');
+      }
+
+      const settingsCols = db.pragma('table_info(project_settings)').map(col => col.name);
+      if (!settingsCols.includes('year_detection_mode')) {
+        db.exec("ALTER TABLE project_settings ADD COLUMN year_detection_mode TEXT DEFAULT 'flat'");
+      }
+      if (!settingsCols.includes('excluded_folders')) {
+        db.exec("ALTER TABLE project_settings ADD COLUMN excluded_folders TEXT DEFAULT '[]'");
+      }
+
+      console.log('✓ Migration add_year_fields completed');
+    }
   }
 ];
 

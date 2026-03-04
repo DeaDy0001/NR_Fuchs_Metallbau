@@ -96,6 +96,7 @@ export const fetchProjects = async (onProject = null) => {
       image_count: imageCount,
       is_own: 1,
       is_starred: meta.is_starred ? 1 : 0,
+      year: meta.year || null,
       updated_at: folder.modifiedTime,
     };
 

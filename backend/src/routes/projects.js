@@ -5,6 +5,7 @@ const projectsController = require('../controllers/projectsController');
 // Project settings routes
 router.get('/settings', projectsController.getProjectSettings);
 router.post('/settings/path', projectsController.setProjectPath);
+router.post('/settings/year-mode', projectsController.setYearMode);
 
 // Pending mobile projects (must be before /:id routes!)
 router.get('/pending', projectsController.getPendingProjects);

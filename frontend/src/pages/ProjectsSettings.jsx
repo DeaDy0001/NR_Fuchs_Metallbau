@@ -1,6 +1,24 @@
 import { useState, useEffect } from 'react';
-import { FolderOpen, Save, RefreshCw, Cloud, ImageIcon } from 'lucide-react';
+import { FolderOpen, Save, RefreshCw, Cloud, X, Plus } from 'lucide-react';
 import './ProjectsSettings.css';
+
+const YEAR_MODES = [
+  {
+    key: 'flat',
+    label: 'Einfacher Ordner (Standard)',
+    description: 'Jeder Unterordner im gewählten Pfad ist ein Projekt. Kein automatisches Jahr. Bestimmte Unterordner können ausgeschlossen werden.',
+  },
+  {
+    key: 'suffix',
+    label: 'Ordner mit Jahreszahl am Ende',
+    description: 'Der konfigurierte Pfad endet mit einer Jahreszahl (z.B. GVU_2025). Das System findet automatisch alle Geschwister-Ordner mit demselben Basisnamen und anderen Jahren (GVU_2024, GVU_2026, …). Jedes Projekt erhält das Jahr seines Ordners.',
+  },
+  {
+    key: 'subfolder',
+    label: 'Jahresordner als Unterordner',
+    description: 'Im konfigurierten Ordner befinden sich Unterordner, die nur aus einer Jahreszahl bestehen (2023, 2024, 2026, …). Die darin enthaltenen Ordner sind die Projekte – jedes bekommt das Jahr seines Elternordners. Fehlende Jahre werden ignoriert.',
+  },
+];
 
 function ProjectsSettings() {
   const [settings, setSettings] = useState({
@@ -17,6 +35,12 @@ function ProjectsSettings() {
   const [includePhotos, setIncludePhotos] = useState(true);
   const [driveSyncResult, setDriveSyncResult] = useState(null);
 
+  // Year detection
+  const [yearMode, setYearMode] = useState('flat');
+  const [excludedFolders, setExcludedFolders] = useState([]);
+  const [newExclude, setNewExclude] = useState('');
+  const [yearModeSaving, setYearModeSaving] = useState(false);
+
   useEffect(() => {
     loadSettings();
   }, []);
@@ -30,10 +54,47 @@ function ProjectsSettings() {
         setNewPath(data.project_path || '');
         setSyncInterval(data.sync_interval || 30);
         setAutoSyncEnabled(data.auto_sync_enabled === 1);
+        setYearMode(data.year_detection_mode || 'flat');
+        try {
+          setExcludedFolders(JSON.parse(data.excluded_folders || '[]'));
+        } catch {
+          setExcludedFolders([]);
+        }
       }
     } catch (error) {
       console.error('Error loading settings:', error);
     }
+  };
+
+  const handleSaveYearMode = async () => {
+    setYearModeSaving(true);
+    try {
+      const response = await fetch('/api/projects/settings/year-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year_detection_mode: yearMode, excluded_folders: excludedFolders }),
+      });
+      if (!response.ok) {
+        const err = await response.json();
+        alert(`Fehler: ${err.error}`);
+      }
+    } catch (error) {
+      alert('Fehler beim Speichern');
+    } finally {
+      setYearModeSaving(false);
+    }
+  };
+
+  const handleAddExclude = () => {
+    const val = newExclude.trim();
+    if (val && !excludedFolders.includes(val)) {
+      setExcludedFolders([...excludedFolders, val]);
+      setNewExclude('');
+    }
+  };
+
+  const handleRemoveExclude = (folder) => {
+    setExcludedFolders(excludedFolders.filter(f => f !== folder));
   };
 
   const handleSavePath = async () => {
@@ -290,6 +351,31 @@ function ProjectsSettings() {
                     <li>{driveSyncResult.skippedImages} Bilder bereits auf Drive</li>
                   )}
                 </ul>
+                {driveSyncResult.driveStatus && driveSyncResult.driveStatus.length > 0 && (
+                  <div className="drive-status-table">
+                    <strong>Drive-Status pro Projekt:</strong>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Projekt</th>
+                          <th>Auf Drive</th>
+                          <th>Lokal</th>
+                          <th>Drive</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {driveSyncResult.driveStatus.map((s, i) => (
+                          <tr key={i} className={!s.onDrive || s.driveImages < s.localImages ? 'status-warning' : ''}>
+                            <td>{s.name}</td>
+                            <td>{s.onDrive ? '✓' : '✗'}</td>
+                            <td>{s.localImages}</td>
+                            <td>{s.driveImages}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
                 {driveSyncResult.errors && driveSyncResult.errors.length > 0 && (
                   <div className="drive-sync-errors">
                     <strong>Fehler ({driveSyncResult.errors.length}):</strong>
@@ -309,6 +395,77 @@ function ProjectsSettings() {
             )}
           </div>
         )}
+      </div>
+
+      <div className="settings-section">
+        <h2>Jahreserkennung</h2>
+        <p className="section-description">
+          Legen Sie fest, wie das System das Jahr für jedes Projekt ermittelt.
+          Das erkannte Jahr wird in <code>project.json</code> auf Google Drive gespeichert
+          und in der mobilen App als Badge angezeigt.
+        </p>
+
+        <div className="year-mode-options">
+          {YEAR_MODES.map(mode => (
+            <label key={mode.key} className={`year-mode-option ${yearMode === mode.key ? 'selected' : ''}`}>
+              <input
+                type="radio"
+                name="yearMode"
+                value={mode.key}
+                checked={yearMode === mode.key}
+                onChange={() => setYearMode(mode.key)}
+              />
+              <div className="year-mode-content">
+                <span className="year-mode-label">{mode.label}</span>
+                <span className="year-mode-desc">{mode.description}</span>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        {yearMode === 'flat' && (
+          <div className="excluded-folders-section">
+            <h3>Ausgeschlossene Ordner</h3>
+            <p className="section-description">
+              Diese Unterordner werden beim Synchronisieren ignoriert und nicht als Projekte erfasst.
+            </p>
+            <div className="exclude-input-row">
+              <input
+                type="text"
+                className="input"
+                placeholder="Ordnername eingeben…"
+                value={newExclude}
+                onChange={e => setNewExclude(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleAddExclude()}
+              />
+              <button className="btn btn-secondary" onClick={handleAddExclude}>
+                <Plus size={16} />
+                Hinzufügen
+              </button>
+            </div>
+            {excludedFolders.length > 0 && (
+              <div className="excluded-folder-list">
+                {excludedFolders.map(f => (
+                  <span key={f} className="excluded-folder-chip">
+                    {f}
+                    <button onClick={() => handleRemoveExclude(f)} title="Entfernen">
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        <button
+          className="btn btn-primary"
+          onClick={handleSaveYearMode}
+          disabled={yearModeSaving}
+        >
+          <Save size={18} />
+          {yearModeSaving ? 'Speichern…' : 'Einstellungen speichern'}
+        </button>
       </div>
 
       <div className="settings-section">
