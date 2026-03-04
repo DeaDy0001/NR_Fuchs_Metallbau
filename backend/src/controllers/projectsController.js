@@ -15,8 +15,37 @@ const {
   listFilesInFolder,
   uploadFileToDrive,
   deleteFileFromDrive,
+  upsertJsonFileToDrive,
 } = require('../services/googleDriveService');
 const { isAuthenticated, getDriveClient } = require('../services/authService');
+
+/**
+ * Push project metadata (tags, color, notes) as project.json to the Drive project folder.
+ * Called after any update to project metadata. Fails silently.
+ */
+const pushProjectJsonToDrive = async (project) => {
+  try {
+    if (!await isAuthenticated()) return;
+    const drivePath = db.prepare('SELECT path FROM drive_paths LIMIT 1').get();
+    if (!drivePath) return;
+    const { extractFolderId: extractId, findOrCreateSubfolder: findOrCreate } = require('../services/googleDriveService');
+    const rootFolderId = extractId(drivePath.path);
+    if (!rootFolderId) return;
+    const metaFolder = await findOrCreate(rootFolderId, 'NR_Fuchs_Meta');
+    const projektFolder = await findOrCreate(metaFolder.id, 'Projekte');
+    const projectFolder = await findOrCreate(projektFolder.id, project.folder_name);
+    const tags = project.tags ? (typeof project.tags === 'string' ? JSON.parse(project.tags) : project.tags) : [];
+    await upsertJsonFileToDrive(projectFolder.id, 'project.json', {
+      color: project.color || null,
+      notes: project.notes || null,
+      tags,
+      updated_at: project.updated_at || new Date().toISOString(),
+    });
+    console.log(`[Projects] project.json auf Drive aktualisiert für "${project.folder_name}"`);
+  } catch (e) {
+    console.error(`[Projects] Drive project.json Sync fehlgeschlagen für "${project.folder_name}":`, e.message);
+  }
+};
 
 // Get project settings (configured path)
 const getProjectSettings = (req, res) => {
@@ -311,6 +340,9 @@ const updateProject = async (req, res) => {
       const projectFolderPath = path.join(setting.project_path, updatedProject.folder_name);
       await writeProjectMetadata(updatedProject, projectFolderPath);
     }
+
+    // Sync project.json (tags, color, notes) to Google Drive (async, don't block response)
+    pushProjectJsonToDrive(updatedProject).catch(() => {});
 
     res.json(project);
   } catch (error) {

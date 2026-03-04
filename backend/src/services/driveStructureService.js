@@ -27,6 +27,7 @@ const {
   findSubfolder,
   listAllFilesInFolder,
   uploadFileToDrive,
+  upsertJsonFileToDrive,
 } = require('./googleDriveService');
 const { triggerManualUpload } = require('./appUpdateService');
 
@@ -142,12 +143,38 @@ const checkProjects = async (metaFolderId) => {
         if (uploaded > 0) {
           console.log(`[DriveStructure] Projekt "${subfolder}": ${uploaded} Bild(er) hochgeladen`);
         }
+
+        // Sync project.json (tags, color, notes) to Drive
+        await syncProjectJsonToDrive(subfolder, projectFolder.id);
       } catch (e) {
         console.error(`[DriveStructure] Fehler bei Projekt "${subfolder}":`, e.message);
       }
     }
   } catch (e) {
     console.error('[DriveStructure] Projekte-Check fehlgeschlagen:', e.message);
+  }
+};
+
+/**
+ * Write/update project.json for a project in its Drive folder.
+ * The mobile app reads this file to get project metadata (tags, color, notes).
+ */
+const syncProjectJsonToDrive = async (folderName, projectFolderId) => {
+  try {
+    const project = db.prepare("SELECT * FROM projects WHERE folder_name = ?").get(folderName);
+    if (!project) return; // no DB entry for this project (maybe inbox-only)
+
+    const tags = project.tags ? JSON.parse(project.tags) : [];
+    const data = {
+      color: project.color || null,
+      notes: project.notes || null,
+      tags,
+      updated_at: project.updated_at || new Date().toISOString(),
+    };
+
+    await upsertJsonFileToDrive(projectFolderId, 'project.json', data);
+  } catch (e) {
+    console.error(`[DriveStructure] Fehler beim Sync von project.json für "${folderName}":`, e.message);
   }
 };
 

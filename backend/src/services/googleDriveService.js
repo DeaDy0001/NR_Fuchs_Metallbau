@@ -563,6 +563,45 @@ const updateDriveFileContent = async (fileId, data) => {
   }
 };
 
+/**
+ * Create or update a JSON file in a Drive folder.
+ * If a file with the given name already exists, it's overwritten; otherwise created.
+ */
+const upsertJsonFileToDrive = async (parentFolderId, fileName, data) => {
+  try {
+    const drive = await getDriveClient();
+    const { Readable } = require('stream');
+    const content = JSON.stringify(data, null, 2);
+
+    // Check if file already exists
+    const listResponse = await drive.files.list({
+      q: `'${parentFolderId}' in parents and name = '${fileName}' and trashed = false`,
+      fields: 'files(id)',
+      pageSize: 1,
+    });
+
+    const makeStream = () => Readable.from([content]);
+
+    if (listResponse.data.files.length > 0) {
+      await drive.files.update({
+        fileId: listResponse.data.files[0].id,
+        media: { mimeType: 'application/json', body: makeStream() },
+      });
+      return listResponse.data.files[0].id;
+    } else {
+      const createResponse = await drive.files.create({
+        requestBody: { name: fileName, parents: [parentFolderId] },
+        media: { mimeType: 'application/json', body: makeStream() },
+        fields: 'id',
+      });
+      return createResponse.data.id;
+    }
+  } catch (error) {
+    console.error('Error upserting JSON file to Drive:', error.message);
+    throw error;
+  }
+};
+
 module.exports = {
   extractFolderId,
   listFilesInFolder,
@@ -582,4 +621,5 @@ module.exports = {
   uploadFileToDrive,
   readDriveFileAsJson,
   updateDriveFileContent,
+  upsertJsonFileToDrive,
 };
