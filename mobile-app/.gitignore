@@ -9,6 +9,7 @@ npm-debug.*
 *.mobileprovision
 *.orig.*
 web-build/
-android/
-!*.apk
+android/*
+!android/*.apk
+!android/version.json
 ios/

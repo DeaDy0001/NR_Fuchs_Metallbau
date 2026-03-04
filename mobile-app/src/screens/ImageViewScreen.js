@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, Image, Dimensions, TouchableOpacity,
   ActivityIndicator, FlatList, Animated, PanResponder, Modal, TextInput, Linking,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useDialog } from '../components/CustomDialog';
@@ -575,33 +576,38 @@ export default function ImageViewScreen({ route, navigation }) {
             setTimeout(() => editInputRef.current?.focus(), 100);
           }}
         >
-          <TouchableOpacity style={styles.editModalOverlay} activeOpacity={1} onPress={saveEditField}>
-            <View style={styles.editModalContent} onStartShouldSetResponder={() => true}>
-              <View style={styles.editModalHeader}>
-                <Text style={styles.editModalTitle}>
-                  {editingField === 'title' ? 'Bild-Titel' : 'Notizen'}
-                </Text>
-                <TouchableOpacity onPress={saveEditField}>
-                  <Ionicons name="checkmark-circle" size={28} color={colors.accent} />
-                </TouchableOpacity>
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <TouchableOpacity style={styles.editModalOverlay} activeOpacity={1} onPress={saveEditField}>
+              <View style={styles.editModalContent} onStartShouldSetResponder={() => true}>
+                <View style={styles.editModalHeader}>
+                  <Text style={styles.editModalTitle}>
+                    {editingField === 'title' ? 'Bild-Titel' : 'Notizen'}
+                  </Text>
+                  <TouchableOpacity onPress={saveEditField}>
+                    <Ionicons name="checkmark-circle" size={28} color={colors.accent} />
+                  </TouchableOpacity>
+                </View>
+                <TextInput
+                  ref={editInputRef}
+                  style={[
+                    styles.editModalInput,
+                    editingField === 'notes' && { height: 120, textAlignVertical: 'top' }
+                  ]}
+                  value={editFieldValue}
+                  onChangeText={setEditFieldValue}
+                  placeholder={editingField === 'title' ? 'Bildname eingeben...' : 'Notizen eingeben...'}
+                  placeholderTextColor={colors.textTertiary}
+                  autoFocus
+                  multiline={editingField === 'notes'}
+                  returnKeyType={editingField === 'title' ? 'done' : 'default'}
+                  onSubmitEditing={editingField === 'title' ? saveEditField : undefined}
+                />
               </View>
-              <TextInput
-                ref={editInputRef}
-                style={[
-                  styles.editModalInput,
-                  editingField === 'notes' && { height: 120, textAlignVertical: 'top' }
-                ]}
-                value={editFieldValue}
-                onChangeText={setEditFieldValue}
-                placeholder={editingField === 'title' ? 'Bildname eingeben...' : 'Notizen eingeben...'}
-                placeholderTextColor={colors.textTertiary}
-                autoFocus
-                multiline={editingField === 'notes'}
-                returnKeyType={editingField === 'title' ? 'done' : 'default'}
-                onSubmitEditing={editingField === 'title' ? saveEditField : undefined}
-              />
-            </View>
-          </TouchableOpacity>
+            </TouchableOpacity>
+          </KeyboardAvoidingView>
         </Modal>
       )}
 

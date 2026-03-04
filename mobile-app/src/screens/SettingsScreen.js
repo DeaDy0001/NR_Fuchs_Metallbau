@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator, Linking } from 'react-native';
 import { useDialog } from '../components/CustomDialog';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -8,6 +8,8 @@ import { getSetting, setSetting, getCachedProjects } from '../services/database'
 import { getCacheSize, clearCache, cleanupCache, downloadProjectImages } from '../services/syncService';
 import { fetchProjectImages } from '../services/api';
 import Slider from '../components/Slider';
+import * as FileSystem from 'expo-file-system';
+import Constants from 'expo-constants';
 
 export default function SettingsScreen({ navigation }) {
   const { alert } = useDialog();
@@ -36,8 +38,17 @@ export default function SettingsScreen({ navigation }) {
   const [downloadProgress, setDownloadProgress] = useState('');
   const [downloadMaxDays, setDownloadMaxDays] = useState(60);
 
+  // App update
+  const [updateInfo, setUpdateInfo] = useState(null); // { version, size, changelog, available }
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateDownloading, setUpdateDownloading] = useState(false);
+  const [updateDownloadProgress, setUpdateDownloadProgress] = useState(0);
+
+  const installedVersion = Constants.expoConfig?.version || '0.0.0';
+
   useEffect(() => {
     loadSettings();
+    checkForUpdate();
   }, []);
 
   const loadSettings = async () => {
@@ -59,6 +70,100 @@ export default function SettingsScreen({ navigation }) {
 
   const saveSetting = async (key, value) => {
     await setSetting(key, String(value));
+  };
+
+  const isVersionNewer = (serverVersion, localVersion) => {
+    const s = (serverVersion || '0.0.0').split('.').map(Number);
+    const l = (localVersion || '0.0.0').split('.').map(Number);
+    for (let i = 0; i < Math.max(s.length, l.length); i++) {
+      if ((s[i] || 0) > (l[i] || 0)) return true;
+      if ((s[i] || 0) < (l[i] || 0)) return false;
+    }
+    return false;
+  };
+
+  const checkForUpdate = async () => {
+    try {
+      setUpdateChecking(true);
+      const serverUrl = await getSetting('serverUrl');
+      if (!serverUrl) return;
+
+      const response = await fetch(`${serverUrl}/api/mobile/app-version`);
+      if (!response.ok) return;
+
+      const data = await response.json();
+      if (data.available && isVersionNewer(data.version, installedVersion)) {
+        setUpdateInfo(data);
+      } else {
+        setUpdateInfo(null);
+      }
+    } catch {
+      // Server not reachable, silently skip
+    } finally {
+      setUpdateChecking(false);
+    }
+  };
+
+  const formatFileSize = (bytes) => {
+    if (!bytes) return '';
+    const mb = bytes / (1024 * 1024);
+    return ` (${mb.toFixed(1)} MB)`;
+  };
+
+  const handleDownloadUpdate = async () => {
+    const serverUrl = await getSetting('serverUrl');
+    if (!serverUrl) {
+      alert('Fehler', 'Keine Server-Verbindung gefunden.');
+      return;
+    }
+
+    alert(
+      'App-Update',
+      `Version ${updateInfo.version} herunterladen und installieren?${updateInfo.changelog ? '\n\n' + updateInfo.changelog : ''}`,
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        { text: 'Aktualisieren', onPress: () => startUpdateDownload(serverUrl) },
+      ]
+    );
+  };
+
+  const startUpdateDownload = async (serverUrl) => {
+    setUpdateDownloading(true);
+    setUpdateDownloadProgress(0);
+
+    const apkUri = FileSystem.cacheDirectory + 'fuchs-update.apk';
+
+    try {
+      // Delete old cached APK if exists
+      const fileInfo = await FileSystem.getInfoAsync(apkUri);
+      if (fileInfo.exists) await FileSystem.deleteAsync(apkUri, { idempotent: true });
+
+      const downloadResumable = FileSystem.createDownloadResumable(
+        `${serverUrl}/api/mobile/app.apk`,
+        apkUri,
+        {},
+        (progress) => {
+          if (progress.totalBytesExpectedToWrite > 0) {
+            const percent = Math.round(
+              (progress.totalBytesWritten / progress.totalBytesExpectedToWrite) * 100
+            );
+            setUpdateDownloadProgress(percent);
+          }
+        }
+      );
+
+      const result = await downloadResumable.downloadAsync();
+      if (!result?.uri) throw new Error('Download fehlgeschlagen');
+
+      // Get content URI for Android package installer
+      const contentUri = await FileSystem.getContentUriAsync(result.uri);
+      await Linking.openURL(contentUri);
+    } catch (e) {
+      alert('Update-Fehler', 'Download fehlgeschlagen: ' + (e.message || 'Unbekannter Fehler'));
+    } finally {
+      setUpdateDownloading(false);
+      setUpdateDownloadProgress(0);
+    }
   };
 
   const handleSaveName = async () => {
@@ -241,6 +346,63 @@ export default function SettingsScreen({ navigation }) {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {/* App Update */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>App-Update</Text>
+
+        <View style={styles.settingRow}>
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>Installierte Version</Text>
+            <Text style={styles.settingDesc}>v{installedVersion}</Text>
+          </View>
+          <TouchableOpacity onPress={checkForUpdate} disabled={updateChecking}>
+            <Ionicons
+              name="refresh-outline"
+              size={20}
+              color={updateChecking ? colors.textTertiary : colors.accent}
+            />
+          </TouchableOpacity>
+        </View>
+
+        {updateChecking && (
+          <View style={styles.updateRow}>
+            <ActivityIndicator size="small" color={colors.accent} />
+            <Text style={styles.updateText}>Prüfe auf Updates...</Text>
+          </View>
+        )}
+
+        {!updateChecking && updateInfo && (
+          <View style={styles.updateAvailableBox}>
+            <View style={styles.updateAvailableHeader}>
+              <Ionicons name="arrow-up-circle" size={20} color={colors.success} />
+              <Text style={styles.updateAvailableTitle}>
+                Update verfügbar: v{updateInfo.version}
+                {formatFileSize(updateInfo.size)}
+              </Text>
+            </View>
+            {updateInfo.changelog ? (
+              <Text style={styles.updateChangelog}>{updateInfo.changelog}</Text>
+            ) : null}
+
+            {updateDownloading ? (
+              <View style={styles.updateProgressBox}>
+                <View style={[styles.updateProgressBar, { width: `${updateDownloadProgress}%` }]} />
+                <Text style={styles.updateProgressText}>{updateDownloadProgress}% heruntergeladen...</Text>
+              </View>
+            ) : (
+              <TouchableOpacity style={styles.updateButton} onPress={handleDownloadUpdate}>
+                <Ionicons name="download-outline" size={18} color="white" />
+                <Text style={styles.updateButtonText}>Herunterladen & Installieren</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {!updateChecking && !updateInfo && (
+          <Text style={styles.updateUpToDate}>App ist aktuell</Text>
+        )}
+      </View>
+
       {/* User */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Benutzer</Text>
@@ -605,6 +767,36 @@ const styles = StyleSheet.create({
     borderColor: colors.error, marginTop: 4,
   },
   dangerButtonText: { color: colors.error, fontSize: 15, fontWeight: '500' },
+
+  // Update section
+  updateRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
+  updateText: { fontSize: 13, color: colors.textSecondary },
+  updateUpToDate: { fontSize: 13, color: colors.textTertiary, paddingVertical: 4 },
+  updateAvailableBox: {
+    marginTop: 8, padding: 12, borderRadius: 10,
+    backgroundColor: 'rgba(34,197,94,0.08)', borderWidth: 1, borderColor: 'rgba(34,197,94,0.25)',
+    gap: 8,
+  },
+  updateAvailableHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  updateAvailableTitle: { fontSize: 14, fontWeight: '600', color: colors.success, flex: 1 },
+  updateChangelog: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+  updateButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, padding: 10, borderRadius: 8,
+    backgroundColor: colors.success, marginTop: 4,
+  },
+  updateButtonText: { color: 'white', fontSize: 14, fontWeight: '600' },
+  updateProgressBox: {
+    marginTop: 4, height: 28, backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 6, overflow: 'hidden', justifyContent: 'center',
+  },
+  updateProgressBar: {
+    position: 'absolute', left: 0, top: 0, bottom: 0,
+    backgroundColor: colors.success, borderRadius: 6,
+  },
+  updateProgressText: {
+    fontSize: 12, color: 'white', textAlign: 'center', fontWeight: '500',
+  },
 
   // Download section
   downloadButton: {
