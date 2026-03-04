@@ -216,17 +216,17 @@ echo   Expo-Login gefragt und ob ein Keystore
 echo   generiert werden soll - waehle Yes.
 echo.
 
-REM Schritt 1: Quelldateien in WSL-natives Dateisystem syncen
-REM (Gradle + npm auf ~/... statt /mnt/c/... ist ca. 5-10x schneller)
+REM Schritt 1: Gesamtes Repository in WSL-natives Dateisystem syncen
+REM EAS Local Build braucht die volle Repo-Struktur mit .git/ und mobile-app/-Subdir
 :WSL_BUILD_START
-echo  [1/3] Sync Quelldateien nach WSL-Dateisystem...
-wsl -d Ubuntu -e /bin/bash -lc "mkdir -p ~/builds/fuchs-metallbau/android && rsync -a --delete --exclude='node_modules/' --exclude='android/' --exclude='.expo/' --exclude='dist/' --exclude='.git/' '!WSL_PATH!/' ~/builds/fuchs-metallbau/"
+echo  [1/3] Sync Repository nach WSL-Dateisystem...
+wsl -d Ubuntu -e /bin/bash -lc "WSL_REPO=$(dirname '!WSL_PATH!') && mkdir -p ~/builds/NR_Fuchs_Metallbau && rsync -a --delete --exclude='mobile-app/node_modules/' --exclude='mobile-app/android/' --exclude='mobile-app/.expo/' --exclude='mobile-app/dist/' \"$WSL_REPO/\" ~/builds/NR_Fuchs_Metallbau/"
 echo  [OK] Dateien synchronisiert
 echo.
 
 REM Schritt 2: Abhaengigkeiten nur bei Aenderung neu installieren
 echo  [2/3] Pruefe Abhaengigkeiten...
-wsl -d Ubuntu -e /bin/bash -lc "cd ~/builds/fuchs-metallbau && if [ ! -f node_modules/.install-done ] || [ package.json -nt node_modules/.install-done ]; then echo '  package.json geaendert - installiere...' && npm install 2>&1 && touch node_modules/.install-done; else echo '  node_modules aktuell (gecacht - ueberspringe)'; fi"
+wsl -d Ubuntu -e /bin/bash -lc "cd ~/builds/NR_Fuchs_Metallbau/mobile-app && if [ ! -f node_modules/.install-done ] || [ package.json -nt node_modules/.install-done ]; then echo '  package.json geaendert - installiere...' && npm install 2>&1 && touch node_modules/.install-done; else echo '  node_modules aktuell (gecacht - ueberspringe)'; fi"
 echo  [OK] Abhaengigkeiten bereit
 echo.
 
@@ -256,7 +256,7 @@ echo.
 REM Schritt 3: EAS Build starten
 echo  [3/3] Baue APK... (Ausgabe von EAS folgt unten)
 echo  ----------------------------------------
-wsl -d Ubuntu -e /bin/bash -lc "export ANDROID_HOME=$HOME/android-sdk && export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH && export GRADLE_OPTS='-Dorg.gradle.daemon=true -Dorg.gradle.parallel=true -Dorg.gradle.caching=true -Xmx4g' && cd ~/builds/fuchs-metallbau && eas build -p android --profile preview --local --output android/app.apk 2>&1 && cp android/app.apk '!WSL_PATH!/android/app.apk' 2>/dev/null"
+wsl -d Ubuntu -e /bin/bash -lc "export ANDROID_HOME=$HOME/android-sdk && export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH && export GRADLE_OPTS='-Dorg.gradle.daemon=true -Dorg.gradle.parallel=true -Dorg.gradle.caching=true -Xmx4g' && cd ~/builds/NR_Fuchs_Metallbau/mobile-app && mkdir -p android && eas build -p android --profile preview --local --output android/app.apk 2>&1 && cp android/app.apk '!WSL_PATH!/android/app.apk' 2>/dev/null"
 echo  ----------------------------------------
 
 if exist "%APK_DEST%" goto :BUILD_SUCCESS
