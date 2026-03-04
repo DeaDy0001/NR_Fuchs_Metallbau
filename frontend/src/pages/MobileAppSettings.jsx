@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Smartphone, QrCode, RefreshCw, Trash2, CheckCircle, XCircle, Wifi, Clock, FolderOpen } from 'lucide-react';
+import { Smartphone, QrCode, RefreshCw, Trash2, CheckCircle, XCircle, Wifi, Clock, FolderOpen, Users, Mail } from 'lucide-react';
 import './MobileAppSettings.css';
 
 function MobileAppSettings() {
@@ -7,6 +7,7 @@ function MobileAppSettings() {
   const [qrLoading, setQrLoading] = useState(false);
   const [qrError, setQrError] = useState(null);
   const [devices, setDevices] = useState([]);
+  const [googleUsers, setGoogleUsers] = useState([]);
   const [notification, setNotification] = useState(null);
   const [drivePaths, setDrivePaths] = useState([]);
   const [selectedDrivePathId, setSelectedDrivePathId] = useState(null);
@@ -16,6 +17,7 @@ function MobileAppSettings() {
   useEffect(() => {
     loadDevices();
     loadConnectInfo();
+    loadGoogleUsers();
 
     // Auto-refresh devices every 30 seconds for online status
     const interval = setInterval(loadDevices, 30000);
@@ -78,6 +80,34 @@ function MobileAppSettings() {
       setDevices(data);
     } catch (error) {
       console.error('Failed to load devices:', error);
+    }
+  };
+
+  const loadGoogleUsers = async () => {
+    try {
+      const response = await fetch('/api/mobile/google-users');
+      if (response.ok) {
+        const data = await response.json();
+        setGoogleUsers(data);
+      }
+    } catch (error) {
+      console.error('Failed to load google users:', error);
+    }
+  };
+
+  const removeGoogleUser = async (userId, email) => {
+    if (!window.confirm(`Zugang für "${email}" wirklich entfernen?\n\nDiese Person kann danach nicht mehr auf den Drive-Ordner zugreifen.`)) return;
+    try {
+      const response = await fetch(`/api/mobile/google-users/${userId}`, { method: 'DELETE' });
+      if (response.ok) {
+        showNotification(`Zugang für ${email} entfernt`);
+        loadGoogleUsers();
+      } else {
+        const data = await response.json();
+        showNotification(data.error || 'Fehler beim Entfernen', 'error');
+      }
+    } catch (error) {
+      showNotification('Fehler beim Entfernen', 'error');
     }
   };
 
@@ -311,6 +341,78 @@ function MobileAppSettings() {
             ))
           )}
         </div>
+      </div>
+
+      {/* Google Users (Drive folder access) */}
+      <div className="settings-section">
+        <div className="section-header-row">
+          <div>
+            <h2>Mitarbeiter-Zugang</h2>
+            <p className="section-description">
+              Google-Konten mit Zugriff auf den Drive-Ordner. Werden automatisch hinzugefügt
+              wenn ein Mitarbeiter den QR-Code scannt und sich anmeldet.
+              Entfernen widerruft den Ordner-Zugang sofort.
+            </p>
+          </div>
+          <button className="btn btn-secondary" onClick={loadGoogleUsers}>
+            <RefreshCw size={16} />
+            Aktualisieren
+          </button>
+        </div>
+
+        <div className="devices-list">
+          {googleUsers.length === 0 ? (
+            <div className="empty-state">
+              <Users size={36} strokeWidth={1} />
+              <p>Noch keine Mitarbeiter registriert</p>
+              <span>Wenn ein Mitarbeiter den QR-Code scannt und sich mit Google anmeldet, erscheint er hier.</span>
+            </div>
+          ) : (
+            googleUsers.map(user => (
+              <div key={user.id} className="device-item">
+                <div className="device-icon">
+                  <Users size={20} />
+                </div>
+                <div className="device-info">
+                  <div className="device-name">
+                    {user.google_name || user.google_email}
+                  </div>
+                  <div className="device-meta">
+                    <span>
+                      <Mail size={12} />
+                      {user.google_email}
+                    </span>
+                    <span>
+                      <Clock size={12} />
+                      {formatDate(user.added_at)}
+                    </span>
+                    {user.drive_path_name && (
+                      <span>
+                        <FolderOpen size={12} />
+                        {user.drive_path_name}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  className="btn btn-icon btn-danger-icon"
+                  onClick={() => removeGoogleUser(user.id, user.google_email)}
+                  title="Zugang entfernen"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+
+        {googleUsers.length > 0 && (
+          <div className="info-box" style={{ marginTop: 16 }}>
+            <p style={{ margin: 0, fontSize: 13, color: '#94a3b8' }}>
+              Tipp: Stelle den Google Drive Ordner auf <strong>„Nicht öffentlich"</strong>, damit nur noch diese Mitarbeiter Zugriff haben.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

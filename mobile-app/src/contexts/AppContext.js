@@ -167,6 +167,31 @@ export const AppProvider = ({ children }) => {
   };
 
   /**
+   * Register Google user with backend so it can share the Drive folder.
+   * Must be called BEFORE verifying Drive folder access.
+   */
+  const registerWithBackend = async (userInfo, connection) => {
+    const serverUrl = await getSetting('serverUrl');
+    if (!serverUrl || !userInfo.email) return;
+
+    try {
+      await fetch(`${serverUrl}/api/mobile/register-google-user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          googleEmail: userInfo.email,
+          googleName: userInfo.name || '',
+          googleId: userInfo.id || userInfo.sub || null,
+          rootFolderId: connection?.root_folder_id || null,
+        }),
+      });
+    } catch (e) {
+      // Non-fatal - folder might already be accessible or registration can retry later
+      console.log('[Fuchs] Backend registration skipped:', e.message);
+    }
+  };
+
+  /**
    * Called after successful Google login
    */
   const onGoogleLogin = async (userInfo) => {
@@ -176,6 +201,11 @@ export const AppProvider = ({ children }) => {
 
     // Check if there's already an active connection (from QR scan setup)
     const connection = await getActiveDriveConnection();
+
+    // IMPORTANT: Register with backend FIRST so it can grant Drive access
+    // before we try to verify folder accessibility below
+    await registerWithBackend(userInfo, connection);
+
     if (connection) {
       try {
         const accessible = await checkFolderAccess(connection.root_folder_id);

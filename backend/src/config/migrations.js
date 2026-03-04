@@ -576,6 +576,27 @@ const migrations = [
 
       console.log('✓ Migration add_year_fields completed');
     }
+  },
+  {
+    id: 24,
+    name: 'create_mobile_users_table',
+    up: () => {
+      console.log('Running migration: create_mobile_users_table');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mobile_users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          google_email TEXT NOT NULL UNIQUE,
+          google_name TEXT,
+          google_id TEXT,
+          drive_path_id INTEGER,
+          drive_permission_id TEXT,
+          added_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+
+      console.log('✓ Migration create_mobile_users_table completed');
+    }
   }
 ];
 

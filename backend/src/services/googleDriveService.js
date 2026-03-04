@@ -602,6 +602,66 @@ const upsertJsonFileToDrive = async (parentFolderId, fileName, data) => {
   }
 };
 
+/**
+ * Share a Drive folder with a specific Google user (by email)
+ * @param {string} folderId - Drive folder ID
+ * @param {string} email - Google email address to share with
+ * @returns {string} permissionId - used later to revoke access
+ */
+const shareFolderWithUser = async (folderId, email) => {
+  try {
+    if (!await isAuthenticated()) {
+      throw new Error('Not authenticated');
+    }
+
+    const drive = await getDriveClient();
+    const response = await drive.permissions.create({
+      fileId: folderId,
+      requestBody: {
+        type: 'user',
+        role: 'writer',
+        emailAddress: email,
+      },
+      sendNotificationEmail: false,
+      fields: 'id',
+    });
+
+    console.log(`✅ Shared folder ${folderId} with ${email} (permissionId: ${response.data.id})`);
+    return response.data.id;
+  } catch (error) {
+    console.error('Error sharing folder with user:', error.message);
+    throw error;
+  }
+};
+
+/**
+ * Remove a specific permission from a Drive folder (revoke user access)
+ * @param {string} folderId - Drive folder ID
+ * @param {string} permissionId - Permission ID returned by shareFolderWithUser
+ */
+const removeFolderPermission = async (folderId, permissionId) => {
+  try {
+    if (!await isAuthenticated()) {
+      throw new Error('Not authenticated');
+    }
+
+    const drive = await getDriveClient();
+    await drive.permissions.delete({
+      fileId: folderId,
+      permissionId,
+    });
+
+    console.log(`✅ Removed permission ${permissionId} from folder ${folderId}`);
+  } catch (error) {
+    if (error.code === 404 || error.status === 404) {
+      console.log(`Permission ${permissionId} already removed from ${folderId}`);
+      return;
+    }
+    console.error('Error removing folder permission:', error.message);
+    throw error;
+  }
+};
+
 module.exports = {
   extractFolderId,
   listFilesInFolder,
@@ -622,4 +682,6 @@ module.exports = {
   readDriveFileAsJson,
   updateDriveFileContent,
   upsertJsonFileToDrive,
+  shareFolderWithUser,
+  removeFolderPermission,
 };

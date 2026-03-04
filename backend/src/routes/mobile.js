@@ -71,6 +71,11 @@ router.post('/image-metadata', mobile.reportImageMetadata);
 router.get('/devices', mobile.getDevices);
 router.delete('/devices/:deviceId', mobile.removeDevice);
 
+// Google user management - register from mobile app, manage from desktop
+router.post('/register-google-user', mobile.registerGoogleUser);
+router.get('/google-users', mobile.getGoogleUsers);
+router.delete('/google-users/:userId', mobile.removeGoogleUser);
+
 // Inbox (called from desktop)
 router.get('/inbox', mobile.getInbox);
 router.get('/inbox/image-proxy/:fileId', mobile.proxyInboxImage);

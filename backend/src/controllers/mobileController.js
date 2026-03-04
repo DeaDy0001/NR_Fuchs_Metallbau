@@ -2,7 +2,7 @@ const db = require('../config/database');
 const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
-const { compressImage, generateThumbnail, findSubfolder, findOrCreateSubfolder, moveFileOnDrive, listFoldersInFolder, listFilesInFolder, extractFolderId, deleteFileFromDrive, downloadFile, getFileMetadata, listAllFilesInFolder, readDriveFileAsJson, updateDriveFileContent } = require('../services/googleDriveService');
+const { compressImage, generateThumbnail, findSubfolder, findOrCreateSubfolder, moveFileOnDrive, listFoldersInFolder, listFilesInFolder, extractFolderId, deleteFileFromDrive, downloadFile, getFileMetadata, listAllFilesInFolder, readDriveFileAsJson, updateDriveFileContent, shareFolderWithUser, removeFolderPermission } = require('../services/googleDriveService');
 const { readExifData, writeExifData } = require('../services/exifService');
 const { google } = require('googleapis');
 const os = require('os');
@@ -3148,6 +3148,156 @@ const reportImageMetadata = async (req, res) => {
   }
 };
 
+// ============================================================
+// GOOGLE USER MANAGEMENT (Drive folder access)
+// ============================================================
+
+/**
+ * Register a Google user and grant them access to the Drive root folder.
+ * Called from the mobile app right after Google login.
+ * POST /api/mobile/register-google-user
+ * Body: { googleEmail, googleName, googleId?, rootFolderId? }
+ *
+ * IMPORTANT: This runs BEFORE the mobile app tries to access the folder,
+ * so the sharing permission is in place when Drive access is verified.
+ */
+const registerGoogleUser = async (req, res) => {
+  try {
+    const { googleEmail, googleName, googleId, rootFolderId } = req.body;
+
+    if (!googleEmail) {
+      return res.status(400).json({ error: 'googleEmail ist erforderlich' });
+    }
+
+    // Determine which Drive folder to share
+    let folderId = rootFolderId;
+    let drivePathId = null;
+
+    if (!folderId) {
+      // Fall back to the first configured drive path
+      const drivePath = db.prepare('SELECT id, path FROM drive_paths ORDER BY id ASC LIMIT 1').get();
+      if (!drivePath) {
+        return res.status(400).json({ error: 'Kein Google Drive Ordner konfiguriert' });
+      }
+      drivePathId = drivePath.id;
+      const urlMatch = drivePath.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+      folderId = urlMatch ? urlMatch[1] : drivePath.path;
+    } else {
+      // Find the drive_path by folder ID
+      const allPaths = db.prepare('SELECT id, path FROM drive_paths').all();
+      for (const dp of allPaths) {
+        const urlMatch = dp.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+        const dpFolderId = urlMatch ? urlMatch[1] : dp.path;
+        if (dpFolderId === folderId) {
+          drivePathId = dp.id;
+          break;
+        }
+      }
+    }
+
+    // Check if user already registered
+    const existing = db.prepare('SELECT * FROM mobile_users WHERE google_email = ?').get(googleEmail);
+    if (existing) {
+      // Already registered - update name if changed and return success
+      if (googleName && googleName !== existing.google_name) {
+        db.prepare('UPDATE mobile_users SET google_name = ? WHERE google_email = ?').run(googleName, googleEmail);
+      }
+      return res.json({ success: true, alreadyRegistered: true });
+    }
+
+    // Share the Drive folder with this Google account
+    let permissionId = null;
+    try {
+      permissionId = await shareFolderWithUser(folderId, googleEmail);
+    } catch (shareError) {
+      console.error('[Fuchs] Failed to share folder with user:', shareError.message);
+      // Continue registration even if sharing fails (folder might already be shared)
+    }
+
+    // Save user to database
+    db.prepare(`
+      INSERT INTO mobile_users (google_email, google_name, google_id, drive_path_id, drive_permission_id)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(googleEmail, googleName || null, googleId || null, drivePathId, permissionId);
+
+    console.log(`✅ Registered mobile user: ${googleEmail} (permission: ${permissionId})`);
+
+    res.json({ success: true, permissionGranted: !!permissionId });
+  } catch (error) {
+    console.error('[Fuchs] registerGoogleUser error:', error);
+    res.status(500).json({ error: 'Registrierung fehlgeschlagen: ' + error.message });
+  }
+};
+
+/**
+ * Get all registered Google/mobile users.
+ * Called from desktop settings page.
+ * GET /api/mobile/google-users
+ */
+const getGoogleUsers = (req, res) => {
+  try {
+    const users = db.prepare(`
+      SELECT mu.*, dp.name as drive_path_name
+      FROM mobile_users mu
+      LEFT JOIN drive_paths dp ON mu.drive_path_id = dp.id
+      ORDER BY mu.added_at DESC
+    `).all();
+
+    res.json(users);
+  } catch (error) {
+    console.error('[Fuchs] getGoogleUsers error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Remove a Google user and revoke their Drive folder access.
+ * Called from desktop settings page.
+ * DELETE /api/mobile/google-users/:userId
+ */
+const removeGoogleUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = db.prepare('SELECT * FROM mobile_users WHERE id = ?').get(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'Benutzer nicht gefunden' });
+    }
+
+    // Revoke Drive permission if we have the permission ID
+    if (user.drive_permission_id) {
+      // Get the folder ID from drive_paths
+      let folderId = null;
+      if (user.drive_path_id) {
+        const drivePath = db.prepare('SELECT path FROM drive_paths WHERE id = ?').get(user.drive_path_id);
+        if (drivePath) {
+          const urlMatch = drivePath.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+          folderId = urlMatch ? urlMatch[1] : drivePath.path;
+        }
+      }
+
+      if (folderId) {
+        try {
+          await removeFolderPermission(folderId, user.drive_permission_id);
+        } catch (revokeError) {
+          console.error('[Fuchs] Failed to revoke Drive permission:', revokeError.message);
+          // Continue with DB deletion even if Drive API fails
+        }
+      }
+    }
+
+    // Remove from database
+    db.prepare('DELETE FROM mobile_users WHERE id = ?').run(userId);
+
+    console.log(`✅ Removed mobile user: ${user.google_email}`);
+
+    res.json({ success: true, removedUser: user.google_email });
+  } catch (error) {
+    console.error('[Fuchs] removeGoogleUser error:', error);
+    res.status(500).json({ error: 'Entfernen fehlgeschlagen: ' + error.message });
+  }
+};
+
 module.exports = {
   generateConnectToken,
   getConnectInfo,
@@ -3193,4 +3343,7 @@ module.exports = {
   handleMobilePcCallback,
   pollPcLogin,
   deviceHeartbeat,
+  registerGoogleUser,
+  getGoogleUsers,
+  removeGoogleUser,
 };
