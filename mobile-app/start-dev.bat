@@ -220,7 +220,7 @@ REM Schritt 1: Gesamtes Repository in WSL-natives Dateisystem syncen
 REM EAS Local Build braucht die volle Repo-Struktur mit .git/ und mobile-app/-Subdir
 :WSL_BUILD_START
 echo  [1/3] Sync Repository nach WSL-Dateisystem...
-wsl -d Ubuntu -e /bin/bash -lc "WSL_REPO=$(dirname '!WSL_PATH!') && mkdir -p ~/builds/NR_Fuchs_Metallbau && rsync -a --delete --exclude='mobile-app/node_modules/' --exclude='mobile-app/android/' --exclude='mobile-app/.expo/' --exclude='mobile-app/dist/' \"$WSL_REPO/\" ~/builds/NR_Fuchs_Metallbau/"
+wsl -d Ubuntu -e /bin/bash -lc "WSL_REPO=$(dirname '!WSL_PATH!') && mkdir -p ~/builds/NR_Fuchs_Metallbau && rsync -a --delete --exclude='.git/' --exclude='mobile-app/node_modules/' --exclude='mobile-app/android/' --exclude='mobile-app/.expo/' --exclude='mobile-app/dist/' \"$WSL_REPO/\" ~/builds/NR_Fuchs_Metallbau/"
 echo  [OK] Dateien synchronisiert
 echo.
 
