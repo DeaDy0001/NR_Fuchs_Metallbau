@@ -113,9 +113,22 @@ echo  EAS Projekt muss einmalig konfiguriert werden.
 echo  Waehle "Create a new EAS project" wenn gefragt.
 echo  (Die ID wird in eas-project.json gespeichert, nicht in app.json)
 echo.
-call eas init
+set "TEMP_INIT=%TEMP%\eas_init_output.txt"
+call eas init > "%TEMP_INIT%" 2>&1
+type "%TEMP_INIT%"
 powershell -Command ^
-    "$raw = (Get-Content 'app.json' -Raw | ConvertFrom-Json).expo.extra.eas.projectId; if (-not $raw) { $raw = (Get-Content 'app.json' -Raw | ConvertFrom-Json).expo.projectId }; if ($raw) { '{\"projectId\":\"' + $raw + '\"}' | Set-Content 'eas-project.json' -Encoding UTF8; Write-Host '  [OK] eas-project.json erstellt' } else { exit 1 }"
+    "$output = Get-Content '%TEMP_INIT%' -Raw -ErrorAction SilentlyContinue; " ^
+    "$match = [regex]::Match($output, 'ID:\s*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})'); " ^
+    "if ($match.Success) { " ^
+    "  $id = $match.Groups[1].Value; " ^
+    "  Write-Output ('{\"projectId\":\"' + $id + '\"}') | Set-Content 'eas-project.json' -Encoding UTF8; " ^
+    "  Write-Host '  [OK] eas-project.json erstellt (ID:' $id ')'; " ^
+    "  exit 0 " ^
+    "} else { " ^
+    "  Write-Host '  [FEHLER] Keine Project-ID in eas Ausgabe gefunden'; " ^
+    "  exit 1 " ^
+    "}"
+if exist "%TEMP_INIT%" del "%TEMP_INIT%"
 if !ERRORLEVEL! neq 0 (
     echo  [FEHLER] Projekt-Konfiguration fehlgeschlagen.
     pause
