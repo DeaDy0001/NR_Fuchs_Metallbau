@@ -10,4 +10,5 @@ npm-debug.*
 *.orig.*
 web-build/
 android/
+!*.apk
 ios/
