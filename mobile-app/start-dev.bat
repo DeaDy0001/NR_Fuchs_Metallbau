@@ -216,15 +216,18 @@ echo   Expo-Login gefragt und ob ein Keystore
 echo   generiert werden soll - waehle Yes.
 echo.
 
-REM Schritt 1: Cache leeren und Abhaengigkeiten installieren
-echo  [1/3] Loesche Build-Cache...
-wsl -d Ubuntu -e /bin/bash -lc "cd '!WSL_PATH!' && rm -rf dist/ .expo/ node_modules/.cache android/app.apk 2>/dev/null; echo ok"
-echo  [OK] Cache geleert
+REM Schritt 1: Quelldateien in WSL-natives Dateisystem syncen
+REM (Gradle + npm auf ~/... statt /mnt/c/... ist ca. 5-10x schneller)
+:WSL_BUILD_START
+echo  [1/3] Sync Quelldateien nach WSL-Dateisystem...
+wsl -d Ubuntu -e /bin/bash -lc "mkdir -p ~/builds/fuchs-metallbau/android && rsync -a --delete --exclude='node_modules/' --exclude='android/' --exclude='.expo/' --exclude='dist/' --exclude='.git/' '!WSL_PATH!/' ~/builds/fuchs-metallbau/"
+echo  [OK] Dateien synchronisiert
 echo.
-echo  [2/3] Installiere Abhaengigkeiten in WSL...
-echo        (Das kann beim ersten Mal 1-2 Min dauern)
-wsl -d Ubuntu -e /bin/bash -lc "cd '!WSL_PATH!' && npm install 2>&1"
-echo  [OK] Abhaengigkeiten in WSL installiert
+
+REM Schritt 2: Abhaengigkeiten nur bei Aenderung neu installieren
+echo  [2/3] Pruefe Abhaengigkeiten...
+wsl -d Ubuntu -e /bin/bash -lc "cd ~/builds/fuchs-metallbau && if [ ! -f node_modules/.install-done ] || [ package.json -nt node_modules/.install-done ]; then echo '  package.json geaendert - installiere...' && npm install 2>&1 && touch node_modules/.install-done; else echo '  node_modules aktuell (gecacht - ueberspringe)'; fi"
+echo  [OK] Abhaengigkeiten bereit
 echo.
 
 REM Pruefe Expo-Login in WSL (separat von Windows-Login)
@@ -253,7 +256,7 @@ echo.
 REM Schritt 3: EAS Build starten
 echo  [3/3] Baue APK... (Ausgabe von EAS folgt unten)
 echo  ----------------------------------------
-wsl -d Ubuntu -e /bin/bash -lc "export ANDROID_HOME=$HOME/android-sdk && export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH && cd '!WSL_PATH!' && eas build -p android --profile preview --local --output android/app.apk 2>&1"
+wsl -d Ubuntu -e /bin/bash -lc "export ANDROID_HOME=$HOME/android-sdk && export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH && export GRADLE_OPTS='-Dorg.gradle.daemon=true -Dorg.gradle.parallel=true -Dorg.gradle.caching=true -Xmx4g' && cd ~/builds/fuchs-metallbau && eas build -p android --profile preview --local --output android/app.apk 2>&1 && cp android/app.apk '!WSL_PATH!/android/app.apk' 2>/dev/null"
 echo  ----------------------------------------
 
 if exist "%APK_DEST%" goto :BUILD_SUCCESS
@@ -266,7 +269,7 @@ echo   2) Cloud-Build starten
 echo   3) Beenden
 set "RETRY_BUILD="
 set /p "RETRY_BUILD=  Wahl [1/2/3]: "
-if "!RETRY_BUILD!"=="1" goto :WSL_LOGIN_CHECK
+if "!RETRY_BUILD!"=="1" goto :WSL_BUILD_START
 if "!RETRY_BUILD!"=="2" goto :BUILD_CLOUD
 goto :DONE
 
