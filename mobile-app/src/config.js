@@ -9,9 +9,9 @@
 export default {
   google: {
     // OAuth Scopes für Google Drive Zugriff
-    // Device Flow erlaubt nur drive.file (nicht den vollen drive scope)
+    // drive = Vollzugriff auf Drive (nötig um auf bestehende freigegebene Ordner zuzugreifen)
     scopes: [
-      'https://www.googleapis.com/auth/drive.file',
+      'https://www.googleapis.com/auth/drive',
       'https://www.googleapis.com/auth/userinfo.profile',
       'https://www.googleapis.com/auth/userinfo.email',
     ],

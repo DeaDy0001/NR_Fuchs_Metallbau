@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Alert, Image,
+  View, Text, StyleSheet, TouchableOpacity, Image,
   ActivityIndicator, FlatList, Dimensions, Modal, ScrollView, TextInput, Animated,
 } from 'react-native';
+import { useDialog } from '../components/CustomDialog';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -10,13 +11,14 @@ import * as MediaLibrary from 'expo-media-library';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { addToUploadQueue, getCachedProjects } from '../services/database';
+import { addToUploadQueue, getCachedProjects, getPendingProjects, addPendingProject } from '../services/database';
 import { createProject } from '../services/api';
 import { processUploadQueue } from '../services/uploadQueue';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function CameraScreen({ navigation, route }) {
+  const { alert } = useDialog();
   const { refreshQueueCount } = useApp();
   const [permission, requestPermission] = useCameraPermissions();
   const [capturedImages, setCapturedImages] = useState([]);
@@ -27,6 +29,7 @@ export default function CameraScreen({ navigation, route }) {
   const [gpsEnabled, setGpsEnabled] = useState(false);
   const [locationPermission, setLocationPermission] = useState(null);
   const cameraRef = useRef(null);
+  const metadataInputRef = useRef(null);
 
   // Project assignment
   const [projectId, setProjectId] = useState(route.params?.projectId || null);
@@ -34,6 +37,8 @@ export default function CameraScreen({ navigation, route }) {
   const [projectFolderId, setProjectFolderId] = useState(route.params?.projectFolderId || null);
   const [showProjectPicker, setShowProjectPicker] = useState(false);
   const [projects, setProjects] = useState([]);
+  const [pendingProjects, setPendingProjects] = useState([]);
+  const [projectSearchText, setProjectSearchText] = useState('');
   const [newProjectName, setNewProjectName] = useState('');
   const [creatingProject, setCreatingProject] = useState(false);
 
@@ -41,19 +46,45 @@ export default function CameraScreen({ navigation, route }) {
   const [showPreviewGallery, setShowPreviewGallery] = useState(false);
   const [selectedPreviewIndex, setSelectedPreviewIndex] = useState(0);
 
+  // Per-image metadata editing
+  const [editingField, setEditingField] = useState(null); // 'title' | 'notes' | null
+  const [editFieldValue, setEditFieldValue] = useState('');
+
   // Load projects for picker
   const loadProjects = async () => {
     try {
-      const p = await getCachedProjects();
-      setProjects(p);
+      const [cached, pending] = await Promise.all([getCachedProjects(), getPendingProjects()]);
+      setProjects(cached);
+      setPendingProjects(pending);
     } catch {}
   };
 
   const openProjectPicker = () => {
     loadProjects();
     setNewProjectName('');
+    setProjectSearchText('');
     setShowProjectPicker(true);
   };
+
+  // Combine cached and pending projects, filter by search
+  const allProjects = [
+    ...projects,
+    ...pendingProjects
+      .filter(pp => !projects.some(p => p.folder_id === pp.folder_id))
+      .map(pp => ({
+        id: pp.folder_id || `pending_${pp.id}`,
+        folder_name: pp.folder_name,
+        folder_id: pp.folder_id,
+        color: '#6b7280',
+        image_count: 0,
+        isPending: true,
+      })),
+  ];
+
+  const filteredPickerProjects = allProjects.filter(p => {
+    if (!projectSearchText) return true;
+    return p.folder_name.toLowerCase().includes(projectSearchText.toLowerCase());
+  });
 
   const selectProject = (project) => {
     if (project) {
@@ -75,6 +106,8 @@ export default function CameraScreen({ navigation, route }) {
     setCreatingProject(true);
     try {
       const result = await createProject(name);
+      // Also add as pending project so it shows as "Unbestätigt" in Projekte tab
+      await addPendingProject(name, result.folder_id);
       selectProject({
         id: result.id,
         folder_name: result.folder_name,
@@ -82,7 +115,7 @@ export default function CameraScreen({ navigation, route }) {
       });
       setNewProjectName('');
     } catch (error) {
-      Alert.alert('Fehler', 'Projekt konnte nicht erstellt werden: ' + error.message);
+      alert('Fehler', 'Projekt konnte nicht erstellt werden: ' + error.message);
     } finally {
       setCreatingProject(false);
     }
@@ -103,6 +136,23 @@ export default function CameraScreen({ navigation, route }) {
             <TouchableOpacity onPress={() => setShowProjectPicker(false)}>
               <Ionicons name="close" size={24} color={colors.textPrimary} />
             </TouchableOpacity>
+          </View>
+
+          {/* Search */}
+          <View style={styles.pickerSearchContainer}>
+            <Ionicons name="search" size={16} color={colors.textTertiary} />
+            <TextInput
+              style={styles.pickerSearchInput}
+              placeholder="Projekt suchen..."
+              placeholderTextColor={colors.textTertiary}
+              value={projectSearchText}
+              onChangeText={setProjectSearchText}
+            />
+            {projectSearchText ? (
+              <TouchableOpacity onPress={() => setProjectSearchText('')}>
+                <Ionicons name="close-circle" size={18} color={colors.textTertiary} />
+              </TouchableOpacity>
+            ) : null}
           </View>
 
           {/* Create new project */}
@@ -140,7 +190,7 @@ export default function CameraScreen({ navigation, route }) {
           </TouchableOpacity>
 
           <ScrollView style={styles.projectPickerList}>
-            {projects.map(p => (
+            {filteredPickerProjects.map(p => (
               <TouchableOpacity
                 key={p.id}
                 style={[
@@ -150,10 +200,18 @@ export default function CameraScreen({ navigation, route }) {
                 onPress={() => selectProject(p)}
               >
                 <View style={[styles.projectPickerColor, { backgroundColor: p.color || colors.accent }]} />
-                <Text style={styles.projectPickerText}>{p.folder_name}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.projectPickerText}>{p.folder_name}</Text>
+                  {p.isPending && (
+                    <Text style={styles.pendingBadgeText}>Unbestätigt</Text>
+                  )}
+                </View>
                 <Text style={styles.projectPickerMeta}>{p.image_count || 0} Bilder</Text>
               </TouchableOpacity>
             ))}
+            {filteredPickerProjects.length === 0 && (
+              <Text style={styles.noProjectsHint}>Keine Projekte gefunden</Text>
+            )}
           </ScrollView>
         </View>
       </View>
@@ -195,10 +253,10 @@ export default function CameraScreen({ navigation, route }) {
       if (status === 'granted') {
         setGpsEnabled(true);
       } else {
-        Alert.alert('GPS nicht verfügbar', 'Standortzugriff wurde nicht erlaubt.');
+        alert('GPS nicht verfügbar', 'Standortzugriff wurde nicht erlaubt.');
       }
     } catch (error) {
-      Alert.alert('Fehler', 'GPS konnte nicht aktiviert werden.');
+      alert('Fehler', 'GPS konnte nicht aktiviert werden.');
     }
   };
 
@@ -267,7 +325,7 @@ export default function CameraScreen({ navigation, route }) {
 
       setCapturedImages(prev => [...prev, newImage]);
     } catch (error) {
-      Alert.alert('Fehler', 'Foto konnte nicht aufgenommen werden.');
+      alert('Fehler', 'Foto konnte nicht aufgenommen werden.');
     }
   };
 
@@ -279,7 +337,7 @@ export default function CameraScreen({ navigation, route }) {
   };
 
   const removeAllImages = () => {
-    Alert.alert(
+    alert(
       'Alle Bilder verwerfen?',
       `${capturedImages.length} ${capturedImages.length === 1 ? 'Bild' : 'Bilder'} werden gelöscht.`,
       [
@@ -290,6 +348,41 @@ export default function CameraScreen({ navigation, route }) {
         }},
       ]
     );
+  };
+
+  // Open an editing field for the current image
+  const openEditField = (field) => {
+    const currentImage = capturedImages[selectedPreviewIndex];
+    if (!currentImage) return;
+    if (field === 'title') {
+      setEditFieldValue(currentImage.customTitle || path.basename(currentImage.fileName, path.extname(currentImage.fileName)));
+    } else {
+      setEditFieldValue(currentImage.notes || '');
+    }
+    setEditingField(field);
+  };
+
+  // Save the editing field and close
+  const saveEditField = () => {
+    if (editingField && capturedImages[selectedPreviewIndex]) {
+      setCapturedImages(prev => {
+        const updated = [...prev];
+        if (editingField === 'title') {
+          updated[selectedPreviewIndex] = { ...updated[selectedPreviewIndex], customTitle: editFieldValue.trim() || null };
+        } else {
+          updated[selectedPreviewIndex] = { ...updated[selectedPreviewIndex], notes: editFieldValue.trim() || null };
+        }
+        return updated;
+      });
+    }
+    setEditingField(null);
+    setEditFieldValue('');
+  };
+
+  // Helper to get basename without extension (for display)
+  const path = {
+    basename: (name, ext) => ext ? name.replace(new RegExp(ext.replace('.', '\\.') + '$'), '') : name,
+    extname: (name) => { const m = name.match(/\.[^.]+$/); return m ? m[0] : ''; },
   };
 
   const showToast = (message) => {
@@ -319,7 +412,10 @@ export default function CameraScreen({ navigation, route }) {
         await addToUploadQueue(
           img.uri, img.fileName, img.mimeType,
           projectId, projectName, projectFolderId,
-          img.gps ? JSON.stringify(img.gps) : null
+          img.gps ? JSON.stringify(img.gps) : null,
+          false,
+          img.customTitle || null,
+          img.notes || null
         );
       }
 
@@ -383,6 +479,81 @@ export default function CameraScreen({ navigation, route }) {
               )}
             />
           </View>
+        )}
+
+        {/* Metadata buttons for current image */}
+        <View style={styles.metadataBar}>
+          <TouchableOpacity
+            style={[styles.metadataBtn, currentImage.customTitle && styles.metadataBtnActive]}
+            onPress={() => openEditField('title')}
+          >
+            <Ionicons name="pencil-outline" size={18} color={currentImage.customTitle ? colors.accent : colors.textSecondary} />
+            <Text
+              style={[styles.metadataBtnText, currentImage.customTitle && { color: colors.accent }]}
+              numberOfLines={1}
+            >
+              {currentImage.customTitle || 'Titel'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.metadataBtn, currentImage.notes && styles.metadataBtnActive]}
+            onPress={() => openEditField('notes')}
+          >
+            <Ionicons name="document-text-outline" size={18} color={currentImage.notes ? colors.accent : colors.textSecondary} />
+            <Text
+              style={[styles.metadataBtnText, currentImage.notes && { color: colors.accent }]}
+              numberOfLines={1}
+            >
+              {currentImage.notes || 'Notizen'}
+            </Text>
+          </TouchableOpacity>
+
+          {currentImage.gps && (
+            <View style={styles.metadataGpsBadge}>
+              <Ionicons name="location" size={14} color={colors.success || '#22c55e'} />
+              <Text style={styles.metadataGpsText}>GPS</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Metadata editing modal */}
+        {editingField && (
+          <Modal
+            transparent
+            animationType="slide"
+            onShow={() => {
+              setTimeout(() => metadataInputRef.current?.focus(), 100);
+            }}
+          >
+            <TouchableOpacity style={styles.metadataModalOverlay} activeOpacity={1} onPress={saveEditField}>
+              <View style={styles.metadataModalContent} onStartShouldSetResponder={() => true}>
+                <View style={styles.metadataModalHeader}>
+                  <Text style={styles.metadataModalTitle}>
+                    {editingField === 'title' ? 'Bild-Titel' : 'Notizen'}
+                  </Text>
+                  <TouchableOpacity onPress={saveEditField}>
+                    <Ionicons name="checkmark-circle" size={28} color={colors.accent} />
+                  </TouchableOpacity>
+                </View>
+                <TextInput
+                  ref={metadataInputRef}
+                  style={[
+                    styles.metadataModalInput,
+                    editingField === 'notes' && { height: 120, textAlignVertical: 'top' }
+                  ]}
+                  value={editFieldValue}
+                  onChangeText={setEditFieldValue}
+                  placeholder={editingField === 'title' ? 'Bildname eingeben...' : 'Notizen eingeben...'}
+                  placeholderTextColor={colors.textTertiary}
+                  autoFocus
+                  multiline={editingField === 'notes'}
+                  returnKeyType={editingField === 'title' ? 'done' : 'default'}
+                  onSubmitEditing={editingField === 'title' ? saveEditField : undefined}
+                />
+              </View>
+            </TouchableOpacity>
+          </Modal>
         )}
 
         {/* Action bar - single row with icons */}
@@ -653,6 +824,49 @@ const styles = StyleSheet.create({
   },
   previewActionLabelSend: { fontSize: 11, color: 'white', fontWeight: '600' },
 
+  // Metadata bar (title + notes buttons)
+  metadataBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 16, paddingVertical: 8,
+    backgroundColor: colors.bgSecondary, borderTopWidth: 1, borderTopColor: colors.border,
+  },
+  metadataBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingVertical: 10, paddingHorizontal: 12,
+    backgroundColor: colors.cardBg, borderRadius: 10,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  metadataBtnActive: {
+    borderColor: colors.accent, backgroundColor: 'rgba(59,130,246,0.08)',
+  },
+  metadataBtnText: { fontSize: 13, color: colors.textSecondary, fontWeight: '500', flex: 1 },
+  metadataGpsBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingVertical: 8, paddingHorizontal: 10,
+    backgroundColor: 'rgba(34,197,94,0.1)', borderRadius: 10,
+    borderWidth: 1, borderColor: 'rgba(34,197,94,0.3)',
+  },
+  metadataGpsText: { fontSize: 12, color: '#22c55e', fontWeight: '600' },
+
+  // Metadata editing modal
+  metadataModalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end',
+  },
+  metadataModalContent: {
+    backgroundColor: colors.bgPrimary, borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    padding: 20, paddingBottom: 40,
+  },
+  metadataModalHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16,
+  },
+  metadataModalTitle: { fontSize: 18, fontWeight: '700', color: colors.textPrimary },
+  metadataModalInput: {
+    backgroundColor: colors.inputBg || colors.bgSecondary,
+    borderWidth: 1, borderColor: colors.border,
+    borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12,
+    fontSize: 16, color: colors.textPrimary,
+  },
+
   // Permission
   permissionText: { color: colors.textPrimary, fontSize: 16 },
   permissionButton: { backgroundColor: colors.accent, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10 },
@@ -673,6 +887,33 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center',
   },
   modalTitle: { fontSize: 20, fontWeight: '700', color: colors.textPrimary },
+  pickerSearchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.bgTertiary || colors.cardBg,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    marginBottom: 12,
+    gap: 8,
+  },
+  pickerSearchInput: {
+    flex: 1,
+    color: colors.textPrimary,
+    fontSize: 14,
+    paddingVertical: 10,
+  },
+  pendingBadgeText: {
+    fontSize: 11,
+    color: '#f59e0b',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  noProjectsHint: {
+    color: colors.textTertiary,
+    fontSize: 14,
+    textAlign: 'center',
+    paddingVertical: 24,
+  },
   projectPickerList: { maxHeight: 400 },
   projectPickerItem: {
     flexDirection: 'row', alignItems: 'center', gap: 12,

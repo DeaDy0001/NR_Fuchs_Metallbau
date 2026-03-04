@@ -5,11 +5,12 @@ import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
-import { View, ActivityIndicator, Platform, ScrollView, TouchableOpacity, Text } from 'react-native';
+import { View, ActivityIndicator, Platform, ScrollView, TouchableOpacity, Text, Image } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppProvider, useApp } from './src/contexts/AppContext';
 import { colors } from './src/theme/colors';
 import ErrorBoundary from './src/components/ErrorBoundary';
+import { DialogProvider } from './src/components/CustomDialog';
 
 // Screens
 import LoginScreen from './src/screens/LoginScreen';
@@ -34,11 +35,10 @@ const screenOptions = {
   headerTitleStyle: { fontWeight: '600' },
 };
 
-// Tab config with action tabs (Camera, Gallery, Queue navigate to stack screens)
+// Tab config with action tabs (Camera navigates to stack screen)
 const TAB_CONFIG = {
   Home: { icon: 'home', iconOutline: 'home-outline', label: 'Start' },
   Camera: { icon: 'camera', iconOutline: 'camera-outline', label: 'Foto', isAction: true },
-  Gallery: { icon: 'images', iconOutline: 'images-outline', label: 'Galerie', isAction: true },
   Projects: { icon: 'folder', iconOutline: 'folder-outline', label: 'Projekte' },
   Queue: { icon: 'cloud-upload', iconOutline: 'cloud-upload-outline', label: 'Upload' },
   Settings: { icon: 'settings', iconOutline: 'settings-outline', label: 'Einstellungen' },
@@ -80,14 +80,22 @@ function CustomTabBar({ state, descriptors, navigation }) {
               // Action tabs navigate to stack screens instead of switching tabs
               if (route.name === 'Camera') {
                 navigation.navigate('CameraStack');
-              } else if (route.name === 'Gallery') {
-                navigation.navigate('CameraStack', { pickFromGallery: true });
               }
               return;
             }
             const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-            if (!isFocused && !event.defaultPrevented) {
-              navigation.navigate(route.name);
+            if (!event.defaultPrevented) {
+              if (!isFocused) {
+                // Switching to this tab - for nested stack tabs, always reset to root screen
+                if (route.name === 'Projects') {
+                  navigation.navigate('Projects', { screen: 'ProjectsList' });
+                } else {
+                  navigation.navigate(route.name);
+                }
+              } else if (route.name === 'Projects') {
+                // Already on Projects tab, tapped again - go back to project list
+                navigation.navigate('Projects', { screen: 'ProjectsList' });
+              }
             }
           };
 
@@ -159,10 +167,24 @@ function MainTabs() {
       <Tab.Screen
         name="Home"
         component={HomeScreen}
-        options={{ title: 'Start', headerTitle: 'Fuchs Metallbau' }}
+        options={{
+          title: 'Start',
+          headerTitle: () => (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Image
+                source={require('./assets/splash-icon.png')}
+                style={{ height: 32, width: 32, borderRadius: 8 }}
+                resizeMode="cover"
+              />
+              <Text style={{ color: colors.textPrimary, fontSize: 17, fontWeight: '700' }}>
+                Fuchs Metallbau
+              </Text>
+            </View>
+          ),
+          headerTitleAlign: 'center',
+        }}
       />
       <Tab.Screen name="Camera" component={DummyScreen} options={{ tabBarLabel: 'Foto' }} />
-      <Tab.Screen name="Gallery" component={DummyScreen} options={{ tabBarLabel: 'Galerie' }} />
       <Tab.Screen
         name="Projects"
         component={ProjectsStackScreen}
@@ -256,6 +278,7 @@ export default function App() {
     <SafeAreaProvider>
     <ErrorBoundary>
       <AppProvider>
+        <DialogProvider>
         <NavigationContainer
           theme={{
             ...DarkTheme,
@@ -274,6 +297,7 @@ export default function App() {
           <StatusBar style="light" hidden={true} translucent={true} />
           <AppNavigator />
         </NavigationContainer>
+        </DialogProvider>
       </AppProvider>
     </ErrorBoundary>
     </SafeAreaProvider>

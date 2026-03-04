@@ -46,7 +46,7 @@ const listFilesInFolder = async (folderId) => {
     // List files in folder
     const response = await drive.files.list({
       q: `'${folderId}' in parents and trashed=false`,
-      fields: 'files(id,name,mimeType,size,webContentLink,thumbnailLink,imageMediaMetadata)',
+      fields: 'files(id,name,mimeType,size,webContentLink,thumbnailLink,imageMediaMetadata,description)',
       pageSize: 1000
     });
 
@@ -63,7 +63,8 @@ const listFilesInFolder = async (folderId) => {
       downloadUrl: `https://drive.google.com/uc?export=download&id=${file.id}`,
       thumbnailUrl: file.thumbnailLink,
       width: file.imageMediaMetadata?.width || null,
-      height: file.imageMediaMetadata?.height || null
+      height: file.imageMediaMetadata?.height || null,
+      description: file.description || null
     }));
   } catch (error) {
     console.error('Error listing files in folder:', error.message);
@@ -101,7 +102,7 @@ const listFilesInFolderRecursive = async (folderId, parentSubfolder = null) => {
     // List all items in folder (both files and folders)
     const response = await drive.files.list({
       q: `'${folderId}' in parents and trashed=false`,
-      fields: 'files(id,name,mimeType,size,webContentLink,thumbnailLink,imageMediaMetadata)',
+      fields: 'files(id,name,mimeType,size,webContentLink,thumbnailLink,imageMediaMetadata,description)',
       pageSize: 1000
     });
 
@@ -123,7 +124,8 @@ const listFilesInFolderRecursive = async (folderId, parentSubfolder = null) => {
         thumbnailUrl: file.thumbnailLink,
         width: file.imageMediaMetadata?.width || null,
         height: file.imageMediaMetadata?.height || null,
-        subfolder: parentSubfolder // Only first-level subfolder name
+        subfolder: parentSubfolder,
+        description: file.description || null
       });
     });
 
@@ -452,7 +454,7 @@ const getFileMetadata = async (fileId) => {
     const drive = await getDriveClient();
     const response = await drive.files.get({
       fileId,
-      fields: 'id, name, parents, mimeType',
+      fields: 'id, name, parents, mimeType, description',
     });
 
     return response.data;

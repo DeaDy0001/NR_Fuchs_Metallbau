@@ -13,6 +13,7 @@ router.post('/settings/path/:id/sync', driveController.syncDrive);
 router.get('/images', driveController.getImages);
 router.get('/images/:id', driveController.getImageById);
 router.put('/images/:id/rename', driveController.renameImage);
+router.put('/images/:id/notes', driveController.updateImageNotes);
 router.delete('/images/:id', driveController.deleteImage);
 router.post('/images/refresh', driveController.refreshImages);
 router.post('/images/assign-to-project', driveController.assignImageToProject);

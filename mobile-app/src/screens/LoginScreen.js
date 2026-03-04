@@ -1,14 +1,15 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  Alert, AppState, Linking, Platform, ScrollView, Modal, SafeAreaView,
+  AppState, Linking, Platform, ScrollView, Modal, SafeAreaView,
 } from 'react-native';
+import { useDialog } from '../components/CustomDialog';
 import { WebView } from 'react-native-webview';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { storeTokens, storeUserInfo, fetchUserInfo } from '../services/googleAuth';
+import { storeTokens, storeUserInfo, fetchUserInfo, storeGrantedScope } from '../services/googleAuth';
 import { getSetting } from '../services/database';
 import config from '../config';
 
@@ -20,16 +21,30 @@ import config from '../config';
  *    intercepts the localhost redirect, and exchanges the code via the server API
  */
 export default function LoginScreen() {
+  const { alert } = useDialog();
   const { onGoogleLogin, resetSetup } = useApp();
   const [clientId, setClientId] = useState(null);
+  const [clientSecret, setClientSecret] = useState(null);
   const [serverUrl, setServerUrl] = useState(null);
+  const [webClientId, setWebClientId] = useState(null);
+  const [webClientSecret, setWebClientSecret] = useState(null);
+  const [webRedirectUri, setWebRedirectUri] = useState(null);
   const [loading, setLoading] = useState(true);
   const [authLoading, setAuthLoading] = useState(false);
 
   // Device Flow state
   const [userCode, setUserCode] = useState(null);
   const [verificationUrl, setVerificationUrl] = useState(null);
+  const [verificationUrlComplete, setVerificationUrlComplete] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [browserOpened, setBrowserOpened] = useState(false);
+
+  // Debug state - shows polling status on screen
+  const [debugLog, setDebugLog] = useState([]);
+  const addDebug = (msg) => {
+    const time = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    setDebugLog(prev => [`${time} ${msg}`, ...prev].slice(0, 8));
+  };
 
   // WebView OAuth state
   const [webViewAuth, setWebViewAuth] = useState(null); // { authUrl, redirectUri, sessionId }
@@ -51,25 +66,39 @@ export default function LoginScreen() {
   }, []);
 
   // Poll immediately when app comes back to foreground
+  // On Android, setTimeout gets suspended in background - force restart polling
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active' && !isPollingRef.current) {
-        if (deviceCodeRef.current) {
-          console.log('[Fuchs] App foregrounded, resuming device flow poll...');
-          pollForToken();
+      if (nextState === 'active' && deviceCodeRef.current && Date.now() < expiresAtRef.current) {
+        addDebug('App im Vordergrund - starte Polling neu');
+        // Kill any stuck timer from background
+        if (pollTimerRef.current) {
+          clearTimeout(pollTimerRef.current);
+          pollTimerRef.current = null;
         }
+        // Reset polling flag so pollForToken can start fresh
+        isPollingRef.current = false;
+        pollForToken();
       }
     });
     return () => subscription?.remove();
-  }, [serverUrl, clientId]);
+  }, [clientId, clientSecret]);
 
   const loadConfig = async () => {
     const id = await getSetting('googleClientId');
+    const secret = await getSetting('googleClientSecret');
     const url = await getSetting('serverUrl');
+    const wId = await getSetting('webClientId');
+    const wSecret = await getSetting('webClientSecret');
+    const wRedirect = await getSetting('webRedirectUri');
     console.log('[Fuchs] LoginScreen - clientId:', id ? id.substring(0, 20) + '...' : 'none');
-    console.log('[Fuchs] LoginScreen - serverUrl:', url);
+    console.log('[Fuchs] LoginScreen - webClientId:', wId ? wId.substring(0, 20) + '...' : 'none');
     setClientId(id);
+    setClientSecret(secret);
     setServerUrl(url);
+    setWebClientId(wId);
+    setWebClientSecret(wSecret);
+    setWebRedirectUri(wRedirect);
     setLoading(false);
   };
 
@@ -77,6 +106,7 @@ export default function LoginScreen() {
 
   const handleTokenSuccess = async (tokenData) => {
     await storeTokens(tokenData.access_token, tokenData.refresh_token, tokenData.expires_in || 3600);
+    if (tokenData.scope) await storeGrantedScope(tokenData.scope);
 
     let userInfo;
     if (tokenData.user_name || tokenData.user_email) {
@@ -98,11 +128,53 @@ export default function LoginScreen() {
     }
   };
 
-  // ---- Device Authorization Flow ----
+  // ---- Device Authorization Flow (fallback when server not reachable) ----
+
+  const requestDeviceCode = async (scopes) => {
+    const deviceId = `fuchs_mobile_${clientId.substring(0, 12)}`;
+    const res = await fetch('https://oauth2.googleapis.com/device/code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        scope: scopes.join(' '),
+        device_id: deviceId,
+        device_name: 'Fuchs Metallbau App',
+      }).toString(),
+    });
+    const data = await res.json();
+    return { ok: res.ok, data };
+  };
+
+  /** Fetch with timeout (default 8s) */
+  const fetchWithTimeout = (url, options = {}, timeoutMs = 8000) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, { ...options, signal: controller.signal })
+      .finally(() => clearTimeout(timer));
+  };
+
+  /** Build a Google OAuth URL directly (no server needed) */
+  const buildDirectAuthUrl = (wClientId, wRedirect) => {
+    const scopes = [
+      'https://www.googleapis.com/auth/drive',
+      'https://www.googleapis.com/auth/userinfo.profile',
+      'https://www.googleapis.com/auth/userinfo.email',
+    ];
+    const params = new URLSearchParams({
+      client_id: wClientId,
+      redirect_uri: wRedirect,
+      response_type: 'code',
+      scope: scopes.join(' '),
+      access_type: 'offline',
+      prompt: 'consent',
+    });
+    return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+  };
 
   const startGoogleSignIn = async () => {
-    if (!clientId) {
-      Alert.alert('Fehler', 'Keine Google Client-ID konfiguriert. Bitte zuerst QR-Code scannen.');
+    if (!clientId && !webClientId) {
+      alert('Fehler', 'Keine Google Client-ID konfiguriert. Bitte zuerst QR-Code scannen.');
       return;
     }
 
@@ -110,54 +182,77 @@ export default function LoginScreen() {
     setUserCode(null);
     setWebViewAuth(null);
 
+    // Priority 1: Direct WebView OAuth (no server needed, full drive scope)
+    // Uses Web Application client credentials from QR code
+    if (webClientId && webClientSecret && webRedirectUri) {
+      addDebug('Starte WebView OAuth (direkt, drive-Scope)');
+      const authUrl = buildDirectAuthUrl(webClientId, webRedirectUri);
+      setWebViewAuth({ authUrl, redirectUri: webRedirectUri, sessionId: null, direct: true });
+      setAuthLoading(false);
+      return;
+    }
+
+    // Priority 2: WebView OAuth via Desktop-Server
+    if (serverUrl) {
+      try {
+        addDebug('Versuche Server-WebView OAuth...');
+        const res = await fetchWithTimeout(`${serverUrl}/api/mobile/auth/init-login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (res.ok) {
+          const { sessionId, authUrl, redirectUri } = await res.json();
+          addDebug('WebView OAuth via Server gestartet');
+          setWebViewAuth({ authUrl, redirectUri, sessionId, direct: false });
+          setAuthLoading(false);
+          return;
+        }
+      } catch (e) {
+        addDebug(`Server nicht erreichbar: ${e.message?.substring(0, 30)}`);
+      }
+    }
+
+    addDebug('Fallback: Device Flow (eingeschränkter Scope)');
+
+    // Priority 3: Device Flow (works without anything, but limited scope)
     try {
-      const deviceFlowScopes = config.google.scopes;
-      console.log('[Fuchs] Starting device authorization flow with scopes:', deviceFlowScopes);
+      const scopes = config.google.scopes;
+      let result = await requestDeviceCode(scopes);
 
-      // Generate a stable device ID from the client ID (deterministic per app installation)
-      const deviceId = `fuchs_mobile_${clientId.substring(0, 12)}`;
-
-      const deviceRes = await fetch('https://oauth2.googleapis.com/device/code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: clientId,
-          scope: deviceFlowScopes.join(' '),
-          device_id: deviceId,
-          device_name: 'Fuchs Metallbau App',
-        }).toString(),
-      });
-
-      const deviceData = await deviceRes.json();
-      console.log('[Fuchs] Device code response:', JSON.stringify(deviceData));
-
-      if (!deviceRes.ok) {
-        // Device Flow not supported - fall back to In-App WebView OAuth
-        console.log('[Fuchs] Device flow failed (' + (deviceData.error || 'unknown') + '), falling back to WebView OAuth');
-        return startWebViewAuth();
+      if (!result.ok) {
+        addDebug('drive-Scope abgelehnt, versuche drive.file...');
+        result = await requestDeviceCode([
+          'https://www.googleapis.com/auth/drive.file',
+          'https://www.googleapis.com/auth/userinfo.profile',
+          'https://www.googleapis.com/auth/userinfo.email',
+        ]);
       }
 
-      const { device_code, user_code, verification_url, expires_in, interval } = deviceData;
+      if (!result.ok) {
+        throw new Error('Google-Anmeldung konnte nicht gestartet werden.');
+      }
+
+      const { device_code, user_code, verification_url, expires_in, interval } = result.data;
 
       deviceCodeRef.current = device_code;
       pollIntervalRef.current = (interval || 5) * 1000;
       expiresAtRef.current = Date.now() + (expires_in * 1000);
 
+      const verifyUrl = result.data.verification_url_complete ||
+        `${verification_url}?user_code=${user_code}`;
+
+      addDebug('Device Flow: Code erhalten');
       setUserCode(user_code);
       setVerificationUrl(verification_url);
-
-      const verifyUrl = deviceData.verification_url_complete ||
-        `${verification_url}?user_code=${user_code}`;
-      console.log('[Fuchs] Opening verification URL:', verifyUrl);
-      await Linking.openURL(verifyUrl);
-
-      pollForToken();
+      setVerificationUrlComplete(verifyUrl);
+      setBrowserOpened(false);
+      setAuthLoading(false);
     } catch (error) {
-      console.error('[Fuchs] Device flow error:', error);
+      console.error('[Fuchs] Sign-in error:', error);
       if (isMountedRef.current) {
         setAuthLoading(false);
         setUserCode(null);
-        Alert.alert('Anmeldung fehlgeschlagen', error.message);
+        alert('Anmeldung fehlgeschlagen', error.message);
       }
     }
   };
@@ -176,38 +271,54 @@ export default function LoginScreen() {
         if (!isMountedRef.current || !deviceCodeRef.current) break;
 
         try {
-          let tokenData;
+          // Always poll Google directly (not through local backend) - more reliable
+          addDebug('Polling Google...');
+          const tokenParams = {
+            client_id: clientId,
+            device_code: deviceCodeRef.current,
+            grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+          };
+          if (clientSecret) tokenParams.client_secret = clientSecret;
+          const res = await fetch('https://oauth2.googleapis.com/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(tokenParams).toString(),
+          });
+          const tokenData = await res.json();
 
-          if (serverUrl) {
-            console.log('[Fuchs] Polling backend for device token...');
-            const res = await fetch(`${serverUrl}/api/mobile/auth/device-token`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                device_code: deviceCodeRef.current,
-                client_id: clientId,
-              }),
-            });
-            tokenData = await res.json();
-          } else {
-            console.log('[Fuchs] Polling Google directly for device token...');
-            const res = await fetch('https://oauth2.googleapis.com/token', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: new URLSearchParams({
-                client_id: clientId,
-                device_code: deviceCodeRef.current,
-                grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-              }).toString(),
-            });
-            tokenData = await res.json();
-          }
-
-          console.log('[Fuchs] Poll response:', tokenData.error || 'success');
+          const pollResult = tokenData.error || 'TOKEN ERHALTEN!';
+          console.log('[Fuchs] Poll response:', pollResult);
+          addDebug(`Antwort: ${pollResult}`);
 
           if (tokenData.access_token) {
+            addDebug('Token erhalten! Lade User-Info...');
             deviceCodeRef.current = null;
-            await handleTokenSuccess(tokenData);
+
+            // Bring app to foreground (user is likely still in browser)
+            if (Platform.OS === 'android') {
+              try { await Linking.openURL('com.fuchsmetallbau.app://auth-success'); } catch {}
+            }
+
+            // Fetch user info directly from Google
+            let userName = '', userEmail = '', userPhoto = '';
+            try {
+              const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                headers: { Authorization: `Bearer ${tokenData.access_token}` },
+              });
+              const userInfo = await userRes.json();
+              userName = userInfo.name || '';
+              userEmail = userInfo.email || '';
+              userPhoto = userInfo.picture || '';
+            } catch (e) {
+              console.log('[Fuchs] User info fetch failed (non-critical):', e.message);
+            }
+
+            await handleTokenSuccess({
+              ...tokenData,
+              user_name: userName,
+              user_email: userEmail,
+              user_photo: userPhoto,
+            });
             return;
           }
 
@@ -230,7 +341,7 @@ export default function LoginScreen() {
             pollError.message?.includes('Failed to connect') ||
             pollError.message?.includes('Unable to resolve')
           ) {
-            console.log('[Fuchs] Network error during poll, retrying...');
+            addDebug(`Netzwerkfehler: ${pollError.message?.substring(0, 30)}`);
             continue;
           }
           throw pollError;
@@ -242,54 +353,15 @@ export default function LoginScreen() {
       }
     } catch (error) {
       console.error('[Fuchs] Poll error:', error);
+      addDebug(`FEHLER: ${error.message?.substring(0, 40)}`);
       if (isMountedRef.current) {
         deviceCodeRef.current = null;
         setAuthLoading(false);
         setUserCode(null);
-        Alert.alert('Anmeldung fehlgeschlagen', error.message);
+        alert('Anmeldung fehlgeschlagen', error.message);
       }
     } finally {
       isPollingRef.current = false;
-    }
-  };
-
-  // ---- In-App WebView OAuth (fallback when Device Flow not supported) ----
-
-  const startWebViewAuth = async () => {
-    if (!serverUrl) {
-      setAuthLoading(false);
-      Alert.alert(
-        'Server nicht erreichbar',
-        'Die Anmeldung benötigt eine Verbindung zum Desktop-Server.\n\nBitte stelle sicher, dass die Desktop-Software läuft und scanne den QR-Code erneut.'
-      );
-      return;
-    }
-
-    try {
-      console.log('[Fuchs] Starting In-App WebView OAuth...');
-      const res = await fetch(`${serverUrl}/api/mobile/auth/init-login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Server-Fehler: ${res.status}`);
-      }
-
-      const { sessionId, authUrl, redirectUri } = await res.json();
-      console.log('[Fuchs] WebView OAuth session created:', sessionId.substring(0, 8) + '...');
-      console.log('[Fuchs] Auth URL:', authUrl.substring(0, 80) + '...');
-      console.log('[Fuchs] Redirect URI:', redirectUri);
-
-      setWebViewAuth({ authUrl, redirectUri, sessionId });
-      setAuthLoading(false);
-    } catch (error) {
-      console.error('[Fuchs] WebView OAuth init error:', error);
-      if (isMountedRef.current) {
-        setAuthLoading(false);
-        Alert.alert('Anmeldung fehlgeschlagen', error.message);
-      }
     }
   };
 
@@ -315,7 +387,7 @@ export default function LoginScreen() {
       if (error) {
         console.log('[Fuchs] OAuth error:', error);
         setWebViewAuth(null);
-        Alert.alert('Anmeldung abgebrochen', 'Die Google-Anmeldung wurde abgebrochen.');
+        alert('Anmeldung abgebrochen', 'Die Google-Anmeldung wurde abgebrochen.');
         return false; // Prevent navigation
       }
 
@@ -331,29 +403,59 @@ export default function LoginScreen() {
   };
 
   const exchangeCodeForTokens = async (code, redirectUri) => {
+    const isDirect = webViewAuth?.direct;
     try {
       setWebViewAuth(null); // Close WebView
       setAuthLoading(true);
 
-      const res = await fetch(`${serverUrl}/api/mobile/auth/exchange`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, redirect_uri: redirectUri }),
-      });
+      let tokenData;
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Token-Austausch fehlgeschlagen');
+      if (isDirect && webClientId && webClientSecret) {
+        // Direct exchange with Google (no server needed)
+        console.log('[Fuchs] Exchanging code directly with Google...');
+        const res = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            code,
+            client_id: webClientId,
+            client_secret: webClientSecret,
+            redirect_uri: redirectUri,
+            grant_type: 'authorization_code',
+          }).toString(),
+        });
+        tokenData = await res.json();
+        if (!res.ok) {
+          throw new Error(tokenData.error_description || tokenData.error || 'Token-Austausch fehlgeschlagen');
+        }
+        // Fetch user info
+        const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        });
+        const userInfo = await userRes.json();
+        tokenData.user_name = userInfo.name || '';
+        tokenData.user_email = userInfo.email || '';
+        tokenData.user_photo = userInfo.picture || '';
+      } else {
+        // Exchange via server
+        const res = await fetch(`${serverUrl}/api/mobile/auth/exchange`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, redirect_uri: redirectUri }),
+        });
+        tokenData = await res.json();
+        if (!res.ok) {
+          throw new Error(tokenData.error || 'Token-Austausch fehlgeschlagen');
+        }
       }
 
       console.log('[Fuchs] WebView OAuth successful!');
-      await handleTokenSuccess(data);
+      await handleTokenSuccess(tokenData);
     } catch (error) {
       console.error('[Fuchs] Token exchange error:', error);
       if (isMountedRef.current) {
         setAuthLoading(false);
-        Alert.alert('Anmeldung fehlgeschlagen', error.message);
+        alert('Anmeldung fehlgeschlagen', error.message);
       }
     }
   };
@@ -364,7 +466,21 @@ export default function LoginScreen() {
     isPollingRef.current = false;
     setAuthLoading(false);
     setUserCode(null);
+    setBrowserOpened(false);
     setWebViewAuth(null);
+  };
+
+  const openBrowserWithCode = async () => {
+    await Clipboard.setStringAsync(userCode);
+    setCopied(true);
+    setBrowserOpened(true);
+    setTimeout(() => setCopied(false), 3000);
+
+    const url = verificationUrlComplete || verificationUrl;
+    if (url) await Linking.openURL(url);
+
+    // Start polling after browser is opened
+    pollForToken();
   };
 
   // ---- Render ----
@@ -392,49 +508,61 @@ export default function LoginScreen() {
           {userCode ? (
             // Device Flow mode
             <>
-              <Text style={styles.loginTitle}>Im Browser anmelden</Text>
+              <Text style={styles.loginTitle}>
+                {browserOpened ? 'Im Browser anmelden' : 'Bestätigungscode'}
+              </Text>
               <Text style={styles.loginDesc}>
-                Ein Browser-Fenster wurde geöffnet. Melde dich dort mit deinem Google-Konto an.
+                {browserOpened
+                  ? 'Gib den Code im Browser ein und melde dich mit deinem Google-Konto an.'
+                  : 'Diesen Code brauchst du gleich im Browser. Tippe auf den Button um fortzufahren.'}
               </Text>
 
-              <TouchableOpacity
-                style={styles.codeBox}
-                activeOpacity={0.7}
-                onPress={async () => {
-                  await Clipboard.setStringAsync(userCode);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 2000);
-                }}
-              >
-                <Text style={styles.codeLabel}>Bestätigungscode:</Text>
+              <View style={styles.codeBox}>
+                <Text style={styles.codeLabel}>Dein Code:</Text>
                 <Text selectable style={styles.codeText}>{userCode}</Text>
-                <View style={styles.copyRow}>
-                  <Ionicons
-                    name={copied ? 'checkmark-circle' : 'copy-outline'}
-                    size={16}
-                    color={copied ? '#22c55e' : colors.textTertiary}
-                  />
-                  <Text style={[styles.copyHint, copied && { color: '#22c55e' }]}>
-                    {copied ? 'Kopiert!' : 'Tippen zum Kopieren'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-
-              <View style={styles.waitingRow}>
-                <ActivityIndicator size="small" color={colors.accent} />
-                <Text style={styles.waitingText}>Warte auf Anmeldung...</Text>
+                {copied && (
+                  <View style={styles.copyRow}>
+                    <Ionicons name="checkmark-circle" size={16} color="#22c55e" />
+                    <Text style={[styles.copyHint, { color: '#22c55e' }]}>In Zwischenablage kopiert!</Text>
+                  </View>
+                )}
               </View>
 
-              <TouchableOpacity
-                style={styles.reopenButton}
-                onPress={() => {
-                  const url = verificationUrl;
-                  if (url) Linking.openURL(url);
-                }}
-              >
-                <Ionicons name="open-outline" size={18} color={colors.accent} />
-                <Text style={styles.reopenText}>Browser erneut öffnen</Text>
-              </TouchableOpacity>
+              {!browserOpened ? (
+                <TouchableOpacity style={styles.googleButton} onPress={openBrowserWithCode}>
+                  <Ionicons name="copy-outline" size={20} color="white" />
+                  <Text style={styles.googleButtonText}>Code kopieren & Browser öffnen</Text>
+                </TouchableOpacity>
+              ) : (
+                <>
+                  <View style={styles.waitingRow}>
+                    <ActivityIndicator size="small" color={colors.accent} />
+                    <Text style={styles.waitingText}>Warte auf Anmeldung...</Text>
+                  </View>
+
+                  {debugLog.length > 0 && (
+                    <View style={styles.debugBox}>
+                      {debugLog.map((line, i) => (
+                        <Text key={i} style={styles.debugText}>{line}</Text>
+                      ))}
+                    </View>
+                  )}
+
+                  <TouchableOpacity
+                    style={styles.reopenButton}
+                    onPress={async () => {
+                      await Clipboard.setStringAsync(userCode);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                      const url = verificationUrlComplete || verificationUrl;
+                      if (url) Linking.openURL(url);
+                    }}
+                  >
+                    <Ionicons name="open-outline" size={18} color={colors.accent} />
+                    <Text style={styles.reopenText}>Code kopieren & Browser erneut öffnen</Text>
+                  </TouchableOpacity>
+                </>
+              )}
 
               <TouchableOpacity style={styles.cancelButton} onPress={cancelAuth}>
                 <Text style={styles.cancelText}>Abbrechen</Text>
@@ -657,6 +785,20 @@ const styles = StyleSheet.create({
   cancelText: {
     fontSize: 14,
     color: colors.textTertiary,
+  },
+  debugBox: {
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 12,
+    marginBottom: 4,
+    width: '100%',
+  },
+  debugText: {
+    fontSize: 11,
+    color: '#94a3b8',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    lineHeight: 16,
   },
   footerText: {
     fontSize: 12,

@@ -411,7 +411,7 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
-/* Selectable image cards (user inbox) */
+/* Selectable image cards (all inbox cards) */
 .pending-image-card.selectable {
   cursor: pointer;
   border-color: rgba(100, 100, 100, 0.3);
@@ -441,6 +441,11 @@
   padding: 2px;
   line-height: 0;
   z-index: 1;
+  cursor: pointer;
+}
+
+.pending-image-checkbox:hover {
+  color: #a78bfa;
 }
 
 .pending-image-checkbox.checked {
@@ -448,33 +453,7 @@
   background: rgba(0, 0, 0, 0.7);
 }
 
-.pending-image-zoom {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
-  border: none;
-  border-radius: 4px;
-  color: #a0a0a0;
-  cursor: pointer;
-  z-index: 1;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.pending-image-card:hover .pending-image-zoom {
-  opacity: 1;
-}
-
-.pending-image-zoom:hover {
-  color: white;
-  background: rgba(0, 0, 0, 0.8);
-}
+/* zoom button removed - click on image opens lightbox directly */
 
 .pending-image-card img {
   width: 100%;
@@ -629,12 +608,23 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.92);
+  background: rgba(0, 0, 0, 0.75);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 2000;
-  cursor: zoom-out;
+  padding: 40px;
+}
+
+.image-lightbox-body {
+  display: flex;
+  max-width: 90vw;
+  max-height: 85vh;
+  background: #1a1a1a;
+  border: 1px solid #3a3a3a;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
 }
 
 .image-lightbox-container {
@@ -642,14 +632,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
-  height: 100%;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
 }
 
 .image-lightbox-container img {
-  max-width: 90vw;
-  max-height: 90vh;
+  max-width: 100%;
+  max-height: 85vh;
   object-fit: contain;
   border-radius: 4px;
   transition: transform 0.15s ease;
@@ -736,6 +726,79 @@
   z-index: 2001;
 }
 
+/* ========== Lightbox Sidebar ========== */
+.lightbox-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  background: #1e1e1e;
+  border-left: 1px solid #3a3a3a;
+  padding: 24px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lightbox-sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lightbox-sidebar-section label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary, #888);
+}
+
+.lightbox-sidebar-value {
+  font-size: 0.875rem;
+  color: var(--text-primary, #e0e0e0);
+  word-break: break-word;
+}
+
+.lightbox-sidebar .gps-map-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  background-color: var(--bg-secondary, #252540);
+  border: 1px solid var(--border-color, #2a2a3e);
+  border-radius: 0.375rem;
+  color: var(--text-primary, #e0e0e0);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+}
+
+.lightbox-sidebar .gps-map-btn:hover {
+  background-color: var(--bg-hover, #303050);
+  border-color: var(--accent-primary, #3b82f6);
+}
+
+.lightbox-sidebar .gps-coords {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  color: var(--text-tertiary, #888);
+  font-family: monospace;
+}
+
+.lightbox-sidebar .image-notes-display {
+  padding: 0.5rem 0.75rem;
+  background-color: var(--bg-secondary, #252540);
+  border: 1px solid var(--border-color, #2a2a3e);
+  border-radius: 0.375rem;
+  color: var(--text-secondary, #b0b0b0);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ========== Spinner ========== */
 @keyframes spin {
   from { transform: rotate(0deg); }
@@ -756,6 +819,10 @@
   margin-bottom: 16px;
 }
 
+.delete-requests-section.collapsed {
+  padding: 12px 16px;
+}
+
 .delete-requests-header {
   display: flex;
   align-items: center;
@@ -763,6 +830,9 @@
   color: #ef4444;
   font-weight: 600;
   font-size: 14px;
+}
+
+.delete-requests-section.expanded .delete-requests-header {
   margin-bottom: 12px;
 }
 
@@ -770,9 +840,16 @@
   flex: 1;
 }
 
-.delete-requests-actions {
+.delete-requests-bulk-actions {
   display: flex;
   gap: 8px;
+  margin-bottom: 12px;
+}
+
+.delete-group-requester {
+  color: var(--text-secondary, #94a3b8);
+  font-weight: 400;
+  font-size: 0.85em;
 }
 
 .btn-small {
@@ -866,6 +943,101 @@
   flex-shrink: 0;
 }
 
+/* ========== Delete Groups (collapsible per project) ========== */
+
+.delete-group {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.delete-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  color: #e2e8f0;
+  transition: background 0.15s;
+}
+
+.delete-group-header:hover {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.delete-group-name {
+  flex: 1;
+  font-weight: 500;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.delete-group-count {
+  font-size: 12px;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.delete-group-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.delete-group-images {
+  padding: 8px 12px 12px;
+  border-top: 1px solid rgba(239, 68, 68, 0.15);
+}
+
+.delete-preview-card {
+  position: relative;
+}
+
+.delete-preview-card img {
+  cursor: pointer;
+}
+
+.delete-preview-meta {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 9px;
+  color: #e2e8f0;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 2px 5px;
+  border-radius: 4px;
+  line-height: 1.3;
+  z-index: 1;
+  max-width: 80%;
+}
+
+.delete-preview-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 2px;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.delete-preview-card:hover .delete-preview-actions {
+  opacity: 1;
+}
+
+.delete-preview-actions .btn-icon {
+  padding: 3px 5px !important;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 4px;
+}
+
 .delete-requests-processing {
   display: flex;
   align-items: center;
@@ -874,4 +1046,128 @@
   padding: 12px;
   color: #ef4444;
   font-size: 13px;
+}
+
+/* ========== Project Changes Section ========== */
+
+.project-changes-section {
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.project-changes-section.collapsed {
+  padding: 12px 16px;
+}
+
+.project-changes-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #3b82f6;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.project-changes-section.expanded .project-changes-header {
+  margin-bottom: 12px;
+}
+
+.project-changes-header span {
+  flex: 1;
+}
+
+.project-changes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.project-change-card {
+  background: rgba(59, 130, 246, 0.06);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.project-change-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.project-change-card-header:hover {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.project-change-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.project-change-color {
+  width: 6px;
+  height: 36px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.project-change-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.project-change-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.project-change-existing {
+  color: var(--text-tertiary);
+  margin-left: 4px;
+}
+
+.project-change-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.project-change-images {
+  padding: 0 14px 14px;
+}
+
+.project-change-image {
+  border-color: rgba(59, 130, 246, 0.3) !important;
+  cursor: pointer;
+}
+
+.project-change-image:hover {
+  border-color: #3b82f6 !important;
+}
+
+/* View button */
+.btn-pending.btn-view {
+  background: rgba(59, 130, 246, 0.12);
+  color: #3b82f6;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.btn-pending.btn-view:hover {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: #3b82f6;
 }

@@ -1,16 +1,17 @@
 import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl,
-  Image, Dimensions, ActivityIndicator, Modal, TextInput, Alert, ScrollView,
+  Image, Dimensions, ActivityIndicator, Modal, TextInput, ScrollView,
 } from 'react-native';
+import { useDialog } from '../components/CustomDialog';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { getRecentPhotos, getCachedProjects, addToUploadQueue, updateRecentPhotoProject, deleteRecentPhotos, getQueuedFileNames } from '../services/database';
-import { createProject, requestDeleteFromSoftware } from '../services/api';
+import { getRecentPhotos, getCachedProjects, getPendingProjects, addToUploadQueue, updateRecentPhotoProject, getQueuedFileNames, addToDeleteQueue } from '../services/database';
+import { createProject } from '../services/api';
 import { syncMetadata } from '../services/syncService';
-import * as FileSystem from 'expo-file-system';
+import { processDeleteQueue } from '../services/deleteQueue';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const PHOTO_COLUMNS = 3;
@@ -19,6 +20,7 @@ const PHOTO_SIZE = Math.floor((SCREEN_WIDTH - 32 - (PHOTO_COLUMNS - 1) * PHOTO_G
 const PAGE_SIZE = 18;
 
 export default function HomeScreen({ navigation }) {
+  const { alert } = useDialog();
   const { userName, activeConnection, refreshQueueCount } = useApp();
   const [recentPhotos, setRecentPhotos] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -121,6 +123,11 @@ export default function HomeScreen({ navigation }) {
         id: p.id,
         name: p.file_name,
         localUri: p.thumbnail_uri || p.file_uri,
+        customTitle: p.custom_title || null,
+        notes: p.notes || null,
+        gpsData: p.gps_data || null,
+        createdAt: p.created_at || null,
+        isLocal: true,
       }));
       navigation.navigate('ImageView', {
         images: imagesList,
@@ -140,20 +147,15 @@ export default function HomeScreen({ navigation }) {
     setSelectedIds(new Set(recentPhotos.map(p => p.id)));
   };
 
-  // Helper: delete photos locally (files + DB)
-  const deletePhotosLocally = async (selectedPhotos) => {
-    for (const photo of selectedPhotos) {
-      if (photo.file_uri) {
-        try { await FileSystem.deleteAsync(photo.file_uri, { idempotent: true }); } catch {}
-      }
-      if (photo.thumbnail_uri && photo.thumbnail_uri !== photo.file_uri) {
-        try { await FileSystem.deleteAsync(photo.thumbnail_uri, { idempotent: true }); } catch {}
-      }
-    }
-    await deleteRecentPhotos(selectedPhotos.map(p => p.id));
-    await loadData();
+  // Queue photos for deletion (non-blocking) and immediately update UI
+  const queueDeleteAndContinue = async (selectedPhotos, deleteFromSoftware = false) => {
+    await addToDeleteQueue(selectedPhotos, deleteFromSoftware);
+    // Immediately remove from UI
+    setRecentPhotos(prev => prev.filter(p => !selectedIds.has(p.id)));
     setSelectionMode(false);
     setSelectedIds(new Set());
+    // Process queue in background
+    processDeleteQueue();
   };
 
   // Delete selected photos
@@ -167,14 +169,12 @@ export default function HomeScreen({ navigation }) {
     const fileNames = selectedPhotos.map(p => p.file_name);
     const queuedNames = await getQueuedFileNames(fileNames);
 
-    // Photos that are still queued → just delete locally, no question needed
-    const queuedPhotos = selectedPhotos.filter(p => queuedNames.has(p.file_name));
     // Photos that have been uploaded → ask user if they also want software deletion
     const uploadedPhotos = selectedPhotos.filter(p => !queuedNames.has(p.file_name));
 
     if (uploadedPhotos.length === 0) {
       // All photos are still in queue → simple delete
-      Alert.alert(
+      alert(
         'Fotos löschen',
         `${count} ${count === 1 ? 'Foto' : 'Fotos'} vom Handy löschen? (noch nicht hochgeladen)`,
         [
@@ -182,44 +182,28 @@ export default function HomeScreen({ navigation }) {
           {
             text: 'Löschen',
             style: 'destructive',
-            onPress: () => deletePhotosLocally(selectedPhotos),
+            onPress: () => queueDeleteAndContinue(selectedPhotos, false),
           },
         ]
       );
     } else {
       // Some/all photos have been uploaded → offer choice
       const uploadedCount = uploadedPhotos.length;
-      const buttons = [
-        { text: 'Abbrechen', style: 'cancel' },
-        {
-          text: 'Nur vom Handy',
-          onPress: () => deletePhotosLocally(selectedPhotos),
-        },
-        {
-          text: 'Auch aus Software',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              // Send delete requests to inbox for desktop software
-              await requestDeleteFromSoftware(uploadedPhotos);
-              // Delete locally
-              await deletePhotosLocally(selectedPhotos);
-              Alert.alert(
-                'Löschanfrage gesendet',
-                `${uploadedCount} ${uploadedCount === 1 ? 'Foto' : 'Fotos'} zum Löschen in der Desktop-Software vorgemerkt.`
-              );
-            } catch (error) {
-              console.error('Failed to request deletion:', error);
-              Alert.alert('Fehler', 'Löschanfrage konnte nicht gesendet werden: ' + error.message);
-            }
-          },
-        },
-      ];
-
-      Alert.alert(
+      alert(
         'Fotos löschen',
         `${uploadedCount} ${uploadedCount === 1 ? 'Foto wurde' : 'Fotos wurden'} bereits hochgeladen. Auch aus der Desktop-Software löschen?`,
-        buttons
+        [
+          { text: 'Abbrechen', style: 'cancel' },
+          {
+            text: 'Nur vom Handy',
+            onPress: () => queueDeleteAndContinue(selectedPhotos, false),
+          },
+          {
+            text: 'Auch aus Software',
+            style: 'destructive',
+            onPress: () => queueDeleteAndContinue(selectedPhotos, true),
+          },
+        ]
       );
     }
   };
@@ -227,13 +211,24 @@ export default function HomeScreen({ navigation }) {
   // Project assignment
   const openProjectPicker = async () => {
     try {
-      const cached = await getCachedProjects();
-      setProjects(cached);
+      const [cached, pending] = await Promise.all([getCachedProjects(), getPendingProjects()]);
+      // Merge pending projects that aren't already in cached
+      const pendingMapped = pending
+        .filter(pp => !cached.some(c => c.folder_id === pp.folder_id))
+        .map(pp => ({
+          id: pp.folder_id || `pending_${pp.id}`,
+          folder_name: pp.folder_name,
+          folder_id: pp.folder_id,
+          color: '#6b7280',
+          image_count: 0,
+          isPending: true,
+        }));
+      setProjects([...cached, ...pendingMapped]);
       setProjectSearch('');
       setShowProjectPicker(true);
     } catch (error) {
       console.error('Failed to load projects:', error);
-      Alert.alert('Fehler', 'Projekte konnten nicht geladen werden.');
+      alert('Fehler', 'Projekte konnten nicht geladen werden.');
     }
   };
 
@@ -272,13 +267,13 @@ export default function HomeScreen({ navigation }) {
       setSelectionMode(false);
       setSelectedIds(new Set());
 
-      Alert.alert(
+      alert(
         'Zugewiesen',
         `${queuedCount} ${queuedCount === 1 ? 'Foto' : 'Fotos'} werden zu "${project.folder_name}" hochgeladen.`
       );
     } catch (error) {
       console.error('Failed to assign photos:', error);
-      Alert.alert('Fehler', 'Fotos konnten nicht zugewiesen werden: ' + error.message);
+      alert('Fehler', 'Fotos konnten nicht zugewiesen werden: ' + error.message);
     } finally {
       setAssigning(false);
     }
@@ -286,7 +281,7 @@ export default function HomeScreen({ navigation }) {
 
   const handleCreateNewProject = async () => {
     if (!projectSearch.trim()) {
-      Alert.alert('Fehler', 'Bitte gib einen Projektnamen ein.');
+      alert('Fehler', 'Bitte gib einen Projektnamen ein.');
       return;
     }
 
@@ -305,7 +300,7 @@ export default function HomeScreen({ navigation }) {
       }
     } catch (error) {
       console.error('Failed to create project:', error);
-      Alert.alert('Fehler', 'Projekt konnte nicht erstellt werden: ' + error.message);
+      alert('Fehler', 'Projekt konnte nicht erstellt werden: ' + error.message);
       setAssigning(false);
     }
   };
@@ -494,7 +489,11 @@ export default function HomeScreen({ navigation }) {
                   <View style={[styles.projectColorBar, { backgroundColor: project.color || colors.accent }]} />
                   <View style={styles.projectInfo}>
                     <Text style={styles.projectName} numberOfLines={1}>{project.folder_name}</Text>
-                    <Text style={styles.projectImageCount}>{project.image_count || 0} Bilder</Text>
+                    {project.isPending ? (
+                      <Text style={styles.pendingBadge}>Unbestätigt</Text>
+                    ) : (
+                      <Text style={styles.projectImageCount}>{project.image_count || 0} Bilder</Text>
+                    )}
                   </View>
                   {project.is_starred ? (
                     <Ionicons name="star" size={14} color={colors.warning} />
@@ -720,6 +719,12 @@ const styles = StyleSheet.create({
   projectImageCount: {
     fontSize: 12,
     color: colors.textTertiary,
+    marginTop: 2,
+  },
+  pendingBadge: {
+    fontSize: 11,
+    color: '#f59e0b',
+    fontWeight: '600',
     marginTop: 2,
   },
   noProjectsText: {

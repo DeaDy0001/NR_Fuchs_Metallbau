@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
 const { compressImage, generateThumbnail, findSubfolder, findOrCreateSubfolder, moveFileOnDrive, listFoldersInFolder, listFilesInFolder, extractFolderId, deleteFileFromDrive, downloadFile, getFileMetadata, listAllFilesInFolder, readDriveFileAsJson, updateDriveFileContent } = require('../services/googleDriveService');
+const { readExifData, writeExifData } = require('../services/exifService');
 const { google } = require('googleapis');
 const os = require('os');
 
@@ -55,8 +56,10 @@ const getNetworkAddresses = () => {
  */
 const generateConnectToken = (req, res) => {
   try {
-    // Use unified GOOGLE_CLIENT_ID for both desktop and mobile
-    const googleClientId = process.env.GOOGLE_CLIENT_ID;
+    // Use GOOGLE_MOBILE_CLIENT_ID (TV/Limited Input type) for mobile Device Flow,
+    // fall back to GOOGLE_CLIENT_ID if not set
+    const googleClientId = process.env.GOOGLE_MOBILE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
+    const googleClientSecret = process.env.GOOGLE_MOBILE_CLIENT_SECRET || '';
     if (!googleClientId) {
       return res.status(400).json({
         error: 'Google OAuth nicht konfiguriert. Bitte Google Credentials im Dev-Tab der Einstellungen konfigurieren.'
@@ -97,17 +100,33 @@ const generateConnectToken = (req, res) => {
     const primaryAddress = selectedAddress || (networkAddresses.length > 0 ? networkAddresses[0].address : 'localhost');
     const serverUrl = `http://${primaryAddress}:${serverPort}`;
 
+    // Include Web Application credentials so mobile app can do WebView OAuth
+    // directly with Google (without needing to reach this server)
+    const webClientId = process.env.GOOGLE_CLIENT_ID || '';
+    const webClientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
+    const webRedirectUri = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback';
+
     // Build QR code data as JSON for the mobile app to parse
     const qrPayload = {
       type: 'fuchs_drive',
       googleClientId,
+      googleClientSecret: googleClientSecret || undefined,
       rootFolderId,
       name: drivePath.name || 'Fuchs Metallbau',
       serverUrl,
+      webClientId: webClientId !== googleClientId ? webClientId : undefined,
+      webClientSecret: webClientSecret !== googleClientSecret ? webClientSecret : undefined,
+      webRedirectUri,
     };
 
+    // Encode payload as base64url in a URL so:
+    // - Phone camera scan → opens landing page with APK download
+    // - In-app scan → app extracts connection data from URL
+    const encodedData = Buffer.from(JSON.stringify(qrPayload)).toString('base64url');
+    const qrUrl = `${serverUrl}/api/mobile/connect/setup?d=${encodedData}`;
+
     res.json({
-      qrData: JSON.stringify(qrPayload),
+      qrData: qrUrl,
       name: drivePath.name,
       rootFolderId,
       googleClientId,
@@ -141,22 +160,71 @@ const connectLandingPage = (req, res) => {
     const apkPath = path.join(__dirname, '../../../mobile-app/android/app.apk');
     const apkExists = fs.existsSync(apkPath);
     let apkSize = '';
+    let apkTimestamp = '';
     if (apkExists) {
       const stats = fs.statSync(apkPath);
       const mb = (stats.size / (1024 * 1024)).toFixed(1);
       apkSize = `${mb} MB`;
+      apkTimestamp = String(stats.mtimeMs | 0);
     }
 
     const connectionData = JSON.stringify({ token, serverUrl });
 
-    res.send(buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, connectionData }));
+    res.send(buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, apkTimestamp, connectionData }));
   } catch (error) {
     console.error('Error serving connect page:', error);
     res.status(500).send('Fehler beim Laden der Seite');
   }
 };
 
-function buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, connectionData }) {
+/**
+ * Setup landing page - dual purpose QR code endpoint
+ * GET /api/mobile/connect/setup?d=<base64url-encoded-json>
+ *
+ * When scanned with phone camera → shows landing page with APK download
+ * When scanned in the app → app extracts connection data from URL
+ */
+const connectSetupPage = (req, res) => {
+  try {
+    const { d } = req.query;
+    if (!d) {
+      return res.status(400).send('Ungültiger Link - kein Daten-Parameter');
+    }
+
+    // Decode the payload
+    let payload;
+    try {
+      payload = JSON.parse(Buffer.from(d, 'base64url').toString('utf-8'));
+    } catch {
+      return res.status(400).send('Ungültiger Link - Daten konnten nicht gelesen werden');
+    }
+
+    const serverUrl = payload.serverUrl || `${req.protocol}://${req.hostname}:${req.socket.localPort}`;
+    const driveName = payload.name || 'Fuchs Metallbau';
+
+    // Check if APK exists
+    const apkPath = path.join(__dirname, '../../../mobile-app/android/app.apk');
+    const apkExists = fs.existsSync(apkPath);
+    let apkSize = '';
+    let apkTimestamp = '';
+    if (apkExists) {
+      const stats = fs.statSync(apkPath);
+      const mb = (stats.size / (1024 * 1024)).toFixed(1);
+      apkSize = `${mb} MB`;
+      apkTimestamp = String(stats.mtimeMs | 0);
+    }
+
+    // The same QR URL that brought the user here - they'll scan it again in the app
+    const qrUrl = `${serverUrl}/api/mobile/connect/setup?d=${d}`;
+
+    res.send(buildSetupPageHtml({ serverUrl, driveName, apkExists, apkSize, apkTimestamp, qrUrl }));
+  } catch (error) {
+    console.error('Error serving setup page:', error);
+    res.status(500).send('Fehler beim Laden der Seite');
+  }
+};
+
+function buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, apkTimestamp, connectionData }) {
   return `<!DOCTYPE html>
 <html lang="de">
 <head>
@@ -240,7 +308,7 @@ function buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, connecti
 
     <p class="label">Schritt 1 \u2013 App installieren</p>
     ${apkExists ? `
-    <a href="${serverUrl}/api/mobile/app.apk" class="btn btn-primary" download="FuchsMetallbau.apk">
+    <a href="${serverUrl}/api/mobile/app.apk?v=${apkTimestamp}" class="btn btn-primary" download="FuchsMetallbau.apk">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
       APK herunterladen (${apkSize})
     </a>
@@ -303,6 +371,126 @@ function buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, connecti
       });
     }
   </script>
+</body>
+</html>`;
+}
+
+function buildSetupPageHtml({ serverUrl, driveName, apkExists, apkSize, apkTimestamp, qrUrl }) {
+  return `<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Fuchs Metallbau - App einrichten</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+      background:#0f0f23;color:#e2e8f0;min-height:100vh;
+      display:flex;flex-direction:column;align-items:center;
+      padding:24px 16px;
+    }
+    .card{
+      background:#1a1a2e;border:1px solid #2a2a4a;border-radius:16px;
+      padding:32px 24px;max-width:420px;width:100%;text-align:center;
+    }
+    .logo{
+      width:72px;height:72px;
+      background:linear-gradient(135deg,#3b82f6,#2563eb);
+      border-radius:18px;display:flex;align-items:center;justify-content:center;
+      margin:0 auto 20px;font-size:32px;
+    }
+    h1{font-size:22px;font-weight:700;margin-bottom:6px}
+    .subtitle{font-size:14px;color:#94a3b8;margin-bottom:28px}
+    .status{
+      display:inline-flex;align-items:center;gap:8px;
+      padding:8px 16px;border-radius:20px;font-size:13px;font-weight:600;
+      margin-bottom:24px;background:rgba(34,197,94,.15);color:#4ade80;border:1px solid rgba(34,197,94,.3)
+    }
+    .dot{width:8px;height:8px;border-radius:50%;background:#4ade80}
+    .divider{height:1px;background:#2a2a4a;margin:20px 0}
+    .label{font-size:13px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
+    .btn{
+      display:flex;align-items:center;justify-content:center;gap:10px;
+      width:100%;padding:14px 20px;border-radius:12px;font-size:16px;font-weight:600;
+      text-decoration:none;border:none;cursor:pointer;transition:all .2s;
+    }
+    .btn-primary{background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff}
+    .btn-primary:hover{opacity:.9}
+    .btn-disabled{background:#2a2a4a;color:#64748b;cursor:not-allowed}
+    .btn svg{width:20px;height:20px;flex-shrink:0}
+    .info-box{background:#16163a;border:1px solid #2a2a4a;border-radius:10px;padding:14px;margin-top:16px}
+    .info-row{display:flex;justify-content:space-between;align-items:center;font-size:13px}
+    .info-row+.info-row{margin-top:8px}
+    .info-label{color:#94a3b8}.info-value{color:#e2e8f0;font-family:monospace;font-size:12px}
+    .steps{text-align:left;margin-top:20px}
+    .step{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px}
+    .step-num{
+      width:26px;height:26px;border-radius:50%;background:#2a2a4a;color:#3b82f6;
+      display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0;
+    }
+    .step-text{font-size:14px;color:#cbd5e1;line-height:1.4;padding-top:2px}
+    .footer{margin-top:24px;font-size:12px;color:#475569}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">&#9874;</div>
+    <h1>Fuchs Metallbau</h1>
+    <p class="subtitle">Mobile App f\u00fcr Fotos &amp; Projekte</p>
+
+    <div class="status">
+      <span class="dot"></span>
+      Verbindung bereit \u2013 ${driveName}
+    </div>
+
+    <div class="divider"></div>
+
+    <p class="label">Schritt 1 \u2013 App installieren</p>
+    ${apkExists ? `
+    <a href="${serverUrl}/api/mobile/app.apk?v=${apkTimestamp}" class="btn btn-primary" download="FuchsMetallbau.apk">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+      APK herunterladen (${apkSize})
+    </a>
+    ` : `
+    <div class="btn btn-disabled">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      APK noch nicht verf\u00fcgbar
+    </div>
+    <p style="font-size:12px;color:#94a3b8;margin-top:8px">Die APK muss zuerst am Server gebaut werden.</p>
+    `}
+
+    <div class="divider"></div>
+
+    <p class="label">Schritt 2 \u2013 Mit Server verbinden</p>
+    <div class="steps">
+      <div class="step">
+        <span class="step-num">1</span>
+        <span class="step-text">Installiere und \u00f6ffne die App</span>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <span class="step-text">Scanne <strong>denselben QR-Code</strong> nochmal \u2013 diesmal in der App</span>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <span class="step-text">Melde dich mit deinem Google-Konto an</span>
+      </div>
+    </div>
+
+    <div class="info-box">
+      <div class="info-row">
+        <span class="info-label">Server</span>
+        <span class="info-value">${serverUrl}</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Drive-Ordner</span>
+        <span class="info-value">${driveName}</span>
+      </div>
+    </div>
+  </div>
+
+  <p class="footer">Fuchs Metallbau</p>
 </body>
 </html>`;
 }
@@ -583,19 +771,45 @@ const uploadImage = async (req, res) => {
       return res.status(400).json({ error: 'Kein Bild angegeben' });
     }
 
-    const { project_id, project_name } = req.body;
+    const { project_id, project_name, custom_title, notes, gps_latitude, gps_longitude, gps_altitude } = req.body;
     const userName = req.device.user_name;
     const deviceId = req.device.device_id;
 
     const originalName = req.file.originalname;
     const ext = path.extname(originalName);
-    const baseName = path.basename(originalName, ext);
+    const baseName = custom_title || path.basename(originalName, ext);
     const timestamp = Date.now();
     const fileName = `${baseName}_${timestamp}${ext}`;
 
     // Move file to mobile uploads directory
     const finalPath = path.join(MOBILE_UPLOADS_DIR, fileName);
     await fs.move(req.file.path, finalPath);
+
+    // Write EXIF metadata into image (GPS, title, notes)
+    const lat = gps_latitude ? parseFloat(gps_latitude) : null;
+    const lon = gps_longitude ? parseFloat(gps_longitude) : null;
+    const alt = gps_altitude ? parseFloat(gps_altitude) : null;
+
+    try {
+      await writeExifData(finalPath, {
+        latitude: lat,
+        longitude: lon,
+        altitude: alt,
+        description: custom_title || null,
+        userComment: notes || null
+      });
+    } catch (e) {
+      console.error('EXIF write failed (non-critical):', e.message);
+    }
+
+    // Read back EXIF to also get photo_taken_at
+    let photoTakenAt = null;
+    try {
+      const exifData = await readExifData(finalPath);
+      if (exifData.photoTakenAt) photoTakenAt = exifData.photoTakenAt;
+    } catch (e) {
+      // ignore
+    }
 
     // Generate thumbnail
     const thumbnailName = `mobile_${baseName}_${timestamp}.webp`;
@@ -631,8 +845,8 @@ const uploadImage = async (req, res) => {
     // Also insert into drive_images so it appears in the main software
     const imgResult = db.prepare(`
       INSERT INTO drive_images
-        (drive_path_id, name, original_name, file_url, local_path, thumbnail_url, file_size, mime_type, is_compressed, drive_file_id)
-      VALUES (NULL, ?, ?, '', ?, ?, ?, ?, 0, ?)
+        (drive_path_id, name, original_name, file_url, local_path, thumbnail_url, file_size, mime_type, is_compressed, drive_file_id, photo_taken_at, gps_latitude, gps_longitude, gps_altitude, image_notes)
+      VALUES (NULL, ?, ?, '', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
     `).run(
       baseName,
       originalName,
@@ -640,7 +854,12 @@ const uploadImage = async (req, res) => {
       thumbnailRelative,
       stats.size,
       req.file.mimetype,
-      `mobile_${deviceId}_${timestamp}`
+      `mobile_${deviceId}_${timestamp}`,
+      photoTakenAt,
+      lat,
+      lon,
+      alt,
+      notes || null
     );
 
     // If project_id is given, assign image to project
@@ -812,9 +1031,15 @@ const sanitizeFilename = (filename) => {
 
 /**
  * Helper: Download a Drive file locally, generate thumbnail, register in drive_images
+ * @param {string} driveFileId - Google Drive file ID
+ * @param {string} fileName - Original file name
+ * @param {string} mimeType - MIME type
+ * @param {number} drivePathId - DB drive_path ID
+ * @param {string} drivePathName - Drive path name (for local directory)
+ * @param {string|null} driveDescription - Google Drive file description (may contain [FUCHS_META])
  * Returns the new drive_images row ID
  */
-const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePathId, drivePathName) => {
+const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePathId, drivePathName, driveDescription = null) => {
   const uploadBaseDir = path.join(__dirname, '../../../uploads/drive');
   const drivePathDir = path.join(uploadBaseDir, sanitizeFilename(drivePathName));
   await fs.ensureDir(drivePathDir);
@@ -828,17 +1053,75 @@ const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePa
   await downloadFile(driveFileId, localFilePath);
   const stats = await fs.stat(localFilePath);
 
-  // Extract EXIF date
+  // Extract EXIF data (GPS, date, notes)
   let photoTakenAt = null;
+  let gpsLatitude = null;
+  let gpsLongitude = null;
+  let gpsAltitude = null;
+  let imageNotes = null;
+  let customTitle = null;
   try {
-    const exifr = require('exifr');
-    const exifData = await exifr.parse(localFilePath, {
-      pick: ['DateTimeOriginal', 'DateTime', 'CreateDate']
-    });
-    if (exifData) {
-      const dateValue = exifData.DateTimeOriginal || exifData.DateTime || exifData.CreateDate;
-      if (dateValue) photoTakenAt = new Date(dateValue).toISOString();
+    const exifData = await readExifData(localFilePath);
+    if (exifData.photoTakenAt) {
+      photoTakenAt = exifData.photoTakenAt;
     }
+    if (exifData.latitude != null && exifData.longitude != null) {
+      gpsLatitude = exifData.latitude;
+      gpsLongitude = exifData.longitude;
+      gpsAltitude = exifData.altitude;
+    }
+    if (exifData.userComment) {
+      imageNotes = exifData.userComment;
+    }
+  } catch {}
+
+  // Parse FUCHS_META from Drive file description
+  if (driveDescription && driveDescription.startsWith('[FUCHS_META]')) {
+    try {
+      const metaJson = driveDescription.substring('[FUCHS_META]'.length);
+      const meta = JSON.parse(metaJson);
+      if (meta.gps && gpsLatitude == null) {
+        gpsLatitude = meta.gps.latitude;
+        gpsLongitude = meta.gps.longitude;
+        gpsAltitude = meta.gps.altitude || null;
+      }
+      if (meta.notes && !imageNotes) {
+        imageNotes = meta.notes;
+      }
+      if (meta.title) {
+        customTitle = meta.title;
+      }
+    } catch (e) {
+      // Invalid JSON - ignore
+    }
+  }
+
+  // Check pending_image_metadata table
+  try {
+    const pending = db.prepare(
+      'SELECT * FROM pending_image_metadata WHERE drive_file_id = ? OR file_name = ? LIMIT 1'
+    ).get(driveFileId, fileName);
+    if (pending) {
+      if (pending.gps_latitude != null && gpsLatitude == null) {
+        gpsLatitude = pending.gps_latitude;
+        gpsLongitude = pending.gps_longitude;
+        gpsAltitude = pending.gps_altitude;
+      }
+      if (pending.notes && !imageNotes) imageNotes = pending.notes;
+      if (pending.custom_title && !customTitle) customTitle = pending.custom_title;
+      db.prepare('DELETE FROM pending_image_metadata WHERE id = ?').run(pending.id);
+    }
+  } catch {}
+
+  // Write metadata into EXIF (so it persists in the file)
+  try {
+    await writeExifData(localFilePath, {
+      latitude: gpsLatitude,
+      longitude: gpsLongitude,
+      altitude: gpsAltitude,
+      description: customTitle || null,
+      userComment: imageNotes || null
+    });
   } catch {}
 
   // Generate thumbnail
@@ -855,18 +1138,23 @@ const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePa
   const result = db.prepare(`
     INSERT INTO drive_images
     (drive_path_id, name, original_name, local_path, thumbnail_url,
-     file_size, mime_type, is_compressed, drive_file_id, photo_taken_at, subfolder)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL)
+     file_size, mime_type, is_compressed, drive_file_id, photo_taken_at, subfolder,
+     gps_latitude, gps_longitude, gps_altitude, image_notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?, ?, ?)
   `).run(
     drivePathId,
-    fileBaseName,
+    customTitle || fileBaseName,
     fileName,
     localPath,
     thumbnailUrl,
     stats.size,
     mimeType || 'image/jpeg',
     driveFileId,
-    photoTakenAt
+    photoTakenAt,
+    gpsLatitude,
+    gpsLongitude,
+    gpsAltitude,
+    imageNotes
   );
 
   return result.lastInsertRowid;
@@ -1017,7 +1305,18 @@ const confirmInboxProject = async (req, res) => {
 
     await moveFileOnDrive(folderId, projekteFolder.id, sourceParentId);
 
-    // Create local project folder + Bilder subfolder + download images
+    // Create project in DB if not exists (do this BEFORE downloading so we have projectId)
+    const existing = db.prepare('SELECT id FROM projects WHERE folder_name = ?').get(projectName);
+    let projectId;
+    if (existing) {
+      projectId = existing.id;
+    } else {
+      const result = db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)')
+        .run(projectName, '#3b82f6', '');
+      projectId = result.lastInsertRowid;
+    }
+
+    // Create local project folder + Bilder subfolder + download images + register in DB
     const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
     let downloaded = 0;
 
@@ -1027,18 +1326,72 @@ const confirmInboxProject = async (req, res) => {
       await fs.ensureDir(bilderFolder);
       console.log(`📁 Created local project folder: ${bilderFolder}`);
 
-      // Download images from Drive to local Bilder folder
+      // Download images from Drive to local Bilder folder and register in drive_images
       for (const img of images) {
         try {
           // Download directly to Bilder folder
           const destPath = path.join(bilderFolder, img.name);
           if (!await fs.pathExists(destPath)) {
             await downloadFile(img.id, destPath);
-            downloaded++;
             console.log(`✓ Downloaded "${img.name}" to "${bilderFolder}"`);
           } else {
-            downloaded++;
             console.log(`⏭ "${img.name}" already exists, skipped`);
+          }
+          downloaded++;
+
+          // Register image in drive_images DB so it appears in Bilder tab
+          const existingImg = db.prepare('SELECT id FROM drive_images WHERE drive_file_id = ?').get(img.id);
+          let imageId;
+          if (!existingImg) {
+            const projectImageUrl = `/api/projects/${projectId}/file/image/${encodeURIComponent(img.name)}`;
+            const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+            let fileSize = null;
+            try {
+              const stats = await fs.stat(destPath);
+              fileSize = stats.size;
+            } catch (e) { /* ignore */ }
+
+            // Extract metadata from EXIF + Drive description
+            let imgPhotoTakenAt = null;
+            let imgGpsLat = null, imgGpsLon = null, imgGpsAlt = null;
+            let imgNotes = null;
+            let imgTitle = null;
+            try {
+              const exif = await readExifData(destPath);
+              if (exif.photoTakenAt) imgPhotoTakenAt = exif.photoTakenAt;
+              if (exif.latitude != null) { imgGpsLat = exif.latitude; imgGpsLon = exif.longitude; imgGpsAlt = exif.altitude; }
+              if (exif.userComment) imgNotes = exif.userComment;
+            } catch {}
+            if (img.description && img.description.startsWith('[FUCHS_META]')) {
+              try {
+                const meta = JSON.parse(img.description.substring('[FUCHS_META]'.length));
+                if (meta.gps && imgGpsLat == null) { imgGpsLat = meta.gps.latitude; imgGpsLon = meta.gps.longitude; imgGpsAlt = meta.gps.altitude || null; }
+                if (meta.notes && !imgNotes) imgNotes = meta.notes;
+                if (meta.title) imgTitle = meta.title;
+              } catch {}
+            }
+
+            const displayName = imgTitle || path.basename(img.name, path.extname(img.name));
+            const imgResult = db.prepare(`
+              INSERT INTO drive_images (
+                name, original_name, local_path, thumbnail_url, file_url,
+                mime_type, drive_file_id, drive_path_id, file_size, created_at,
+                photo_taken_at, gps_latitude, gps_longitude, gps_altitude, image_notes
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              displayName, img.name, projectImageUrl, projectImageUrl, projectImageUrl,
+              img.mimeType || 'image/jpeg', img.id, fileSize, now,
+              imgPhotoTakenAt, imgGpsLat, imgGpsLon, imgGpsAlt, imgNotes
+            );
+            imageId = imgResult.lastInsertRowid;
+          } else {
+            imageId = existingImg.id;
+          }
+
+          // Create project assignment
+          if (imageId) {
+            db.prepare('INSERT OR IGNORE INTO image_project_assignments (image_id, project_id) VALUES (?, ?)')
+              .run(imageId, projectId);
           }
         } catch (e) {
           console.error(`✗ Failed to download ${img.name}:`, e.message);
@@ -1046,17 +1399,6 @@ const confirmInboxProject = async (req, res) => {
       }
     } else {
       console.warn('⚠ project_path not configured, skipping local download');
-    }
-
-    // Create project in DB if not exists
-    const existing = db.prepare('SELECT id FROM projects WHERE folder_name = ?').get(projectName);
-    let projectId;
-    if (existing) {
-      projectId = existing.id;
-    } else {
-      const result = db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)')
-        .run(projectName, '#3b82f6', '');
-      projectId = result.lastInsertRowid;
     }
 
     // Update any related mobile_uploads entries
@@ -1069,7 +1411,7 @@ const confirmInboxProject = async (req, res) => {
       // Non-critical
     }
 
-    console.log(`✅ Project "${projectName}" confirmed: ${downloaded}/${images.length} images downloaded`);
+    console.log(`✅ Project "${projectName}" confirmed: ${downloaded}/${images.length} images downloaded and registered`);
     res.json({
       success: true,
       message: `Projekt "${projectName}" wurde erstellt (${downloaded}/${images.length} Bilder heruntergeladen)`,
@@ -1122,7 +1464,8 @@ const addToLibrary = async (req, res) => {
           file.name,
           file.mimeType,
           drivePath.id,
-          drivePath.name
+          drivePath.name,
+          file.description || null
         );
 
         addedCount++;
@@ -1216,7 +1559,8 @@ const mergeFilesToProject = async (files, sourceFolderId, targetProjectId) => {
         file.name,
         file.mimeType,
         drivePath.id,
-        drivePath.name
+        drivePath.name,
+        file.description || null
       );
 
       // 3. Copy to local project Bilder/ folder
@@ -1587,9 +1931,11 @@ const mobileExchangeCode = async (req, res) => {
       return res.status(400).json({ error: 'Authorization code ist erforderlich' });
     }
 
-    // Use unified GOOGLE_CLIENT_ID credentials
-    const useClientId = client_id || process.env.GOOGLE_CLIENT_ID;
-    const useClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    // Match client_id to the correct client_secret
+    const useClientId = client_id || process.env.GOOGLE_MOBILE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
+    const useClientSecret = (useClientId === process.env.GOOGLE_MOBILE_CLIENT_ID)
+      ? (process.env.GOOGLE_MOBILE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET)
+      : process.env.GOOGLE_CLIENT_SECRET;
 
     if (!useClientId || !useClientSecret) {
       return res.status(500).json({ error: 'Google OAuth nicht konfiguriert. Bitte Credentials im Dev-Tab konfigurieren.' });
@@ -1630,6 +1976,7 @@ const mobileExchangeCode = async (req, res) => {
       access_token: tokenData.access_token,
       refresh_token: tokenData.refresh_token || null,
       expires_in: tokenData.expires_in || 3600,
+      scope: tokenData.scope || '',
       user_name: userInfo.name || '',
       user_email: userInfo.email || '',
       user_photo: userInfo.picture || '',
@@ -1657,9 +2004,15 @@ const mobileDeviceToken = async (req, res) => {
       return res.status(400).json({ error: 'device_code ist erforderlich' });
     }
 
-    // Use unified GOOGLE_CLIENT_ID credentials
-    const useClientId = client_id || process.env.GOOGLE_CLIENT_ID;
-    const useClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    // Match client_id to the correct client_secret (device flow uses mobile/TV credentials)
+    const useClientId = client_id || process.env.GOOGLE_MOBILE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
+    const useClientSecret = (useClientId === process.env.GOOGLE_MOBILE_CLIENT_ID)
+      ? (process.env.GOOGLE_MOBILE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET)
+      : process.env.GOOGLE_CLIENT_SECRET;
+
+    console.log('[Fuchs] Device token exchange - clientId match:',
+      useClientId === process.env.GOOGLE_MOBILE_CLIENT_ID ? 'MOBILE' : 'WEB',
+      '| secret type:', useClientSecret === process.env.GOOGLE_MOBILE_CLIENT_SECRET ? 'MOBILE' : 'WEB');
 
     if (!useClientId || !useClientSecret) {
       return res.status(500).json({ error: 'Google OAuth nicht konfiguriert. Bitte Credentials im Dev-Tab konfigurieren.' });
@@ -2388,13 +2741,386 @@ const dismissDeleteRequests = async (req, res) => {
   }
 };
 
+/**
+ * Preview a delete request image from local project folder
+ * GET /api/mobile/inbox/delete-preview/:projectName/:fileName
+ */
+const previewDeleteRequestImage = async (req, res) => {
+  try {
+    const { projectName, fileName } = req.params;
+    const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    if (!settings?.project_path) {
+      return res.status(404).json({ error: 'Kein Projektpfad konfiguriert' });
+    }
+
+    const filePath = path.join(settings.project_path, projectName, 'Bilder', fileName);
+    if (await fs.pathExists(filePath)) {
+      return res.sendFile(path.resolve(filePath));
+    }
+
+    res.status(404).json({ error: 'Bild nicht lokal gefunden' });
+  } catch (error) {
+    console.error('Error serving delete request preview:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Scan NR_Fuchs_Meta/Projekte/ for new images not yet downloaded locally.
+ * Compares Drive images with local project Bilder/ folders.
+ * GET /api/mobile/project-changes
+ */
+const getProjectChanges = async (req, res) => {
+  try {
+    const drivePath = db.prepare('SELECT path FROM drive_paths LIMIT 1').get();
+    if (!drivePath) {
+      return res.json({ changes: [] });
+    }
+
+    let rootFolderId = drivePath.path;
+    const urlMatch = drivePath.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    if (urlMatch) rootFolderId = urlMatch[1];
+
+    const metaFolder = await findSubfolder(rootFolderId, 'NR_Fuchs_Meta');
+    if (!metaFolder) {
+      return res.json({ changes: [] });
+    }
+
+    const projekteFolder = await findSubfolder(metaFolder.id, 'Projekte');
+    if (!projekteFolder) {
+      return res.json({ changes: [] });
+    }
+
+    // List all project subfolders in Projekte/
+    const projectFolders = await listFoldersInFolder(projekteFolder.id);
+    if (projectFolders.length === 0) {
+      return res.json({ changes: [] });
+    }
+
+    // Get local project base path
+    const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    const projectBasePath = settings?.project_path;
+
+    // Get ignored file IDs (files previously deleted by user - should not reappear)
+    const ignoredFileIds = new Set(
+      db.prepare('SELECT drive_file_id FROM ignored_files').all().map(r => r.drive_file_id)
+    );
+
+    const changes = [];
+
+    for (const folder of projectFolders) {
+      try {
+        // List images on Drive in this project folder
+        const driveImages = await listFilesInFolder(folder.id);
+        if (driveImages.length === 0) continue;
+
+        // Get local images for this project
+        let localImageNames = new Set();
+        if (projectBasePath) {
+          const localBilderPath = path.join(projectBasePath, folder.name, 'Bilder');
+          if (await fs.pathExists(localBilderPath)) {
+            const localFiles = await fs.readdir(localBilderPath);
+            localImageNames = new Set(localFiles.map(f => f.toLowerCase()));
+          }
+        }
+
+        // Find new images (on Drive but not local, and not previously ignored/deleted)
+        const newImages = driveImages.filter(img =>
+          !localImageNames.has(img.name.toLowerCase()) && !ignoredFileIds.has(img.id)
+        );
+
+        if (newImages.length > 0) {
+          // Check if project exists in DB
+          const project = db.prepare('SELECT id, folder_name, color FROM projects WHERE folder_name = ?').get(folder.name);
+
+          changes.push({
+            project_name: folder.name,
+            project_id: project?.id || null,
+            project_color: project?.color || '#3b82f6',
+            drive_folder_id: folder.id,
+            new_images: newImages.map(img => ({
+              id: img.id,
+              name: img.name,
+              size: img.size,
+              description: img.description || null,
+            })),
+            total_drive_images: driveImages.length,
+            total_local_images: localImageNames.size,
+          });
+        }
+      } catch (e) {
+        console.error(`Error scanning project folder "${folder.name}":`, e.message);
+      }
+    }
+
+    res.json({ changes });
+  } catch (error) {
+    console.error('Error getting project changes:', error);
+    res.status(500).json({ error: 'Fehler beim Scannen der Projektänderungen' });
+  }
+};
+
+/**
+ * Proxy image from NR_Fuchs_Meta/Projekte/ for preview in the UI.
+ * GET /api/mobile/project-changes/image-proxy/:fileId
+ */
+const proxyProjectChangeImage = async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    const { getDriveClient } = require('../services/authService');
+    const drive = await getDriveClient();
+
+    const response = await drive.files.get(
+      { fileId, alt: 'media' },
+      { responseType: 'stream' }
+    );
+
+    const contentType = response.headers['content-type'] || 'image/jpeg';
+    res.set('Content-Type', contentType);
+    res.set('Cache-Control', 'public, max-age=3600');
+    response.data.pipe(res);
+  } catch (error) {
+    console.error('Error proxying project change image:', error.message);
+    res.status(404).json({ error: 'Bild nicht gefunden' });
+  }
+};
+
+/**
+ * Confirm project changes: download new images to local project folder.
+ * POST /api/mobile/project-changes/confirm
+ * Body: { projectName, fileIds }
+ */
+const confirmProjectChanges = async (req, res) => {
+  try {
+    const { projectName, fileIds } = req.body;
+
+    if (!projectName || !fileIds || fileIds.length === 0) {
+      return res.status(400).json({ error: 'projectName und fileIds sind erforderlich' });
+    }
+
+    const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    if (!settings?.project_path) {
+      return res.status(400).json({ error: 'Kein Projektpfad konfiguriert' });
+    }
+
+    const bilderFolder = path.join(settings.project_path, projectName, 'Bilder');
+    await fs.ensureDir(bilderFolder);
+
+    // Ensure project exists in DB
+    let project = db.prepare('SELECT id FROM projects WHERE folder_name = ?').get(projectName);
+    if (!project) {
+      const insertResult = db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)')
+        .run(projectName, '#3b82f6', '');
+      project = { id: insertResult.lastInsertRowid };
+    }
+
+    let downloaded = 0;
+    for (const fileId of fileIds) {
+      try {
+        const meta = await getFileMetadata(fileId);
+        const destPath = path.join(bilderFolder, meta.name);
+        if (!await fs.pathExists(destPath)) {
+          await downloadFile(fileId, destPath);
+        }
+        downloaded++;
+
+        // Register in drive_images with drive_file_id so it can be tracked for Drive deletion
+        const existingImg = db.prepare('SELECT id FROM drive_images WHERE drive_file_id = ?').get(fileId);
+        if (!existingImg) {
+          const projectImageUrl = `/api/projects/${project.id}/file/image/${encodeURIComponent(meta.name)}`;
+          const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+          let fileSize = null;
+          try {
+            const stats = await fs.stat(destPath);
+            fileSize = stats.size;
+          } catch (e) { /* ignore */ }
+
+          // Extract metadata from EXIF + Drive description
+          let pcPhotoTakenAt = null;
+          let pcGpsLat = null, pcGpsLon = null, pcGpsAlt = null;
+          let pcNotes = null;
+          let pcTitle = null;
+          try {
+            const exif = await readExifData(destPath);
+            if (exif.photoTakenAt) pcPhotoTakenAt = exif.photoTakenAt;
+            if (exif.latitude != null) { pcGpsLat = exif.latitude; pcGpsLon = exif.longitude; pcGpsAlt = exif.altitude; }
+            if (exif.userComment) pcNotes = exif.userComment;
+          } catch {}
+          if (meta.description && meta.description.startsWith('[FUCHS_META]')) {
+            try {
+              const fmeta = JSON.parse(meta.description.substring('[FUCHS_META]'.length));
+              if (fmeta.gps && pcGpsLat == null) { pcGpsLat = fmeta.gps.latitude; pcGpsLon = fmeta.gps.longitude; pcGpsAlt = fmeta.gps.altitude || null; }
+              if (fmeta.notes && !pcNotes) pcNotes = fmeta.notes;
+              if (fmeta.title) pcTitle = fmeta.title;
+            } catch {}
+          }
+
+          const displayName = pcTitle || path.basename(meta.name, path.extname(meta.name));
+          const imgResult = db.prepare(`
+            INSERT INTO drive_images (
+              name, original_name, local_path, thumbnail_url, file_url,
+              mime_type, drive_file_id, drive_path_id, file_size, created_at,
+              photo_taken_at, gps_latitude, gps_longitude, gps_altitude, image_notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            displayName, meta.name, projectImageUrl, projectImageUrl, projectImageUrl,
+            meta.mimeType || 'image/jpeg', fileId, fileSize, now,
+            pcPhotoTakenAt, pcGpsLat, pcGpsLon, pcGpsAlt, pcNotes
+          );
+
+          // Create project assignment
+          db.prepare('INSERT OR IGNORE INTO image_project_assignments (image_id, project_id) VALUES (?, ?)')
+            .run(imgResult.lastInsertRowid, project.id);
+        } else {
+          // Image already registered - ensure project assignment exists
+          db.prepare('INSERT OR IGNORE INTO image_project_assignments (image_id, project_id) VALUES (?, ?)')
+            .run(existingImg.id, project.id);
+        }
+      } catch (e) {
+        console.error(`Error downloading file ${fileId}:`, e.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `${downloaded}/${fileIds.length} Bilder für "${projectName}" heruntergeladen`,
+    });
+  } catch (error) {
+    console.error('Error confirming project changes:', error);
+    res.status(500).json({ error: 'Fehler beim Bestätigen: ' + error.message });
+  }
+};
+
+/**
+ * Reject project changes: delete images from Drive project folder.
+ * POST /api/mobile/project-changes/reject
+ * Body: { projectName, fileIds }
+ */
+const rejectProjectChanges = async (req, res) => {
+  try {
+    const { projectName, fileIds } = req.body;
+
+    if (!fileIds || fileIds.length === 0) {
+      return res.status(400).json({ error: 'fileIds sind erforderlich' });
+    }
+
+    let deleted = 0;
+    for (const fileId of fileIds) {
+      try {
+        await deleteFileFromDrive(fileId);
+        deleted++;
+      } catch (e) {
+        console.error(`Error deleting file ${fileId} from Drive:`, e.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `${deleted}/${fileIds.length} Bilder aus "${projectName}" gelöscht`,
+    });
+  } catch (error) {
+    console.error('Error rejecting project changes:', error);
+    res.status(500).json({ error: 'Fehler beim Ablehnen: ' + error.message });
+  }
+};
+
+/**
+ * Report image metadata from mobile app (GPS, title, notes)
+ * POST /api/mobile/image-metadata
+ * Called after upload to Drive - stores metadata for when sync picks up the file
+ */
+const reportImageMetadata = async (req, res) => {
+  try {
+    const { drive_file_id, file_name, gps_latitude, gps_longitude, gps_altitude, custom_title, notes } = req.body;
+
+    if (!file_name && !drive_file_id) {
+      return res.status(400).json({ error: 'file_name oder drive_file_id erforderlich' });
+    }
+
+    const lat = gps_latitude != null ? parseFloat(gps_latitude) : null;
+    const lon = gps_longitude != null ? parseFloat(gps_longitude) : null;
+    const alt = gps_altitude != null ? parseFloat(gps_altitude) : null;
+
+    // Try to find the image by drive_file_id first, then by name
+    let image = null;
+    if (drive_file_id) {
+      image = db.prepare('SELECT * FROM drive_images WHERE drive_file_id = ?').get(drive_file_id);
+    }
+    if (!image && file_name) {
+      // Match by original_name (most recent)
+      image = db.prepare('SELECT * FROM drive_images WHERE original_name = ? ORDER BY created_at DESC LIMIT 1').get(file_name);
+    }
+
+    if (image) {
+      // Image already synced - update it directly
+      const updates = [];
+      const params = [];
+      if (lat != null && lon != null) {
+        updates.push('gps_latitude = ?', 'gps_longitude = ?');
+        params.push(lat, lon);
+        if (alt != null) {
+          updates.push('gps_altitude = ?');
+          params.push(alt);
+        }
+      }
+      if (notes) {
+        updates.push('image_notes = ?');
+        params.push(notes);
+      }
+      if (custom_title) {
+        updates.push('name = ?');
+        params.push(custom_title);
+      }
+      if (updates.length > 0) {
+        params.push(image.id);
+        db.prepare(`UPDATE drive_images SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+
+        // Also write EXIF data into the image file if it has a local path
+        if (image.local_path) {
+          const absolutePath = path.join(__dirname, '../../../', image.local_path);
+          if (await fs.pathExists(absolutePath)) {
+            try {
+              await writeExifData(absolutePath, {
+                latitude: lat,
+                longitude: lon,
+                altitude: alt,
+                description: custom_title || null,
+                userComment: notes || null
+              });
+            } catch (e) {
+              console.warn('EXIF write after metadata report failed:', e.message);
+            }
+          }
+        }
+      }
+      return res.json({ success: true, matched: true, imageId: image.id });
+    }
+
+    // Image not synced yet - store as pending metadata
+    // We create a record in a simple key-value approach using the file_name
+    const key = drive_file_id || file_name;
+    db.prepare(`
+      INSERT OR REPLACE INTO pending_image_metadata
+        (lookup_key, file_name, drive_file_id, gps_latitude, gps_longitude, gps_altitude, custom_title, notes, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(key, file_name, drive_file_id || null, lat, lon, alt, custom_title || null, notes || null);
+
+    res.json({ success: true, matched: false, pending: true });
+  } catch (error) {
+    console.error('Error reporting image metadata:', error);
+    res.status(500).json({ error: 'Metadaten konnten nicht gespeichert werden' });
+  }
+};
+
 module.exports = {
   generateConnectToken,
   getConnectInfo,
   connectLandingPage,
+  connectSetupPage,
   registerDevice,
   authenticateDevice,
   getDevices,
+  reportImageMetadata,
   removeDevice,
   getProjects,
   getProjectImages,
@@ -2413,6 +3139,11 @@ module.exports = {
   deleteInboxProject,
   processDeleteRequests,
   dismissDeleteRequests,
+  previewDeleteRequestImage,
+  getProjectChanges,
+  proxyProjectChangeImage,
+  confirmProjectChanges,
+  rejectProjectChanges,
   mobileGoogleAuth,
   mobileGoogleCallback,
   mobileRefreshToken,

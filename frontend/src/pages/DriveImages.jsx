@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Grid, List, RefreshCw, Search, Maximize2, Edit2, X, Play, Pause, Trash2, ChevronLeft, ChevronRight, Filter, Calendar, Pencil, Tag, Plus, Check, Edit3, ChevronsRight, ChevronsLeft } from 'lucide-react';
 import ImageEditor from '../components/ImageEditor';
+import DeleteImageDialog from '../components/DeleteImageDialog';
 import './DriveImages.css';
 
 // Helper function to format SQLite timestamps (which are in UTC)
@@ -31,7 +32,7 @@ function DriveImages() {
   const [newImagesCount, setNewImagesCount] = useState(0);
   const [zoomLevel, setZoomLevel] = useState(1); // Zoom level (1 = 100%)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false); // Delete confirmation dialog
-  const [deleteFromProjects, setDeleteFromProjects] = useState(false); // Delete from all projects checkbox
+  // deleteFromProjects is managed inside DeleteImageDialog component
   const [showEditor, setShowEditor] = useState(false); // Image editor
   const [notification, setNotification] = useState(null); // Custom notification popup
   const [panPosition, setPanPosition] = useState({ x: 0, y: 0 }); // Pan position for zoomed image
@@ -89,6 +90,8 @@ function DriveImages() {
   const [showAllProjectsInSidebar, setShowAllProjectsInSidebar] = useState(false); // Alle Projekte in Modal-Sidebar
   const [sidebarProjectSearch, setSidebarProjectSearch] = useState(''); // Suche in Modal-Sidebar Projekte
   const [selectedProjectId, setSelectedProjectId] = useState(null); // Aktives Projekt für Quick-Assign
+  const [editingNotes, setEditingNotes] = useState(false); // Notizen bearbeiten
+  const [notesValue, setNotesValue] = useState(''); // Aktueller Notizen-Text
 
   // Keep refs in sync for event handlers
   useEffect(() => { zoomRef.current = zoomLevel; }, [zoomLevel]);
@@ -731,12 +734,11 @@ function DriveImages() {
   };
 
   // Perform actual delete operation
-  const performDelete = async (deleteFromDrive) => {
+  const performDelete = async (deleteFromDrive, deleteFromProjects) => {
     const imageToDelete = selectedImage;
     // Clear both states together to prevent modal flash
     setShowDeleteDialog(false);
     setSelectedImage(null);
-    setDeleteFromProjects(false);
 
     if (!imageToDelete) return;
 
@@ -913,9 +915,29 @@ function DriveImages() {
     }
   };
 
+  const handleSaveNotes = async () => {
+    if (!selectedImage) return;
+    try {
+      const response = await fetch(`/api/drive/images/${selectedImage.id}/notes`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: notesValue.trim() })
+      });
+      if (response.ok) {
+        const updatedImage = await response.json();
+        setSelectedImage(updatedImage);
+        setEditingNotes(false);
+        loadImages(true);
+      }
+    } catch (error) {
+      console.error('Error saving notes:', error);
+    }
+  };
+
   const closeModal = () => {
     setSelectedImage(null);
     setEditingName('');
+    setEditingNotes(false);
   };
 
   return (
@@ -1738,63 +1760,11 @@ function DriveImages() {
 
       {/* Delete Confirmation Dialog */}
       {showDeleteDialog && selectedImage && (
-        <div className="modal-overlay" onClick={() => {setShowDeleteDialog(false); setDeleteFromProjects(false);}}>
-          <div className="delete-dialog" onClick={(e) => e.stopPropagation()}>
-            <h3>Bild löschen</h3>
-            <p>Möchtest du das Bild <strong>"{selectedImage.name}"</strong> löschen?</p>
-
-            {/* Checkbox: Delete from projects */}
-            {selectedImage.projects && selectedImage.projects.length > 0 && (
-              <div style={{ margin: '15px 0', padding: '10px', backgroundColor: '#2a2a2a', borderRadius: '4px' }}>
-                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontSize: '14px' }}>
-                  <input
-                    type="checkbox"
-                    checked={deleteFromProjects}
-                    onChange={(e) => setDeleteFromProjects(e.target.checked)}
-                    style={{ marginRight: '10px', width: '18px', height: '18px', cursor: 'pointer' }}
-                  />
-                  <span>
-                    Auch von {selectedImage.projects.length === 1 ? 'Projekt' : 'allen Projekten'} löschen?
-                    <span style={{ display: 'block', fontSize: '12px', color: '#888', marginTop: '4px' }}>
-                      {selectedImage.projects.map(p => p.folder_name).join(', ')}
-                    </span>
-                  </span>
-                </label>
-              </div>
-            )}
-
-            <div className="delete-options">
-              <button
-                className="delete-option-btn software-only"
-                onClick={() => performDelete(false)}
-              >
-                <div className="option-title">🗑️ Nur aus Software</div>
-                <div className="option-description">
-                  {selectedImage.drive_file_id
-                    ? 'Bleibt auf Google Drive, wird aber nicht mehr heruntergeladen'
-                    : 'Bild wird aus der Software gelöscht'}
-                </div>
-              </button>
-              {selectedImage.drive_file_id && (
-                <button
-                  className="delete-option-btn full-delete"
-                  onClick={() => performDelete(true)}
-                >
-                  <div className="option-title">🔥 Auch von Google Drive</div>
-                  <div className="option-description">
-                    Wird permanent von Google Drive gelöscht
-                  </div>
-                </button>
-              )}
-            </div>
-            <button
-              className="delete-cancel-btn"
-              onClick={() => {setShowDeleteDialog(false); setDeleteFromProjects(false);}}
-            >
-              Abbrechen
-            </button>
-          </div>
-        </div>
+        <DeleteImageDialog
+          image={selectedImage}
+          onDelete={performDelete}
+          onClose={() => setShowDeleteDialog(false)}
+        />
       )}
 
       {selectedImage && !showDeleteDialog && (
@@ -1973,6 +1943,74 @@ function DriveImages() {
                       <div className="meta-item">
                         <span className="meta-label">Hochgeladen</span>
                         <span className="meta-value">{formatSQLiteDate(selectedImage.created_at)}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* GPS Location */}
+                  <div className="modal-section">
+                    <label>GPS-Standort</label>
+                    {selectedImage.gps_latitude != null && selectedImage.gps_longitude != null ? (
+                      <button
+                        className="gps-map-btn"
+                        onClick={() => window.open(
+                          `https://www.google.com/maps?q=${selectedImage.gps_latitude},${selectedImage.gps_longitude}`,
+                          '_blank'
+                        )}
+                        title={`${selectedImage.gps_latitude.toFixed(6)}, ${selectedImage.gps_longitude.toFixed(6)}`}
+                      >
+                        <span className="gps-icon">📍</span>
+                        <span>Auf Google Maps öffnen</span>
+                        <span className="gps-coords">
+                          {selectedImage.gps_latitude.toFixed(5)}, {selectedImage.gps_longitude.toFixed(5)}
+                        </span>
+                      </button>
+                    ) : (
+                      <div className="detail-text" style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                        Keine GPS-Daten vorhanden
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Notes */}
+                  <div className="modal-section">
+                    <div className="notes-header">
+                      <label>Notizen</label>
+                      {!editingNotes ? (
+                        <button
+                          className="notes-edit-btn"
+                          onClick={() => { setEditingNotes(true); setNotesValue(selectedImage.image_notes || ''); }}
+                          title="Notizen bearbeiten"
+                        >
+                          <Pencil size={12} />
+                        </button>
+                      ) : (
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <button className="notes-edit-btn notes-save-btn" onClick={handleSaveNotes} title="Speichern">
+                            <Check size={12} />
+                          </button>
+                          <button className="notes-edit-btn" onClick={() => setEditingNotes(false)} title="Abbrechen">
+                            <X size={12} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    {editingNotes ? (
+                      <textarea
+                        className="notes-edit-textarea"
+                        value={notesValue}
+                        onChange={(e) => setNotesValue(e.target.value)}
+                        placeholder="Notizen eingeben..."
+                        rows={3}
+                        autoFocus
+                      />
+                    ) : selectedImage.image_notes ? (
+                      <div className="image-notes-display">
+                        {selectedImage.image_notes}
+                      </div>
+                    ) : (
+                      <div className="detail-text" style={{ color: 'var(--text-tertiary)', fontStyle: 'italic', fontSize: '0.8125rem' }}>
+                        Keine Notizen
                       </div>
                     )}
                   </div>

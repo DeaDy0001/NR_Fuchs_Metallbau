@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, Switch, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator } from 'react-native';
+import { useDialog } from '../components/CustomDialog';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
@@ -9,6 +10,7 @@ import { fetchProjectImages } from '../services/api';
 import Slider from '../components/Slider';
 
 export default function SettingsScreen({ navigation }) {
+  const { alert } = useDialog();
   const { userName, userEmail, updateUserName, disconnectDrive, logout, resetSetup, activeConnection } = useApp();
 
   const [editingName, setEditingName] = useState(false);
@@ -72,7 +74,7 @@ export default function SettingsScreen({ navigation }) {
   };
 
   const handleClearCache = () => {
-    Alert.alert(
+    alert(
       'Cache leeren?',
       'Alle heruntergeladenen Bilder werden gelöscht. Sie werden bei Bedarf neu von Google Drive heruntergeladen.',
       [
@@ -89,7 +91,7 @@ export default function SettingsScreen({ navigation }) {
   };
 
   const handleBulkDownload = () => {
-    Alert.alert(
+    alert(
       'Bilder herunterladen',
       `Alle Projektbilder der letzten ${downloadMaxDays} Tage werden heruntergeladen.\n\nDies kann je nach Menge einige Zeit dauern.`,
       [
@@ -147,12 +149,12 @@ export default function SettingsScreen({ navigation }) {
       const size = await getCacheSize();
       setCacheSize(size);
 
-      Alert.alert(
+      alert(
         'Download abgeschlossen',
         `${totalDownloaded} von ${totalImages} Bildern heruntergeladen.`
       );
     } catch (error) {
-      Alert.alert('Fehler', 'Download fehlgeschlagen: ' + error.message);
+      alert('Fehler', 'Download fehlgeschlagen: ' + error.message);
     } finally {
       setDownloading(false);
       setDownloadProgress('');
@@ -160,7 +162,7 @@ export default function SettingsScreen({ navigation }) {
   };
 
   const handleDisconnectDrive = () => {
-    Alert.alert(
+    alert(
       'Drive-Verbindung trennen?',
       'Du kannst danach einen anderen Drive-Ordner auswählen oder per QR-Code hinzufügen.',
       [
@@ -171,7 +173,7 @@ export default function SettingsScreen({ navigation }) {
   };
 
   const handleLogout = () => {
-    Alert.alert(
+    alert(
       'Abmelden?',
       'Du wirst von deinem Google-Konto abgemeldet und musst dich erneut anmelden.',
       [
@@ -182,7 +184,7 @@ export default function SettingsScreen({ navigation }) {
   };
 
   const handleResetSetup = () => {
-    Alert.alert(
+    alert(
       'Einrichtung zurücksetzen?',
       'Alle Verbindungsdaten und die Google-Anmeldung werden gelöscht. Du musst den QR-Code erneut scannen.',
       [

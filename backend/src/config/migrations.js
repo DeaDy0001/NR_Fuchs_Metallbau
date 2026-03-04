@@ -502,6 +502,55 @@ const migrations = [
 
       console.log('✓ Migration create_pending_mobile_projects completed');
     }
+  },
+  {
+    id: 21,
+    name: 'add_image_gps_and_notes_columns',
+    up: () => {
+      console.log('Running migration: add_image_gps_and_notes_columns');
+
+      const tableInfo = db.pragma('table_info(drive_images)');
+      const existingColumns = tableInfo.map(col => col.name);
+
+      if (!existingColumns.includes('gps_latitude')) {
+        db.exec("ALTER TABLE drive_images ADD COLUMN gps_latitude REAL");
+      }
+      if (!existingColumns.includes('gps_longitude')) {
+        db.exec("ALTER TABLE drive_images ADD COLUMN gps_longitude REAL");
+      }
+      if (!existingColumns.includes('gps_altitude')) {
+        db.exec("ALTER TABLE drive_images ADD COLUMN gps_altitude REAL");
+      }
+      if (!existingColumns.includes('image_notes')) {
+        db.exec("ALTER TABLE drive_images ADD COLUMN image_notes TEXT");
+      }
+
+      console.log('✓ Migration add_image_gps_and_notes_columns completed');
+    }
+  },
+  {
+    id: 22,
+    name: 'create_pending_image_metadata_table',
+    up: () => {
+      console.log('Running migration: create_pending_image_metadata_table');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS pending_image_metadata (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          lookup_key TEXT NOT NULL UNIQUE,
+          file_name TEXT,
+          drive_file_id TEXT,
+          gps_latitude REAL,
+          gps_longitude REAL,
+          gps_altitude REAL,
+          custom_title TEXT,
+          notes TEXT,
+          created_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+
+      console.log('✓ Migration create_pending_image_metadata_table completed');
+    }
   }
 ];
 

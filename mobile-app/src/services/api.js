@@ -23,6 +23,8 @@ import {
   createJsonFile,
   updateJsonFile,
   downloadFile,
+  deleteFile,
+  getFileParents,
   getImageSource,
   checkFolderAccess,
   findOrCreateFolder,
@@ -199,6 +201,36 @@ export const createProject = async (name) => {
   };
 };
 
+/**
+ * Delete a pending project from the inbox on Drive.
+ * Removes the entire folder (including all images inside it).
+ * Safety check: only deletes if the folder is still inside the inbox.
+ * If the desktop already confirmed the project (moved to Projekte/),
+ * returns { alreadyConfirmed: true } instead of deleting.
+ */
+export const deletePendingProject = async (folderId) => {
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
+
+  // Check if folder still exists and where it lives
+  const parents = await getFileParents(folderId);
+  if (parents.length === 0) {
+    // Folder doesn't exist anymore (already deleted or moved)
+    return { alreadyConfirmed: true };
+  }
+
+  // Find the inbox folder ID to verify parent
+  const inboxFolder = await findFolder(connection.meta_folder_id, 'inbox');
+  if (!inboxFolder || !parents.includes(inboxFolder.id)) {
+    // Folder exists but is NOT in inbox anymore → already confirmed by desktop
+    return { alreadyConfirmed: true };
+  }
+
+  // Safe to delete - folder is still in inbox
+  await deleteFile(folderId);
+  return { alreadyConfirmed: false };
+};
+
 // ============================================================
 // Upload
 // ============================================================
@@ -208,7 +240,7 @@ export const createProject = async (name) => {
  * - With project: directly into the project folder
  * - Without project: into inbox folder
  */
-export const uploadImage = async (fileUri, fileName, mimeType, projectId = null, projectName = null, gpsData = null) => {
+export const uploadImage = async (fileUri, fileName, mimeType, projectId = null, projectName = null, gpsData = null, customTitle = null, notes = null) => {
   const connection = await getActiveDriveConnection();
   if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
 
@@ -242,12 +274,30 @@ export const uploadImage = async (fileUri, fileName, mimeType, projectId = null,
     }
   }
 
+  // Build metadata description (GPS, title, notes) to store on Drive
+  let description = null;
+  const parsedGps = gpsData ? (typeof gpsData === 'string' ? JSON.parse(gpsData) : gpsData) : null;
+  if (parsedGps || customTitle || notes) {
+    const meta = {};
+    if (parsedGps) {
+      meta.gps = {
+        latitude: parsedGps.latitude,
+        longitude: parsedGps.longitude,
+        altitude: parsedGps.altitude || null,
+      };
+    }
+    if (customTitle) meta.title = customTitle;
+    if (notes) meta.notes = notes;
+    description = `[FUCHS_META]${JSON.stringify(meta)}`;
+  }
+
   // Upload the actual image file
   const uploadedFile = await uploadFile(
     targetFolderId,
     fileName,
     fileUri,
-    mimeType || 'image/jpeg'
+    mimeType || 'image/jpeg',
+    description
   );
 
   return { success: true, fileId: uploadedFile.id };

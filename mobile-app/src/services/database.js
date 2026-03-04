@@ -122,6 +122,21 @@ const initTables = async () => {
       folder_id TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS delete_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      photo_id INTEGER,
+      file_name TEXT NOT NULL,
+      file_uri TEXT,
+      thumbnail_uri TEXT,
+      project_name TEXT,
+      project_id TEXT,
+      delete_from_software INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'queued',
+      error TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      processed_at TEXT
+    );
   `);
 
   // Migrate: add columns that may be missing from older DB versions
@@ -138,6 +153,11 @@ const initTables = async () => {
     // upload_queue migrations
     { table: 'upload_queue', column: 'project_folder_id', sql: 'ALTER TABLE upload_queue ADD COLUMN project_folder_id TEXT' },
     { table: 'upload_queue', column: 'gps_data', sql: 'ALTER TABLE upload_queue ADD COLUMN gps_data TEXT' },
+    { table: 'upload_queue', column: 'custom_title', sql: 'ALTER TABLE upload_queue ADD COLUMN custom_title TEXT' },
+    { table: 'upload_queue', column: 'notes', sql: 'ALTER TABLE upload_queue ADD COLUMN notes TEXT' },
+    // recent_photos migrations
+    { table: 'recent_photos', column: 'custom_title', sql: 'ALTER TABLE recent_photos ADD COLUMN custom_title TEXT' },
+    { table: 'recent_photos', column: 'notes', sql: 'ALTER TABLE recent_photos ADD COLUMN notes TEXT' },
   ];
 
   for (const m of migrations) {
@@ -178,15 +198,15 @@ export const setSetting = async (key, value) => {
 // Upload queue helpers
 // ============================================================
 
-export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = null, projectName = null, projectFolderId = null, gpsData = null, skipRecentPhotos = false) => {
+export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = null, projectName = null, projectFolderId = null, gpsData = null, skipRecentPhotos = false, customTitle = null, notes = null) => {
   const db = await getDb();
 
   // Also add to recent photos for the home screen (skip when re-assigning existing photos)
   if (!skipRecentPhotos) {
     try {
       await db.runAsync(
-        'INSERT INTO recent_photos (file_uri, file_name, mime_type, project_id, project_name, gps_data, thumbnail_uri) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [fileUri, fileName, mimeType, projectId, projectName, gpsData, fileUri]
+        'INSERT INTO recent_photos (file_uri, file_name, mime_type, project_id, project_name, gps_data, thumbnail_uri, custom_title, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [fileUri, fileName, mimeType, projectId, projectName, gpsData, fileUri, customTitle, notes]
       );
       // Keep only last 50 recent photos
       await db.runAsync(
@@ -196,8 +216,8 @@ export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = 
   }
 
   return await db.runAsync(
-    'INSERT INTO upload_queue (file_uri, file_name, mime_type, project_id, project_name, project_folder_id, gps_data) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [fileUri, fileName, mimeType, projectId, projectName, projectFolderId, gpsData]
+    'INSERT INTO upload_queue (file_uri, file_name, mime_type, project_id, project_name, project_folder_id, gps_data, custom_title, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [fileUri, fileName, mimeType, projectId, projectName, projectFolderId, gpsData, customTitle, notes]
   );
 };
 
@@ -394,6 +414,14 @@ export const updateRecentPhotoProject = async (photoId, projectId, projectName) 
   );
 };
 
+export const updateRecentPhotoMetadata = async (photoId, customTitle, notes) => {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE recent_photos SET custom_title = ?, notes = ? WHERE id = ?',
+    [customTitle || null, notes || null, photoId]
+  );
+};
+
 export const deleteRecentPhoto = async (photoId) => {
   const db = await getDb();
   await db.runAsync('DELETE FROM recent_photos WHERE id = ?', [photoId]);
@@ -440,6 +468,75 @@ export const getPendingProjects = async () => {
 export const removePendingProject = async (folderName) => {
   const db = await getDb();
   await db.runAsync('DELETE FROM pending_projects WHERE folder_name = ?', [folderName]);
+};
+
+// ============================================================
+// Delete queue helpers
+// ============================================================
+
+export const addToDeleteQueue = async (photos, deleteFromSoftware = false) => {
+  const db = await getDb();
+  for (const photo of photos) {
+    await db.runAsync(
+      'INSERT INTO delete_queue (photo_id, file_name, file_uri, thumbnail_uri, project_name, project_id, delete_from_software) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [photo.id || null, photo.file_name, photo.file_uri || null, photo.thumbnail_uri || null, photo.project_name || null, photo.project_id || null, deleteFromSoftware ? 1 : 0]
+    );
+  }
+};
+
+export const getQueuedDeletes = async () => {
+  const db = await getDb();
+  return await db.getAllAsync(
+    "SELECT * FROM delete_queue WHERE status = 'queued' ORDER BY created_at ASC"
+  );
+};
+
+export const getDeleteQueueDisplayItems = async () => {
+  const db = await getDb();
+  const pending = await db.getAllAsync(
+    "SELECT * FROM delete_queue WHERE status IN ('queued', 'failed') ORDER BY created_at ASC"
+  );
+  const completed = await db.getAllAsync(
+    "SELECT * FROM delete_queue WHERE status = 'done' ORDER BY processed_at DESC LIMIT 30"
+  );
+  return { pending, completed };
+};
+
+export const updateDeleteQueueStatus = async (id, status, error = null) => {
+  const db = await getDb();
+  if (status === 'done') {
+    await db.runAsync(
+      "UPDATE delete_queue SET status = ?, processed_at = datetime('now') WHERE id = ?",
+      [status, id]
+    );
+  } else {
+    await db.runAsync(
+      'UPDATE delete_queue SET status = ?, error = ? WHERE id = ?',
+      [status, error, id]
+    );
+  }
+};
+
+export const getDeleteQueueCount = async () => {
+  const db = await getDb();
+  const result = await db.getFirstAsync(
+    "SELECT COUNT(*) as count FROM delete_queue WHERE status IN ('queued', 'failed')"
+  );
+  return result?.count || 0;
+};
+
+export const cleanupOldDeleteQueueItems = async () => {
+  const db = await getDb();
+  await db.runAsync(`
+    DELETE FROM delete_queue
+    WHERE status = 'done'
+    AND id NOT IN (
+      SELECT id FROM delete_queue
+      WHERE status = 'done'
+      ORDER BY processed_at DESC
+      LIMIT 30
+    )
+  `);
 };
 
 export const clearConfirmedPendingProjects = async () => {

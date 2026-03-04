@@ -1,13 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, FlatList } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, FlatList, Modal, SafeAreaView } from 'react-native';
+import { useDialog } from '../components/CustomDialog';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { WebView } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { setSetting, getDriveConnections, addDriveConnection, setActiveDriveConnection, removeDriveConnection, updateDriveConnectionFolders } from '../services/database';
+import { setSetting, getSetting, getDriveConnections, addDriveConnection, setActiveDriveConnection, removeDriveConnection, updateDriveConnectionFolders } from '../services/database';
 import { verifyConnection, findOrCreateFolder } from '../services/driveService';
+import { hasFullDriveScope, storeTokens, storeUserInfo, storeGrantedScope } from '../services/googleAuth';
 
 export default function ConnectScreen() {
+  const { alert } = useDialog();
   const { isGoogleAuthed, onSetupComplete, onDriveConnect, logout, userEmail } = useApp();
   const [permission, requestPermission] = useCameraPermissions();
   const [connections, setConnections] = useState([]);
@@ -15,6 +19,9 @@ export default function ConnectScreen() {
   const [scanned, setScanned] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [scopeUpgrade, setScopeUpgrade] = useState(null); // { authUrl, redirectUri, sessionId }
+  const [scopeUpgradeLoading, setScopeUpgradeLoading] = useState(false);
+  const pendingConnectionRef = useRef(null);
 
   // In setup mode (no Google auth yet), go straight to scanner
   const isSetupMode = !isGoogleAuthed;
@@ -40,22 +47,37 @@ export default function ConnectScreen() {
   };
 
   const parseQrData = (data) => {
-    // Format 1: JSON (from desktop software)
-    // {"type":"fuchs_drive","googleClientId":"...","rootFolderId":"...","name":"..."}
+    const extractFields = (obj) => ({
+      name: obj.name || 'Drive-Verbindung',
+      rootFolderId: obj.rootFolderId,
+      googleClientId: obj.googleClientId || null,
+      googleClientSecret: obj.googleClientSecret || null,
+      serverUrl: obj.serverUrl || null,
+      webClientId: obj.webClientId || null,
+      webClientSecret: obj.webClientSecret || null,
+      webRedirectUri: obj.webRedirectUri || null,
+    });
+
+    // Format 1: Setup URL (dual-purpose QR code - works in browser AND in app)
     try {
-      const parsed = JSON.parse(data);
-      if (parsed.type === 'fuchs_drive' && parsed.rootFolderId) {
-        return {
-          name: parsed.name || 'Drive-Verbindung',
-          rootFolderId: parsed.rootFolderId,
-          googleClientId: parsed.googleClientId || null,
-          serverUrl: parsed.serverUrl || null,
-        };
+      const setupMatch = data.match(/\/api\/mobile\/connect\/setup\?d=([A-Za-z0-9_-]+)/);
+      if (setupMatch) {
+        const decoded = JSON.parse(atob(setupMatch[1].replace(/-/g, '+').replace(/_/g, '/')));
+        if (decoded.type === 'fuchs_drive' && decoded.rootFolderId) {
+          return extractFields(decoded);
+        }
       }
     } catch {}
 
-    // Format 2: URL with folder ID as parameter
-    // fuchs://drive?name=Firma&root=FOLDER_ID
+    // Format 2: JSON (legacy)
+    try {
+      const parsed = JSON.parse(data);
+      if (parsed.type === 'fuchs_drive' && parsed.rootFolderId) {
+        return extractFields(parsed);
+      }
+    } catch {}
+
+    // Format 3: URL with folder ID as parameter
     try {
       if (data.startsWith('fuchs://')) {
         const url = new URL(data);
@@ -63,16 +85,15 @@ export default function ConnectScreen() {
         const name = url.searchParams.get('name') || 'Drive-Verbindung';
         const clientId = url.searchParams.get('clientId') || null;
         const serverUrl = url.searchParams.get('serverUrl') || null;
-        if (rootId) return { name, rootFolderId: rootId, googleClientId: clientId, serverUrl };
+        if (rootId) return { name, rootFolderId: rootId, googleClientId: clientId, serverUrl, webClientId: null, webClientSecret: null, webRedirectUri: null };
       }
     } catch {}
 
-    // Format 3: Plain Google Drive folder URL
-    // https://drive.google.com/drive/folders/FOLDER_ID
+    // Format 4: Plain Google Drive folder URL
     try {
       const match = data.match(/drive\.google\.com\/drive\/folders\/([a-zA-Z0-9_-]+)/);
       if (match) {
-        return { name: 'Google Drive', rootFolderId: match[1], googleClientId: null, serverUrl: null };
+        return { name: 'Google Drive', rootFolderId: match[1], googleClientId: null, serverUrl: null, webClientId: null, webClientSecret: null, webRedirectUri: null };
       }
     } catch {}
 
@@ -85,7 +106,7 @@ export default function ConnectScreen() {
 
     const parsed = parseQrData(data);
     if (!parsed) {
-      Alert.alert('Ungültiger QR-Code', 'Dieser QR-Code enthält keine gültige Drive-Verbindung.');
+      alert('Ungültiger QR-Code', 'Dieser QR-Code enthält keine gültige Drive-Verbindung.');
       setScanned(false);
       return;
     }
@@ -98,7 +119,7 @@ export default function ConnectScreen() {
         if (parsed.googleClientId) {
           await setSetting('googleClientId', parsed.googleClientId);
         } else {
-          Alert.alert(
+          alert(
             'QR-Code unvollständig',
             'Der QR-Code enthält keine Google Client ID. Bitte erstelle einen neuen QR-Code in der Desktop-Software.'
           );
@@ -112,18 +133,28 @@ export default function ConnectScreen() {
           await setSetting('serverUrl', parsed.serverUrl);
         }
 
+        // Store client secret for Device Flow token exchange
+        if (parsed.googleClientSecret) {
+          await setSetting('googleClientSecret', parsed.googleClientSecret);
+        }
+
+        // Store Web Application credentials for direct WebView OAuth (no server needed)
+        if (parsed.webClientId) await setSetting('webClientId', parsed.webClientId);
+        if (parsed.webClientSecret) await setSetting('webClientSecret', parsed.webClientSecret);
+        if (parsed.webRedirectUri) await setSetting('webRedirectUri', parsed.webRedirectUri);
+
         // Save the Drive connection (without meta/inbox folders - will be created after Google Sign-In)
         await addDriveConnection(parsed.name, parsed.rootFolderId);
 
-        Alert.alert(
+        await alert(
           'Einrichtung erfolgreich!',
           `Drive-Ordner "${parsed.name}" wurde gespeichert.\n\nMelde dich jetzt mit deinem Google-Konto an.`
         );
 
-        // Transition to LoginScreen
+        // Transition to LoginScreen (after user dismisses dialog)
         onSetupComplete();
       } catch (error) {
-        Alert.alert('Fehler', error.message);
+        alert('Fehler', error.message);
         setScanned(false);
       } finally {
         setConnecting(false);
@@ -133,7 +164,7 @@ export default function ConnectScreen() {
       try {
         const folderName = await verifyConnection(parsed.rootFolderId);
         if (!folderName) {
-          Alert.alert(
+          alert(
             'Zugriff verweigert',
             `Der Drive-Ordner ist nicht für dein Google-Konto freigegeben.${userEmail ? `\n\nAngemeldet als: ${userEmail}` : ''}\n\nMögliche Lösungen:\n• Mit anderem Konto anmelden (unten "Konto wechseln")\n• Administrator bitten, den Ordner mit deinem Google-Konto zu teilen`,
             [
@@ -168,7 +199,17 @@ export default function ConnectScreen() {
           await setSetting('serverUrl', parsed.serverUrl);
         }
 
-        Alert.alert('Verbunden!', `"${connectionName}" wurde verbunden.`);
+        // Update client secret if provided
+        if (parsed.googleClientSecret) {
+          await setSetting('googleClientSecret', parsed.googleClientSecret);
+        }
+
+        // Update Web Application credentials for direct WebView OAuth
+        if (parsed.webClientId) await setSetting('webClientId', parsed.webClientId);
+        if (parsed.webClientSecret) await setSetting('webClientSecret', parsed.webClientSecret);
+        if (parsed.webRedirectUri) await setSetting('webRedirectUri', parsed.webRedirectUri);
+
+        alert('Verbunden!', `"${connectionName}" wurde verbunden.`);
         setShowScanner(false);
 
         // Activate this connection
@@ -178,7 +219,7 @@ export default function ConnectScreen() {
           onDriveConnect(active);
         }
       } catch (error) {
-        Alert.alert('Fehler', error.message);
+        alert('Fehler', error.message);
         setScanned(false);
       } finally {
         setConnecting(false);
@@ -191,30 +232,192 @@ export default function ConnectScreen() {
     try {
       const accessible = await verifyConnection(connection.root_folder_id);
       if (!accessible) {
-        Alert.alert('Nicht erreichbar', 'Der Drive-Ordner ist nicht mehr zugänglich.');
+        // Check if the problem is a limited scope (drive.file instead of drive)
+        const fullScope = await hasFullDriveScope();
+        if (!fullScope) {
+          // Token has limited scope - try to upgrade via server
+          pendingConnectionRef.current = connection;
+          setConnecting(false);
+          return startScopeUpgrade();
+        }
+        // Full scope but still can't access - real permission issue
+        alert('Nicht erreichbar', 'Der Drive-Ordner ist nicht mehr zugänglich.\n\nMögliche Ursachen:\n- Der Ordner wurde gelöscht\n- Die Freigabe wurde entfernt');
         setConnecting(false);
         return;
       }
 
-      if (!connection.meta_folder_id || !connection.inbox_folder_id) {
-        const metaFolder = await findOrCreateFolder(connection.root_folder_id, 'NR_Fuchs_Meta');
-        const inboxFolder = await findOrCreateFolder(metaFolder.id, 'inbox');
-        await updateDriveConnectionFolders(connection.id, metaFolder.id, inboxFolder.id);
-        connection.meta_folder_id = metaFolder.id;
-        connection.inbox_folder_id = inboxFolder.id;
+      await activateConnection(connection);
+    } catch (error) {
+      alert('Fehler', error.message);
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const activateConnection = async (connection) => {
+    if (!connection.meta_folder_id || !connection.inbox_folder_id) {
+      const metaFolder = await findOrCreateFolder(connection.root_folder_id, 'NR_Fuchs_Meta');
+      const inboxFolder = await findOrCreateFolder(metaFolder.id, 'inbox');
+      await updateDriveConnectionFolders(connection.id, metaFolder.id, inboxFolder.id);
+      connection.meta_folder_id = metaFolder.id;
+      connection.inbox_folder_id = inboxFolder.id;
+    }
+    await setActiveDriveConnection(connection.id);
+    onDriveConnect(connection);
+  };
+
+  // ---- Scope Upgrade: WebView OAuth to get full drive scope ----
+
+  const startScopeUpgrade = async () => {
+    // Priority 1: Direct WebView OAuth (no server needed)
+    const wClientId = await getSetting('webClientId');
+    const wClientSecret = await getSetting('webClientSecret');
+    const wRedirectUri = await getSetting('webRedirectUri');
+
+    if (wClientId && wClientSecret && wRedirectUri) {
+      const scopes = [
+        'https://www.googleapis.com/auth/drive',
+        'https://www.googleapis.com/auth/userinfo.profile',
+        'https://www.googleapis.com/auth/userinfo.email',
+      ];
+      const params = new URLSearchParams({
+        client_id: wClientId,
+        redirect_uri: wRedirectUri,
+        response_type: 'code',
+        scope: scopes.join(' '),
+        access_type: 'offline',
+        prompt: 'consent',
+      });
+      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+      setScopeUpgrade({ authUrl, redirectUri: wRedirectUri, sessionId: null, serverUrl: null, direct: true, webClientId: wClientId, webClientSecret: wClientSecret });
+      return;
+    }
+
+    // Priority 2: Via server
+    const serverUrl = await getSetting('serverUrl');
+    if (!serverUrl) {
+      alert(
+        'Eingeschränkter Zugriff',
+        'Dein Login hat nur eingeschränkte Berechtigungen.\n\n' +
+        'Bitte scanne den QR-Code der Desktop-Software erneut, um die Verbindung zu aktualisieren.'
+      );
+      return;
+    }
+
+    setScopeUpgradeLoading(true);
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(`${serverUrl}/api/mobile/auth/init-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timer));
+
+      if (!res.ok) throw new Error(`Server-Fehler ${res.status}`);
+
+      const { sessionId, authUrl, redirectUri } = await res.json();
+      setScopeUpgrade({ authUrl, redirectUri, sessionId, serverUrl, direct: false });
+      setScopeUpgradeLoading(false);
+    } catch (e) {
+      setScopeUpgradeLoading(false);
+      const reason = e.name === 'AbortError' ? 'Timeout' : e.message;
+      alert(
+        'Eingeschränkter Zugriff',
+        `Desktop-Server nicht erreichbar (${reason}).\n\nBitte scanne den QR-Code erneut.`
+      );
+    }
+  };
+
+  const handleScopeUpgradeNavigation = (request) => {
+    const { url } = request;
+    if (scopeUpgrade && url.startsWith(scopeUpgrade.redirectUri)) {
+      const urlObj = new URL(url);
+      const code = urlObj.searchParams.get('code');
+      const error = urlObj.searchParams.get('error');
+
+      if (error) {
+        setScopeUpgrade(null);
+        alert('Anmeldung abgebrochen', 'Die Google-Anmeldung wurde abgebrochen.');
+        return false;
       }
 
-      await setActiveDriveConnection(connection.id);
-      onDriveConnect(connection);
+      if (code) {
+        exchangeUpgradeCode(code);
+      }
+      return false;
+    }
+    return true;
+  };
+
+  const exchangeUpgradeCode = async (code) => {
+    const { redirectUri, serverUrl, direct, webClientId: wId, webClientSecret: wSecret } = scopeUpgrade;
+    setScopeUpgrade(null);
+    setConnecting(true);
+    try {
+      let data;
+
+      if (direct && wId && wSecret) {
+        // Direct exchange with Google
+        const res = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            code,
+            client_id: wId,
+            client_secret: wSecret,
+            redirect_uri: redirectUri,
+            grant_type: 'authorization_code',
+          }).toString(),
+        });
+        data = await res.json();
+        if (!res.ok) throw new Error(data.error_description || data.error || 'Token-Austausch fehlgeschlagen');
+        // Fetch user info
+        const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${data.access_token}` },
+        });
+        const userInfo = await userRes.json();
+        data.user_name = userInfo.name || '';
+        data.user_email = userInfo.email || '';
+        data.user_photo = userInfo.picture || '';
+      } else {
+        // Exchange via server
+        const res = await fetch(`${serverUrl}/api/mobile/auth/exchange`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, redirect_uri: redirectUri }),
+        });
+        data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Token-Austausch fehlgeschlagen');
+      }
+
+      // Store new tokens with full drive scope
+      await storeTokens(data.access_token, data.refresh_token, data.expires_in || 3600);
+      if (data.scope) await storeGrantedScope(data.scope);
+      if (data.user_name || data.user_email) {
+        await storeUserInfo({ name: data.user_name || '', email: data.user_email || '', picture: data.user_photo || '' });
+      }
+
+      // Retry the pending connection with new tokens
+      if (pendingConnectionRef.current) {
+        const connection = pendingConnectionRef.current;
+        pendingConnectionRef.current = null;
+        const accessible = await verifyConnection(connection.root_folder_id);
+        if (accessible) {
+          await activateConnection(connection);
+          return;
+        }
+        alert('Nicht erreichbar', 'Der Ordner ist auch mit vollem Zugriff nicht erreichbar. Möglicherweise wurde die Freigabe entfernt.');
+      }
     } catch (error) {
-      Alert.alert('Fehler', error.message);
+      alert('Fehler', error.message);
     } finally {
       setConnecting(false);
     }
   };
 
   const handleDeleteConnection = (connection) => {
-    Alert.alert(
+    alert(
       'Verbindung entfernen?',
       `"${connection.name}" wird entfernt. Du kannst sie jederzeit erneut per QR-Code hinzufügen.`,
       [
@@ -307,6 +510,39 @@ export default function ConnectScreen() {
     );
   }
 
+  // Scope upgrade WebView modal
+  if (scopeUpgrade) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bgPrimary }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12, backgroundColor: colors.cardBg, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+          <TouchableOpacity onPress={() => setScopeUpgrade(null)} style={{ padding: 8 }}>
+            <Ionicons name="close" size={24} color={colors.textPrimary} />
+          </TouchableOpacity>
+          <Text style={{ flex: 1, color: colors.textPrimary, fontSize: 16, fontWeight: '600', marginLeft: 8 }}>
+            Google Drive Vollzugriff
+          </Text>
+        </View>
+        <WebView
+          source={{ uri: scopeUpgrade.authUrl }}
+          onShouldStartLoadWithRequest={handleScopeUpgradeNavigation}
+          onNavigationStateChange={(navState) => handleScopeUpgradeNavigation({ url: navState.url })}
+          style={{ flex: 1 }}
+          javaScriptEnabled
+          domStorageEnabled
+        />
+      </SafeAreaView>
+    );
+  }
+
+  if (scopeUpgradeLoading) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator size="large" color={colors.accent} />
+        <Text style={styles.subtitle}>Verbinde mit Desktop-Server...</Text>
+      </View>
+    );
+  }
+
   // Main connection selection view (only when authenticated)
   return (
     <View style={styles.container}>
@@ -387,7 +623,7 @@ export default function ConnectScreen() {
       <TouchableOpacity
         style={styles.switchAccountButton}
         onPress={() => {
-          Alert.alert(
+          alert(
             'Konto wechseln?',
             'Du wirst abgemeldet und kannst dich mit einem anderen Google-Konto anmelden.',
             [

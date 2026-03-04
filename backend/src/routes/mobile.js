@@ -38,6 +38,7 @@ router.get('/connect-info', mobile.getConnectInfo);
 router.post('/connect-token', mobile.generateConnectToken);
 
 // Landing page when QR code is scanned with phone camera
+router.get('/connect/setup', mobile.connectSetupPage);
 router.get('/connect/:token', mobile.connectLandingPage);
 
 // Mobile OAuth - auth code exchange (for Desktop app type client IDs)
@@ -63,6 +64,9 @@ router.post('/register', mobile.registerDevice);
 // Device heartbeat (called from mobile app periodically)
 router.post('/heartbeat', mobile.deviceHeartbeat);
 
+// Report image metadata (GPS, title, notes) after Drive upload - no auth needed
+router.post('/image-metadata', mobile.reportImageMetadata);
+
 // Device management (called from desktop)
 router.get('/devices', mobile.getDevices);
 router.delete('/devices/:deviceId', mobile.removeDevice);
@@ -70,6 +74,7 @@ router.delete('/devices/:deviceId', mobile.removeDevice);
 // Inbox (called from desktop)
 router.get('/inbox', mobile.getInbox);
 router.get('/inbox/image-proxy/:fileId', mobile.proxyInboxImage);
+router.get('/inbox/delete-preview/:projectName/:fileName', mobile.previewDeleteRequestImage);
 router.get('/inbox/:folderId/images', mobile.getInboxImages);
 router.post('/inbox/confirm', mobile.confirmInboxProject);
 router.post('/inbox/add-to-library', mobile.addToLibrary);
@@ -80,6 +85,12 @@ router.post('/inbox/process-delete', mobile.processDeleteRequests);
 router.post('/inbox/dismiss-delete', mobile.dismissDeleteRequests);
 router.delete('/inbox/:folderId', mobile.deleteInboxProject);
 
+// Project changes (new images uploaded from mobile to existing projects)
+router.get('/project-changes', mobile.getProjectChanges);
+router.get('/project-changes/image-proxy/:fileId', mobile.proxyProjectChangeImage);
+router.post('/project-changes/confirm', mobile.confirmProjectChanges);
+router.post('/project-changes/reject', mobile.rejectProjectChanges);
+
 // Admin: mobile OAuth credentials management (called from desktop settings)
 router.get('/admin/credentials', mobile.getAdminCredentials);
 router.post('/admin/credentials', mobile.saveAdminCredentials);
@@ -88,6 +99,12 @@ router.post('/admin/credentials', mobile.saveAdminCredentials);
 router.get('/app.apk', (req, res) => {
   const apkPath = path.join(__dirname, '../../../mobile-app/android/app.apk');
   if (fs.existsSync(apkPath)) {
+    // Prevent browser from caching old APK versions
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
     res.download(apkPath, 'FuchsMetallbau.apk');
   } else {
     res.status(404).json({ error: 'APK nicht verfügbar' });

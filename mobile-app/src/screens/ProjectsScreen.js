@@ -1,14 +1,15 @@
 import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput,
-  RefreshControl, Alert, Modal,
+  RefreshControl, Modal,
 } from 'react-native';
+import { useDialog } from '../components/CustomDialog';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
-import { getCachedProjects, getCachedTags, addPendingProject, getPendingProjects, clearConfirmedPendingProjects } from '../services/database';
+import { getCachedProjects, getCachedTags, addPendingProject, getPendingProjects, clearConfirmedPendingProjects, removePendingProject } from '../services/database';
 import { syncMetadata } from '../services/syncService';
-import { createProject } from '../services/api';
+import { createProject, deletePendingProject } from '../services/api';
 import { useApp } from '../contexts/AppContext';
 
 const SORT_OPTIONS = [
@@ -21,6 +22,7 @@ const SORT_OPTIONS = [
 ];
 
 export default function ProjectsScreen({ navigation }) {
+  const { alert } = useDialog();
   const { isConnected } = useApp();
   const [projects, setProjects] = useState([]);
   const [pendingProjectsList, setPendingProjectsList] = useState([]);
@@ -88,6 +90,35 @@ export default function ProjectsScreen({ navigation }) {
     }
   };
 
+  const handleDeletePending = (item) => {
+    alert(
+      'Projekt löschen?',
+      `"${item.folder_name}" und alle hochgeladenen Bilder werden von Google Drive gelöscht.`,
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        {
+          text: 'Löschen',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const result = await deletePendingProject(item.folder_id);
+              await removePendingProject(item.folder_name);
+              await loadData();
+              if (result.alreadyConfirmed) {
+                alert(
+                  'Bereits bestätigt',
+                  `"${item.folder_name}" wurde bereits in der Desktop-Software bestätigt und kann hier nicht mehr gelöscht werden.`
+                );
+              }
+            } catch (error) {
+              alert('Fehler', 'Löschen fehlgeschlagen: ' + error.message);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
 
@@ -100,12 +131,12 @@ export default function ProjectsScreen({ navigation }) {
       await addPendingProject(name, result.folder_id);
       // Reload data to show the pending project
       await loadData();
-      Alert.alert(
+      alert(
         'Projekt erstellt',
         `"${name}" wurde in der Inbox erstellt und wartet auf Bestätigung in der Desktop-Software.`
       );
     } catch (error) {
-      Alert.alert('Fehler', error.message);
+      alert('Fehler', error.message);
     }
   };
 
@@ -169,7 +200,7 @@ export default function ProjectsScreen({ navigation }) {
   const renderPendingProject = ({ item }) => (
     <TouchableOpacity
       style={styles.pendingCard}
-      onPress={() => navigation.navigate('CameraStack', {
+      onPress={() => navigation.navigate('ProjectDetail', {
         projectId: item.folder_id,
         projectName: item.folder_name,
         projectFolderId: item.folder_id,
@@ -184,14 +215,15 @@ export default function ProjectsScreen({ navigation }) {
             <Text style={styles.pendingBadgeText}>Unbestätigt</Text>
           </View>
         </View>
-        <View style={styles.pendingActions}>
-          <Text style={styles.pendingHint}>Wartet auf Bestätigung</Text>
-          <View style={styles.pendingUploadHint}>
-            <Ionicons name="camera-outline" size={12} color={colors.accent} />
-            <Text style={styles.pendingUploadText}>Fotos aufnehmen</Text>
-          </View>
-        </View>
+        <Text style={styles.pendingHint}>Wartet auf Bestätigung</Text>
       </View>
+      <TouchableOpacity
+        style={styles.pendingDeleteBtn}
+        onPress={(e) => { e.stopPropagation(); handleDeletePending(item); }}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
+        <Ionicons name="trash-outline" size={18} color={colors.error} />
+      </TouchableOpacity>
       <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
     </TouchableOpacity>
   );
@@ -368,35 +400,28 @@ export default function ProjectsScreen({ navigation }) {
         </View>
       )}
 
-      {/* Project List */}
+      {/* Project List - pending projects integrated at the top */}
       <FlatList
-        data={sortedProjects}
-        keyExtractor={p => String(p.id)}
-        renderItem={renderProject}
+        data={[
+          ...filteredPending.map(p => ({ ...p, _type: 'pending' })),
+          ...sortedProjects.map(p => ({ ...p, _type: 'project' })),
+        ]}
+        keyExtractor={p => p._type === 'pending' ? `pending-${p.id}` : String(p.id)}
+        renderItem={({ item }) => item._type === 'pending' ? renderPendingProject({ item }) : renderProject({ item })}
         contentContainerStyle={styles.list}
         refreshControl={
           <RefreshControl refreshing={refreshing && !syncing} onRefresh={handleRefresh} tintColor={colors.accent} />
         }
         ListHeaderComponent={
-          <>
-            {/* Pending Projects Section */}
-            {filteredPending.length > 0 && (
-              <View style={styles.pendingSection}>
-                <Text style={styles.pendingSectionTitle}>Warte auf Bestätigung</Text>
-                {filteredPending.map(item => (
-                  <View key={`pending-${item.id}`}>
-                    {renderPendingProject({ item })}
-                  </View>
-                ))}
-              </View>
-            )}
-            {sortedProjects.length > 0 ? (
-              <Text style={styles.resultCount}>{sortedProjects.length} Projekte</Text>
-            ) : null}
-          </>
+          (sortedProjects.length > 0 || filteredPending.length > 0) ? (
+            <Text style={styles.resultCount}>
+              {sortedProjects.length} {sortedProjects.length === 1 ? 'Projekt' : 'Projekte'}
+              {filteredPending.length > 0 && ` · ${filteredPending.length} offen`}
+            </Text>
+          ) : null
         }
         ListEmptyComponent={
-          !syncing && filteredPending.length === 0 ? (
+          !syncing ? (
             <View style={styles.empty}>
               <Ionicons name="folder-open-outline" size={48} color={colors.textTertiary} />
               <Text style={styles.emptyText}>
@@ -498,14 +523,7 @@ const styles = StyleSheet.create({
   list: { padding: 16, paddingTop: 4 },
   resultCount: { fontSize: 12, color: colors.textTertiary, marginBottom: 8 },
 
-  // Pending section
-  pendingSection: {
-    marginBottom: 16,
-  },
-  pendingSectionTitle: {
-    fontSize: 13, fontWeight: '600', color: colors.accent,
-    marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5,
-  },
+  // Pending (inline with projects)
   pendingCard: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: colors.cardBg,
     borderRadius: 12, marginBottom: 10, padding: 16, borderWidth: 1,
@@ -517,10 +535,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent + '20',
   },
   pendingBadgeText: { fontSize: 11, color: colors.accent, fontWeight: '600' },
-  pendingActions: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
-  pendingHint: { fontSize: 12, color: colors.textTertiary },
-  pendingUploadHint: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  pendingUploadText: { fontSize: 12, color: colors.accent, fontWeight: '500' },
+  pendingHint: { fontSize: 12, color: colors.textTertiary, marginTop: 4 },
+  pendingDeleteBtn: { padding: 6, marginRight: 4 },
 
   // Project card
   projectCard: {

@@ -1,20 +1,22 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, Image, Dimensions, TouchableOpacity,
-  ActivityIndicator, FlatList, Animated, PanResponder, Alert,
+  ActivityIndicator, FlatList, Animated, PanResponder, Modal, TextInput, Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useDialog } from '../components/CustomDialog';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as FileSystem from 'expo-file-system';
 import { colors } from '../theme/colors';
 import { downloadFullImage } from '../services/syncService';
 import { getImageUrl } from '../services/api';
-import { deleteRecentPhoto } from '../services/database';
+import { addToDeleteQueue, updateRecentPhotoMetadata } from '../services/database';
+import { processDeleteQueue } from '../services/deleteQueue';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const HEADER_HEIGHT = 60;
+const INFO_BAR_HEIGHT = 80;
 const FOOTER_HEIGHT = 64;
-const IMAGE_HEIGHT = SCREEN_HEIGHT - HEADER_HEIGHT - FOOTER_HEIGHT;
+const IMAGE_HEIGHT = SCREEN_HEIGHT - HEADER_HEIGHT - INFO_BAR_HEIGHT - FOOTER_HEIGHT;
 
 // Calculate distance between two touch points
 function getDistance(touches) {
@@ -31,8 +33,21 @@ function getMidpoint(touches) {
   };
 }
 
+// Format date for display
+function formatDate(dateString) {
+  if (!dateString) return null;
+  try {
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return null;
+    return date.toLocaleDateString('de-DE', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+  } catch { return null; }
+}
+
 // Single zoomable image using PanResponder + Animated
-function ZoomableImage({ imageId, localUri, isActive }) {
+function ZoomableImage({ imageId, localUri, isActive, imageHeight }) {
   const [imageUri, setImageUri] = useState(localUri || null);
   const [imageHeaders, setImageHeaders] = useState(null);
   const [loading, setLoading] = useState(!localUri);
@@ -54,6 +69,8 @@ function ZoomableImage({ imageId, localUri, isActive }) {
   const wasPinching = useRef(false);
   const panStartX = useRef(0);
   const panStartY = useRef(0);
+
+  const imgHeight = imageHeight || IMAGE_HEIGHT;
 
   useEffect(() => {
     if (isActive && !imageUri && imageId) {
@@ -106,7 +123,7 @@ function ZoomableImage({ imageId, localUri, isActive }) {
   const zoomTo = (targetScale, focalX, focalY) => {
     currentScale.current = targetScale;
     const offsetX = -(focalX - SCREEN_WIDTH / 2) * (targetScale - 1) / targetScale;
-    const offsetY = -(focalY - IMAGE_HEIGHT / 2) * (targetScale - 1) / targetScale;
+    const offsetY = -(focalY - imgHeight / 2) * (targetScale - 1) / targetScale;
     currentTranslateX.current = offsetX;
     currentTranslateY.current = offsetY;
     Animated.parallel([
@@ -118,7 +135,7 @@ function ZoomableImage({ imageId, localUri, isActive }) {
 
   const clampTranslation = (tx, ty, scale) => {
     const maxTransX = (SCREEN_WIDTH * (scale - 1)) / 2;
-    const maxTransY = (IMAGE_HEIGHT * (scale - 1)) / 2;
+    const maxTransY = (imgHeight * (scale - 1)) / 2;
     return {
       x: Math.max(-maxTransX, Math.min(maxTransX, tx)),
       y: Math.max(-maxTransY, Math.min(maxTransY, ty)),
@@ -129,7 +146,6 @@ function ZoomableImage({ imageId, localUri, isActive }) {
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        // Claim gesture if zoomed in (for panning) or if any movement detected (for pinching)
         if (currentScale.current > 1) return true;
         return Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2;
       },
@@ -157,7 +173,6 @@ function ZoomableImage({ imageId, localUri, isActive }) {
         const touches = evt.nativeEvent.touches;
 
         if (touches.length === 2) {
-          // Pinch zoom with focal point tracking
           if (!isPinching.current) {
             isPinching.current = true;
             wasPinching.current = true;
@@ -175,10 +190,9 @@ function ZoomableImage({ imageId, localUri, isActive }) {
           const pinchRatio = currentDistance / initialPinchDistance.current;
           const newScale = Math.max(1, Math.min(pinchStartScale.current * pinchRatio, 6));
 
-          // Calculate focal point offset to zoom toward the pinch center
           const mid = getMidpoint(touches);
           const focalX = mid.x - SCREEN_WIDTH / 2;
-          const focalY = mid.y - HEADER_HEIGHT - IMAGE_HEIGHT / 2;
+          const focalY = mid.y - HEADER_HEIGHT - imgHeight / 2;
           const scaleRatio = newScale / pinchStartScale.current;
           const newTx = pinchStartTranslate.current.x + focalX * (1 - scaleRatio);
           const newTy = pinchStartTranslate.current.y + focalY * (1 - scaleRatio);
@@ -190,7 +204,6 @@ function ZoomableImage({ imageId, localUri, isActive }) {
           translateXVal.setValue(newTx);
           translateYVal.setValue(newTy);
         } else if (currentScale.current > 1 && !isPinching.current) {
-          // Pan when zoomed in with single finger
           const newX = panStartX.current + gestureState.dx;
           const newY = panStartY.current + gestureState.dy;
 
@@ -205,14 +218,12 @@ function ZoomableImage({ imageId, localUri, isActive }) {
         const wasJustPinching = isPinching.current || wasPinching.current;
         isPinching.current = false;
 
-        // If scale dropped below 1 during pinch-out, snap to 1
         if (currentScale.current <= 1) {
           resetZoom(true);
           wasPinching.current = false;
           return;
         }
 
-        // After a pinch, clamp translation and clear pinch flag
         if (wasJustPinching) {
           const clamped = clampTranslation(
             currentTranslateX.current,
@@ -227,17 +238,14 @@ function ZoomableImage({ imageId, localUri, isActive }) {
               Animated.timing(translateYVal, { toValue: clamped.y, duration: 150, useNativeDriver: true }),
             ]).start();
           }
-          // Reset wasPinching after a short delay to avoid double-tap false positive
           setTimeout(() => { wasPinching.current = false; }, 350);
           return;
         }
 
-        // Double tap detection (only when NOT pinching)
         const now = Date.now();
         const touches = evt.nativeEvent.changedTouches;
         if (touches.length === 1) {
           if (now - lastTapTime.current < 300) {
-            // Double tap
             if (currentScale.current > 1.5) {
               resetZoom(true);
             } else {
@@ -249,7 +257,6 @@ function ZoomableImage({ imageId, localUri, isActive }) {
           lastTapTime.current = now;
         }
 
-        // Clamp translation so image doesn't fly off screen
         const clamped = clampTranslation(
           currentTranslateX.current,
           currentTranslateY.current,
@@ -269,7 +276,7 @@ function ZoomableImage({ imageId, localUri, isActive }) {
 
   if (loading) {
     return (
-      <View style={styles.imagePage}>
+      <View style={[styles.imagePage, { height: imgHeight }]}>
         <ActivityIndicator size="large" color={colors.accent} />
         <Text style={styles.loadingText}>Bild wird geladen...</Text>
       </View>
@@ -278,7 +285,7 @@ function ZoomableImage({ imageId, localUri, isActive }) {
 
   if (!imageUri) {
     return (
-      <View style={styles.imagePage}>
+      <View style={[styles.imagePage, { height: imgHeight }]}>
         <Ionicons name="image-outline" size={64} color={colors.textTertiary} />
         <Text style={styles.loadingText}>Bild konnte nicht geladen werden</Text>
       </View>
@@ -286,7 +293,7 @@ function ZoomableImage({ imageId, localUri, isActive }) {
   }
 
   return (
-    <View style={styles.imagePage} {...panResponder.panHandlers}>
+    <View style={[styles.imagePage, { height: imgHeight }]} {...panResponder.panHandlers}>
       <Animated.Image
         source={
           imageHeaders
@@ -295,6 +302,7 @@ function ZoomableImage({ imageId, localUri, isActive }) {
         }
         style={[
           styles.image,
+          { height: imgHeight },
           {
             transform: [
               { translateX: translateXVal },
@@ -310,57 +318,130 @@ function ZoomableImage({ imageId, localUri, isActive }) {
 }
 
 export default function ImageViewScreen({ route, navigation }) {
-  const { imageId, imageName, projectName, images, initialIndex, localUri, onDelete } = route.params;
+  const { alert } = useDialog();
+  const { imageId, imageName, projectName, images, initialIndex, localUri } = route.params;
   const [currentIndex, setCurrentIndex] = useState(initialIndex || 0);
   const [deletedIds, setDeletedIds] = useState(new Set());
+  const [imageMetadata, setImageMetadata] = useState({}); // { [id]: { customTitle, notes } }
   const insets = useSafeAreaInsets();
   const flatListRef = useRef(null);
+  const editInputRef = useRef(null);
+
+  // Editing state
+  const [editingField, setEditingField] = useState(null); // 'title' | 'notes' | null
+  const [editFieldValue, setEditFieldValue] = useState('');
 
   // Single image mode (no images array), filter out deleted
   const allImages = images || [{ id: imageId, name: imageName, localUri }];
   const imageList = allImages.filter(img => !deletedIds.has(img.id));
   const currentImage = imageList[currentIndex] || imageList[0];
 
+  // Get metadata for current image (local edits override initial data)
+  const getCurrentMeta = () => {
+    if (!currentImage) return {};
+    const overrides = imageMetadata[currentImage.id] || {};
+    return {
+      customTitle: overrides.customTitle !== undefined ? overrides.customTitle : (currentImage.customTitle || null),
+      notes: overrides.notes !== undefined ? overrides.notes : (currentImage.notes || null),
+      gpsData: currentImage.gpsData || null,
+      createdAt: currentImage.createdAt || null,
+      isLocal: currentImage.isLocal || false,
+    };
+  };
+
+  const meta = getCurrentMeta();
+
+  // Parse GPS data (stored as JSON string)
+  const gps = (() => {
+    if (!meta.gpsData) return null;
+    try {
+      return typeof meta.gpsData === 'string' ? JSON.parse(meta.gpsData) : meta.gpsData;
+    } catch { return null; }
+  })();
+
+  // Display name: customTitle > basename without extension
+  const getDisplayName = () => {
+    if (meta.customTitle) return meta.customTitle;
+    if (!currentImage?.name) return 'Bild';
+    const name = currentImage.name;
+    const dotIndex = name.lastIndexOf('.');
+    return dotIndex > 0 ? name.substring(0, dotIndex) : name;
+  };
+
+  const openEditField = (field) => {
+    if (field === 'title') {
+      setEditFieldValue(meta.customTitle || getDisplayName());
+    } else {
+      setEditFieldValue(meta.notes || '');
+    }
+    setEditingField(field);
+  };
+
+  const saveEditField = async () => {
+    if (!editingField || !currentImage) {
+      setEditingField(null);
+      return;
+    }
+
+    const newMeta = { ...(imageMetadata[currentImage.id] || {}) };
+    if (editingField === 'title') {
+      newMeta.customTitle = editFieldValue.trim() || null;
+    } else {
+      newMeta.notes = editFieldValue.trim() || null;
+    }
+
+    setImageMetadata(prev => ({ ...prev, [currentImage.id]: newMeta }));
+
+    // Persist to database for local photos
+    if (currentImage.isLocal) {
+      try {
+        const title = newMeta.customTitle !== undefined ? newMeta.customTitle : (currentImage.customTitle || null);
+        const notes = newMeta.notes !== undefined ? newMeta.notes : (currentImage.notes || null);
+        await updateRecentPhotoMetadata(currentImage.id, title, notes);
+      } catch (e) {
+        console.warn('Failed to save metadata:', e);
+      }
+    }
+
+    setEditingField(null);
+    setEditFieldValue('');
+  };
+
+  const openGoogleMaps = () => {
+    if (!gps) return;
+    const url = `https://www.google.com/maps?q=${gps.latitude},${gps.longitude}`;
+    Linking.openURL(url);
+  };
+
   const handleDeleteCurrent = useCallback(() => {
     if (!currentImage) return;
 
-    Alert.alert(
+    alert(
       'Foto löschen',
-      `"${currentImage.name}" vom Handy löschen?`,
+      `"${getDisplayName()}" vom Handy löschen?`,
       [
         { text: 'Abbrechen', style: 'cancel' },
         {
           text: 'Löschen',
           style: 'destructive',
           onPress: async () => {
-            try {
-              // Delete from database
-              if (currentImage.id) {
-                await deleteRecentPhoto(currentImage.id);
-              }
-              // Delete local file
-              if (currentImage.localUri) {
-                try {
-                  await FileSystem.deleteAsync(currentImage.localUri, { idempotent: true });
-                } catch {}
-              }
+            await addToDeleteQueue([{
+              id: currentImage.id,
+              file_name: currentImage.name,
+              file_uri: currentImage.localUri,
+            }]);
+            processDeleteQueue();
 
-              // Mark as deleted
-              setDeletedIds(prev => new Set([...prev, currentImage.id]));
+            setDeletedIds(prev => new Set([...prev, currentImage.id]));
 
-              // If all images are deleted, go back
-              const remaining = imageList.length - 1;
-              if (remaining <= 0) {
-                navigation.goBack();
-                return;
-              }
+            const remaining = imageList.length - 1;
+            if (remaining <= 0) {
+              navigation.goBack();
+              return;
+            }
 
-              // Adjust index if needed
-              if (currentIndex >= remaining) {
-                setCurrentIndex(remaining - 1);
-              }
-            } catch (error) {
-              Alert.alert('Fehler', 'Foto konnte nicht gelöscht werden.');
+            if (currentIndex >= remaining) {
+              setCurrentIndex(remaining - 1);
             }
           },
         },
@@ -403,7 +484,7 @@ export default function ImageViewScreen({ route, navigation }) {
       {/* Header - Image name and counter */}
       <View style={styles.header}>
         <View style={styles.headerInfo}>
-          <Text style={styles.headerTitle} numberOfLines={1}>{currentImage?.name || 'Bild'}</Text>
+          <Text style={styles.headerTitle} numberOfLines={1}>{getDisplayName()}</Text>
           <Text style={styles.headerSubtitle}>
             {projectName ? `${projectName} · ` : ''}{currentIndex + 1} / {imageList.length}
           </Text>
@@ -416,6 +497,7 @@ export default function ImageViewScreen({ route, navigation }) {
           imageId={imageList[0].id}
           localUri={imageList[0].localUri}
           isActive={true}
+          imageHeight={IMAGE_HEIGHT}
         />
       ) : (
         <FlatList
@@ -434,16 +516,113 @@ export default function ImageViewScreen({ route, navigation }) {
               imageId={item.id}
               localUri={item.localUri}
               isActive={Math.abs(index - currentIndex) <= 1}
+              imageHeight={IMAGE_HEIGHT}
             />
           )}
         />
       )}
 
-      {/* Footer - Back button + delete + navigation */}
+      {/* Info bar - metadata display */}
+      <View style={styles.infoBar}>
+        {/* Date */}
+        {meta.createdAt && (
+          <View style={styles.infoRow}>
+            <Ionicons name="calendar-outline" size={14} color={colors.textTertiary} />
+            <Text style={styles.infoDate}>{formatDate(meta.createdAt)}</Text>
+          </View>
+        )}
+
+        {/* Notes preview (if exists) */}
+        {meta.notes && (
+          <View style={styles.infoRow}>
+            <Ionicons name="document-text-outline" size={14} color={colors.textTertiary} />
+            <Text style={styles.infoNotes} numberOfLines={1}>{meta.notes}</Text>
+          </View>
+        )}
+
+        {/* Editable buttons row */}
+        {meta.isLocal && (
+          <View style={styles.editRow}>
+            <TouchableOpacity
+              style={[styles.editBtn, meta.customTitle && styles.editBtnActive]}
+              onPress={() => openEditField('title')}
+            >
+              <Ionicons name="pencil-outline" size={14} color={meta.customTitle ? colors.accent : colors.textTertiary} />
+              <Text style={[styles.editBtnText, meta.customTitle && { color: colors.accent }]} numberOfLines={1}>
+                Titel
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.editBtn, meta.notes && styles.editBtnActive]}
+              onPress={() => openEditField('notes')}
+            >
+              <Ionicons name="create-outline" size={14} color={meta.notes ? colors.accent : colors.textTertiary} />
+              <Text style={[styles.editBtnText, meta.notes && { color: colors.accent }]} numberOfLines={1}>
+                Notizen
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+
+      {/* Metadata editing modal */}
+      {editingField && (
+        <Modal
+          transparent
+          animationType="slide"
+          onShow={() => {
+            setTimeout(() => editInputRef.current?.focus(), 100);
+          }}
+        >
+          <TouchableOpacity style={styles.editModalOverlay} activeOpacity={1} onPress={saveEditField}>
+            <View style={styles.editModalContent} onStartShouldSetResponder={() => true}>
+              <View style={styles.editModalHeader}>
+                <Text style={styles.editModalTitle}>
+                  {editingField === 'title' ? 'Bild-Titel' : 'Notizen'}
+                </Text>
+                <TouchableOpacity onPress={saveEditField}>
+                  <Ionicons name="checkmark-circle" size={28} color={colors.accent} />
+                </TouchableOpacity>
+              </View>
+              <TextInput
+                ref={editInputRef}
+                style={[
+                  styles.editModalInput,
+                  editingField === 'notes' && { height: 120, textAlignVertical: 'top' }
+                ]}
+                value={editFieldValue}
+                onChangeText={setEditFieldValue}
+                placeholder={editingField === 'title' ? 'Bildname eingeben...' : 'Notizen eingeben...'}
+                placeholderTextColor={colors.textTertiary}
+                autoFocus
+                multiline={editingField === 'notes'}
+                returnKeyType={editingField === 'title' ? 'done' : 'default'}
+                onSubmitEditing={editingField === 'title' ? saveEditField : undefined}
+              />
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      )}
+
+      {/* Footer - Back button + GPS + delete + navigation */}
       <View style={[styles.footer, { paddingBottom: insets.bottom || 4 }]}>
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={20} color="white" />
           <Text style={styles.backBtnText}>Zurück</Text>
+        </TouchableOpacity>
+
+        {/* GPS button */}
+        <TouchableOpacity
+          style={[styles.gpsBtn, gps ? styles.gpsBtnActive : styles.gpsBtnInactive]}
+          onPress={gps ? openGoogleMaps : undefined}
+          disabled={!gps}
+        >
+          <Ionicons
+            name="location"
+            size={20}
+            color={gps ? '#22c55e' : '#666'}
+          />
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.deleteBtn} onPress={handleDeleteCurrent}>
@@ -485,12 +664,98 @@ const styles = StyleSheet.create({
   headerTitle: { color: 'white', fontSize: 16, fontWeight: '600' },
   headerSubtitle: { color: colors.textTertiary, fontSize: 13, marginTop: 2 },
   imagePage: {
-    width: SCREEN_WIDTH, height: IMAGE_HEIGHT,
+    width: SCREEN_WIDTH,
     justifyContent: 'center', alignItems: 'center', gap: 12,
     overflow: 'hidden',
   },
-  image: { width: SCREEN_WIDTH, height: IMAGE_HEIGHT },
+  image: { width: SCREEN_WIDTH },
   loadingText: { color: colors.textTertiary, fontSize: 14 },
+
+  // Info bar
+  infoBar: {
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.08)',
+    gap: 6,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  infoDate: {
+    color: colors.textTertiary,
+    fontSize: 12,
+  },
+  infoNotes: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    flex: 1,
+  },
+  editRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  editBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  editBtnActive: {
+    borderColor: 'rgba(59,130,246,0.3)',
+    backgroundColor: 'rgba(59,130,246,0.08)',
+  },
+  editBtnText: {
+    fontSize: 12,
+    color: colors.textTertiary,
+    fontWeight: '500',
+  },
+
+  // Edit modal
+  editModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'flex-end',
+  },
+  editModalContent: {
+    backgroundColor: colors.bgPrimary,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 40,
+  },
+  editModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  editModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  editModalInput: {
+    backgroundColor: colors.inputBg || colors.bgSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: colors.textPrimary,
+  },
+
+  // Footer
   footer: {
     backgroundColor: 'rgba(0,0,0,0.85)',
     flexDirection: 'row',
@@ -516,6 +781,20 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 15,
     fontWeight: '600',
+  },
+  gpsBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  gpsBtnActive: {
+    backgroundColor: 'rgba(34, 197, 94, 0.15)',
+    borderColor: 'rgba(34, 197, 94, 0.3)',
+  },
+  gpsBtnInactive: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.1)',
   },
   deleteBtn: {
     paddingVertical: 8,

@@ -1,28 +1,36 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { Inbox, Check, GitMerge, Trash2, X, Search, Image, FolderOpen, Loader, ChevronDown, ChevronUp, Tag, ChevronLeft, ChevronRight, User, CheckSquare, Square } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Inbox, Check, GitMerge, Trash2, X, Search, Image, FolderOpen, Loader, ChevronDown, ChevronUp, Tag, ChevronLeft, ChevronRight, User, CheckSquare, Square, Eye, Plus } from 'lucide-react';
 import './InboxBanner.css';
 
 function InboxBanner() {
   const [inboxItems, setInboxItems] = useState([]);
   const [deleteRequests, setDeleteRequests] = useState([]);
+  const [projectChanges, setProjectChanges] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const navigate = useNavigate();
 
   const loadInbox = useCallback(async () => {
     try {
       setScanning(true);
-      const response = await fetch('/api/mobile/inbox');
-      if (response.ok) {
-        const data = await response.json();
-        // Handle new { projects, deleteRequests } format
+      const [inboxRes, changesRes] = await Promise.all([
+        fetch('/api/mobile/inbox'),
+        fetch('/api/mobile/project-changes'),
+      ]);
+      if (inboxRes.ok) {
+        const data = await inboxRes.json();
         if (data.projects) {
           setInboxItems(data.projects);
           setDeleteRequests(data.deleteRequests || []);
         } else if (Array.isArray(data)) {
-          // Backwards compat with old format
           setInboxItems(data);
           setDeleteRequests([]);
         }
+      }
+      if (changesRes.ok) {
+        const data = await changesRes.json();
+        setProjectChanges(data.changes || []);
       }
     } catch (error) {
       console.error('Error loading inbox:', error);
@@ -37,36 +45,63 @@ function InboxBanner() {
     return () => clearInterval(interval);
   }, [loadInbox]);
 
-  const totalCount = inboxItems.length + (deleteRequests.length > 0 ? 1 : 0);
-  if (totalCount === 0) return null;
+  const totalProjectChangeImages = projectChanges.reduce((sum, c) => sum + c.new_images.length, 0);
+  const totalCount = inboxItems.length + (deleteRequests.length > 0 ? 1 : 0) + (projectChanges.length > 0 ? 1 : 0);
+
+  // Don't render anything if no items AND modal is closed
+  if (totalCount === 0 && !showModal) return null;
+
+  const bannerDeleteRequesters = [...new Set(deleteRequests.map(r => r.requested_by).filter(Boolean))];
 
   return (
     <>
-      <div className="inbox-banner" onClick={() => setShowModal(true)}>
-        <div className="inbox-banner-content">
-          <Inbox size={18} />
-          <span>
-            Neue Uploads von der Handy-App ({inboxItems.length})
-            {deleteRequests.length > 0 && ` · ${deleteRequests.length} Löschanfragen`}
-          </span>
-          {scanning && <Loader size={14} className="spinning" />}
+      {totalCount > 0 && (
+        <div className="inbox-banner" onClick={() => setShowModal(true)}>
+          <div className="inbox-banner-content">
+            <Inbox size={18} />
+            <span>
+              {inboxItems.length > 0 && `Neue Uploads von der Handy-App (${inboxItems.length})`}
+              {inboxItems.length > 0 && (deleteRequests.length > 0 || projectChanges.length > 0) && ' · '}
+              {deleteRequests.length > 0 && `${deleteRequests.length} ${deleteRequests.length === 1 ? 'Löschanfrage' : 'Löschanfragen'}${bannerDeleteRequesters.length > 0 ? ` von ${bannerDeleteRequesters.join(', ')}` : ''}`}
+              {deleteRequests.length > 0 && projectChanges.length > 0 && ' · '}
+              {projectChanges.length > 0 && `${totalProjectChangeImages} neue Bilder in ${projectChanges.length} ${projectChanges.length === 1 ? 'Projekt' : 'Projekten'}`}
+            </span>
+            {scanning && <Loader size={14} className="spinning" />}
+          </div>
         </div>
-      </div>
+      )}
 
       {showModal && (
         <InboxModal
           projects={inboxItems}
           deleteRequests={deleteRequests}
+          projectChanges={projectChanges}
           onClose={() => setShowModal(false)}
           onRefresh={loadInbox}
+          onNavigateToProject={(projectName) => {
+            setShowModal(false);
+            navigate('/projects', { state: { openProject: projectName } });
+          }}
         />
       )}
     </>
   );
 }
 
+/**
+ * Parse [FUCHS_META] from Google Drive file description
+ */
+function parseFuchsMeta(description) {
+  if (!description || !description.startsWith('[FUCHS_META]')) return null;
+  try {
+    return JSON.parse(description.substring('[FUCHS_META]'.length));
+  } catch {
+    return null;
+  }
+}
+
 /* ========== Image Lightbox ========== */
-function ImageLightbox({ images, startIndex, onClose }) {
+function ImageLightbox({ images, startIndex, onClose, imageUrlFn }) {
   const [currentIndex, setCurrentIndex] = useState(startIndex);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -180,33 +215,84 @@ function ImageLightbox({ images, startIndex, onClose }) {
     }
   };
 
-  const proxyUrl = currentImage.id ? `/api/mobile/inbox/image-proxy/${currentImage.id}` : null;
+  const proxyUrl = imageUrlFn
+    ? imageUrlFn(currentImage)
+    : (currentImage.id ? `/api/mobile/inbox/image-proxy/${currentImage.id}` : null);
+
+  const meta = parseFuchsMeta(currentImage.description);
+  const displayName = meta?.title || currentImage.name;
 
   return (
     <div className="image-lightbox-overlay" onClick={(e) => { e.stopPropagation(); onClose(); }}>
-      <div
-        ref={containerRef}
-        className="image-lightbox-container"
-        onClick={e => e.stopPropagation()}
-        onMouseDown={e => { if (e.button === 1) e.preventDefault(); }}
-      >
-        {proxyUrl && (
-          <img
-            ref={imgRef}
-            src={proxyUrl}
-            alt={currentImage.name}
-            style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-              cursor: zoom > 1 ? (isPanningRef.current ? 'grabbing' : 'grab') : 'default'
-            }}
-            draggable={false}
-          />
-        )}
-      </div>
-
       <button className="image-lightbox-close" onClick={(e) => { e.stopPropagation(); onClose(); }}>
         <X size={20} />
       </button>
+
+      <div className="image-lightbox-body" onClick={e => e.stopPropagation()}>
+        <div
+          ref={containerRef}
+          className="image-lightbox-container"
+          onMouseDown={e => { if (e.button === 1) e.preventDefault(); }}
+        >
+          {proxyUrl && (
+            <img
+              ref={imgRef}
+              src={proxyUrl}
+              alt={displayName}
+              style={{
+                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                cursor: zoom > 1 ? (isPanningRef.current ? 'grabbing' : 'grab') : 'default'
+              }}
+              draggable={false}
+            />
+          )}
+        </div>
+
+        {/* Metadata sidebar */}
+        {meta && (
+          <div className="lightbox-sidebar">
+            <div className="lightbox-sidebar-section">
+              <label>Name</label>
+              <div className="lightbox-sidebar-value">{displayName}</div>
+            </div>
+
+            {meta.gps && meta.gps.latitude != null && (
+              <div className="lightbox-sidebar-section">
+                <label>GPS-Standort</label>
+                <button
+                  className="gps-map-btn"
+                  onClick={() => window.open(
+                    `https://www.google.com/maps?q=${meta.gps.latitude},${meta.gps.longitude}`,
+                    '_blank'
+                  )}
+                >
+                  <span className="gps-icon">📍</span>
+                  <span>Auf Google Maps öffnen</span>
+                  <span className="gps-coords">
+                    {meta.gps.latitude.toFixed(5)}, {meta.gps.longitude.toFixed(5)}
+                  </span>
+                </button>
+              </div>
+            )}
+
+            {meta.notes && (
+              <div className="lightbox-sidebar-section">
+                <label>Notizen</label>
+                <div className="image-notes-display">{meta.notes}</div>
+              </div>
+            )}
+
+            {currentImage.name && (
+              <div className="lightbox-sidebar-section">
+                <label>Dateiname</label>
+                <div className="lightbox-sidebar-value" style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                  {currentImage.name}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {images.length > 1 && currentIndex > 0 && (
         <button className="image-lightbox-nav prev" onClick={goPrev}>
@@ -222,14 +308,58 @@ function ImageLightbox({ images, startIndex, onClose }) {
 
       <div className="image-lightbox-zoom-hint">Shift + Mausrad zum Zoomen · Mittlere Maustaste zum Verschieben</div>
       <div className="image-lightbox-name">
-        {currentImage.name} ({currentIndex + 1}/{images.length})
+        {displayName} ({currentIndex + 1}/{images.length})
+      </div>
+    </div>
+  );
+}
+
+/* ========== Delete Preview Lightbox ========== */
+function DeletePreviewLightbox({ images, startIndex, onClose }) {
+  const [currentIndex, setCurrentIndex] = useState(startIndex);
+  const currentImage = images[currentIndex];
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'ArrowLeft' && currentIndex > 0) setCurrentIndex(i => i - 1);
+      if (e.key === 'ArrowRight' && currentIndex < images.length - 1) setCurrentIndex(i => i + 1);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = '';
+    };
+  }, [currentIndex, images.length, onClose]);
+
+  return (
+    <div className="image-lightbox-overlay" onClick={onClose}>
+      <div className="image-lightbox-container" onClick={e => e.stopPropagation()}>
+        {currentImage?.previewUrl && (
+          <img src={currentImage.previewUrl} alt={currentImage.name} draggable={false} />
+        )}
+      </div>
+      <button className="image-lightbox-close" onClick={onClose}><X size={20} /></button>
+      {images.length > 1 && currentIndex > 0 && (
+        <button className="image-lightbox-nav prev" onClick={(e) => { e.stopPropagation(); setCurrentIndex(i => i - 1); }}>
+          <ChevronLeft size={24} />
+        </button>
+      )}
+      {images.length > 1 && currentIndex < images.length - 1 && (
+        <button className="image-lightbox-nav next" onClick={(e) => { e.stopPropagation(); setCurrentIndex(i => i + 1); }}>
+          <ChevronRight size={24} />
+        </button>
+      )}
+      <div className="image-lightbox-name">
+        {currentImage?.name} ({currentIndex + 1}/{images.length})
       </div>
     </div>
   );
 }
 
 /* ========== Inbox Modal ========== */
-function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
+function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClose, onRefresh, onNavigateToProject }) {
   const [expandedProject, setExpandedProject] = useState(null);
   const [images, setImages] = useState({});
   const [loadingImages, setLoadingImages] = useState({});
@@ -244,6 +374,104 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
   // Track images marked for deletion per folder (red entries)
   const [markedForDeletion, setMarkedForDeletion] = useState({});
   const hasChangesRef = useRef(false);
+  // Local copy of deleteRequests for optimistic (instant) removal
+  const [localDeleteRequests, setLocalDeleteRequests] = useState(deleteRequests);
+  // Track which delete request group is expanded
+  const [expandedDeleteGroup, setExpandedDeleteGroup] = useState(null);
+  // Track whether the entire delete requests section is expanded (collapsed by default)
+  const [deletesSectionExpanded, setDeletesSectionExpanded] = useState(false);
+  // Project changes state
+  const [localProjectChanges, setLocalProjectChanges] = useState(projectChanges);
+  const [projectChangesSectionExpanded, setProjectChangesSectionExpanded] = useState(true);
+  const [expandedProjectChange, setExpandedProjectChange] = useState(null);
+  const [projectChangeLightbox, setProjectChangeLightbox] = useState(null);
+  // Track lightbox for delete request images
+  const [deletePreviewLightbox, setDeletePreviewLightbox] = useState(null);
+
+  useEffect(() => setLocalDeleteRequests(deleteRequests), [deleteRequests]);
+  useEffect(() => setLocalProjectChanges(projectChanges), [projectChanges]);
+
+  /** Trigger project sync + image refresh in background after confirmation actions */
+  const triggerBackgroundSync = () => {
+    fetch('/api/projects/sync', { method: 'POST' }).catch(() => {});
+    fetch('/api/drive/images/refresh', { method: 'POST' }).catch(() => {});
+  };
+
+  /** Confirm project changes: download new images locally */
+  const handleConfirmProjectChanges = async (change) => {
+    const key = `pc_${change.project_name}`;
+    setProcessing(prev => ({ ...prev, [key]: 'confirming' }));
+    try {
+      const fileIds = change.new_images.map(img => img.id);
+      const response = await fetch('/api/mobile/project-changes/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectName: change.project_name, fileIds }),
+      });
+      if (response.ok) {
+        hasChangesRef.current = true;
+        const data = await response.json();
+        showNotification(data.message);
+        setLocalProjectChanges(prev => prev.filter(c => c.project_name !== change.project_name));
+        triggerBackgroundSync();
+        await onRefresh();
+      } else {
+        const data = await response.json();
+        showNotification(data.error || 'Fehler', 'error');
+      }
+    } catch (e) {
+      showNotification('Fehler: ' + e.message, 'error');
+    } finally {
+      setProcessing(prev => ({ ...prev, [key]: null }));
+    }
+  };
+
+  /** Reject project changes: delete new images from Drive */
+  const handleRejectProjectChanges = async (change) => {
+    if (!window.confirm(`${change.new_images.length} neue Bilder aus "${change.project_name}" wirklich löschen?`)) return;
+    const key = `pc_${change.project_name}`;
+    setProcessing(prev => ({ ...prev, [key]: 'deleting' }));
+    try {
+      const fileIds = change.new_images.map(img => img.id);
+      const response = await fetch('/api/mobile/project-changes/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectName: change.project_name, fileIds }),
+      });
+      if (response.ok) {
+        hasChangesRef.current = true;
+        const data = await response.json();
+        showNotification(data.message);
+        setLocalProjectChanges(prev => prev.filter(c => c.project_name !== change.project_name));
+        await onRefresh();
+      } else {
+        const data = await response.json();
+        showNotification(data.error || 'Fehler', 'error');
+      }
+    } catch (e) {
+      showNotification('Fehler: ' + e.message, 'error');
+    } finally {
+      setProcessing(prev => ({ ...prev, [key]: null }));
+    }
+  };
+
+  /** View project: close modal and navigate to Projekte tab, opening the project modal */
+  const handleViewProject = (change) => {
+    if (onNavigateToProject) {
+      onNavigateToProject(change.project_name);
+    }
+  };
+
+  // Group delete requests by project name
+  const groupedDeleteRequests = useMemo(() => {
+    const groups = {};
+    localDeleteRequests.forEach(req => {
+      const key = req.project_name || '__no_project__';
+      if (!groups[key]) groups[key] = { name: req.project_name, items: [] };
+      groups[key].items.push(req);
+    });
+    return Object.values(groups);
+  }, [localDeleteRequests]);
 
   const handleClose = useCallback(() => {
     if (hasChangesRef.current) {
@@ -252,6 +480,16 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
     }
     onClose();
   }, [onClose]);
+
+  // Auto-close modal when all items have been processed
+  useEffect(() => {
+    if (!hasChangesRef.current) return;
+    const totalItems = projects.length + localDeleteRequests.length + localProjectChanges.length;
+    if (totalItems === 0) {
+      const timer = setTimeout(() => handleClose(), 1200);
+      return () => clearTimeout(timer);
+    }
+  }, [projects, localDeleteRequests, localProjectChanges, handleClose]);
 
   useEffect(() => {
     loadExistingProjects();
@@ -418,6 +656,7 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
       if (response.ok) {
         hasChangesRef.current = true;
         showNotification(`"${item.project_name}" in Projekte verschoben`);
+        triggerBackgroundSync();
         await onRefresh();
       } else {
         const data = await response.json();
@@ -453,6 +692,7 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
         // Clear image cache
         setImages(prev => { const next = { ...prev }; delete next[folderId]; return next; });
         setSelectedImages(prev => { const next = { ...prev }; delete next[folderId]; return next; });
+        triggerBackgroundSync();
         await onRefresh();
       } else {
         const data = await response.json();
@@ -484,6 +724,7 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
         const data = await response.json();
         showNotification(`${data.movedCount} Bilder mit "${targetProject.folder_name}" zusammengeführt`);
         setMergeTarget(null);
+        triggerBackgroundSync();
         await onRefresh();
       } else {
         const data = await response.json();
@@ -531,6 +772,7 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
           delete next[inboxItem.drive_folder_id];
           return next;
         });
+        triggerBackgroundSync();
         await onRefresh();
       } else {
         const data = await response.json();
@@ -563,51 +805,57 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
     }
   };
 
-  /** Process delete requests (actually delete files) */
-  const handleProcessDeleteRequests = async (requestIds) => {
-    setProcessing(prev => ({ ...prev, delete_requests: 'processing' }));
-    try {
-      const response = await fetch('/api/mobile/inbox/process-delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestIds }),
-      });
-      const data = await response.json();
-      if (response.ok) {
+  /** Process delete requests (fire-and-forget: instant UI update, background API) */
+  const handleProcessDeleteRequests = (requestIds) => {
+    // Optimistic: remove from UI immediately
+    setLocalDeleteRequests(prev => prev.filter(r => !requestIds.includes(r.id)));
+    showNotification(`${requestIds.length} ${requestIds.length === 1 ? 'Bild wird' : 'Bilder werden'} gelöscht...`);
+
+    // Fire API in background
+    fetch('/api/mobile/inbox/process-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestIds }),
+    })
+    .then(async res => {
+      const data = await res.json();
+      if (res.ok) {
         hasChangesRef.current = true;
-        showNotification(data.message || `${data.deletedCount} Bilder gelöscht`);
-        await onRefresh();
+        showNotification(data.message || 'Gelöscht');
       } else {
         showNotification(data.error || 'Fehler beim Löschen', 'error');
       }
-    } catch (e) {
+      onRefresh();
+    })
+    .catch(e => {
       showNotification('Fehler: ' + e.message, 'error');
-    } finally {
-      setProcessing(prev => ({ ...prev, delete_requests: null }));
-    }
+      onRefresh();
+    });
   };
 
-  /** Dismiss delete requests (keep files, remove requests) */
-  const handleDismissDeleteRequests = async (requestIds) => {
-    setProcessing(prev => ({ ...prev, delete_requests: 'dismissing' }));
-    try {
-      const response = await fetch('/api/mobile/inbox/dismiss-delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestIds }),
-      });
-      if (response.ok) {
-        showNotification('Löschanfragen verworfen');
-        await onRefresh();
-      } else {
-        const data = await response.json();
+  /** Dismiss delete requests (fire-and-forget: instant UI update) */
+  const handleDismissDeleteRequests = (requestIds) => {
+    // Optimistic: remove from UI immediately
+    setLocalDeleteRequests(prev => prev.filter(r => !requestIds.includes(r.id)));
+    showNotification('Löschanfragen verworfen');
+
+    // Fire API in background
+    fetch('/api/mobile/inbox/dismiss-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestIds }),
+    })
+    .then(async res => {
+      if (!res.ok) {
+        const data = await res.json();
         showNotification(data.error || 'Fehler', 'error');
       }
-    } catch (e) {
+      onRefresh();
+    })
+    .catch(e => {
       showNotification('Fehler: ' + e.message, 'error');
-    } finally {
-      setProcessing(prev => ({ ...prev, delete_requests: null }));
-    }
+      onRefresh();
+    });
   };
 
   const showNotification = (message, type = 'success') => {
@@ -660,7 +908,7 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
               <div className="pending-project-meta">
                 <Image size={12} />
                 {project.image_count || 0} {(project.image_count || 0) === 1 ? 'Bild' : 'Bilder'}
-                {isUserInbox && selectedCount < totalCount && totalCount > 0 && (
+                {selectedCount < totalCount && totalCount > 0 && (
                   <span className="pending-selection-count">
                     · {selectedCount} ausgewählt
                   </span>
@@ -693,7 +941,7 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
                   title={isUserInbox ? 'Ausgewählte Bilder einem Projekt zuordnen' : 'Mit bestehendem Projekt zusammenführen'}
                 >
                   <GitMerge size={16} />
-                  Zusammenführen{isUserInbox && selectedCount > 0 ? ` (${selectedCount})` : ''}
+                  Zusammenführen{selectedCount > 0 ? ` (${selectedCount})` : ''}
                 </button>
                 {isUserInbox && project.drive_folder_id && (
                   <button
@@ -723,7 +971,7 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
         {/* Merge picker */}
         {mergeTarget?.id === project.id && (
           <div className="pending-merge-section">
-            {isUserInbox && selectedCount === 0 && (
+            {selectedCount === 0 && (
               <div className="pending-merge-hint">
                 Bitte mindestens ein Bild unten auswählen
               </div>
@@ -743,10 +991,7 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
                 <div
                   key={ep.id}
                   className="pending-merge-item"
-                  onClick={() => isUserInbox
-                    ? handleSelectiveMerge(project, ep)
-                    : handleMerge(project, ep)
-                  }
+                  onClick={() => handleSelectiveMerge(project, ep)}
                 >
                   <div
                     className="pending-merge-color"
@@ -785,50 +1030,44 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
               </div>
             ) : folderImages.length > 0 ? (
               <>
-                {(isUserInbox || deleteCount > 0) && (
-                  <div className="pending-images-toolbar">
-                    {isUserInbox && (
-                      <button
-                        className="btn-select-all"
-                        onClick={() => selectedCount === totalCount ? deselectAllImages(folderId) : selectAllImages(folderId)}
-                      >
-                        {selectedCount === totalCount ? <CheckSquare size={14} /> : <Square size={14} />}
-                        {selectedCount === totalCount ? 'Alle abwählen' : 'Alle auswählen'}
-                      </button>
-                    )}
-                    <span className="pending-images-count">
-                      {isUserInbox && <>{selectedCount} / {totalCount} ausgewählt</>}
-                      {deleteCount > 0 && isUserInbox && ' · '}
-                      {deleteCount > 0 && <span className="delete-count-label">{deleteCount} zum Löschen</span>}
-                    </span>
-                    {deleteCount > 0 && (
-                      <button
-                        className="btn-delete-marked"
-                        onClick={() => handleDeleteMarked(folderId, project)}
-                      >
-                        <Trash2 size={14} />
-                        Löschen bestätigen
-                      </button>
-                    )}
-                  </div>
-                )}
+                <div className="pending-images-toolbar">
+                  <button
+                    className="btn-select-all"
+                    onClick={() => selectedCount === totalCount ? deselectAllImages(folderId) : selectAllImages(folderId)}
+                  >
+                    {selectedCount === totalCount ? <CheckSquare size={14} /> : <Square size={14} />}
+                    {selectedCount === totalCount ? 'Alle abwählen' : 'Alle auswählen'}
+                  </button>
+                  <span className="pending-images-count">
+                    {selectedCount} / {totalCount} ausgewählt
+                    {deleteCount > 0 && ' · '}
+                    {deleteCount > 0 && <span className="delete-count-label">{deleteCount} zum Löschen</span>}
+                  </span>
+                  {deleteCount > 0 && (
+                    <button
+                      className="btn-delete-marked"
+                      onClick={() => handleDeleteMarked(folderId, project)}
+                    >
+                      <Trash2 size={14} />
+                      Löschen bestätigen
+                    </button>
+                  )}
+                </div>
                 <div className="pending-images-grid">
                   {folderImages.map((img, idx) => {
                     const isSelected = selected.has(img.id);
                     const isMarkedDelete = deleteMarked.has(img.id);
                     const cardClass = isMarkedDelete
-                      ? `pending-image-card marked-delete${isUserInbox ? ' selectable' : ''}`
-                      : `pending-image-card ${isUserInbox ? (isSelected ? 'selectable selected' : 'selectable') : ''}`;
+                      ? 'pending-image-card marked-delete selectable'
+                      : `pending-image-card selectable${isSelected ? ' selected' : ''}`;
                     return (
                       <div
                         key={img.id}
                         className={cardClass}
-                        title={img.name}
+                        title={parseFuchsMeta(img.description)?.title || img.name}
                         onClick={isMarkedDelete
                           ? () => toggleDeleteMark(folderId, img.id)
-                          : isUserInbox
-                            ? () => toggleImageSelection(folderId, img.id)
-                            : () => openLightbox(folderId, idx)
+                          : () => openLightbox(folderId, idx)
                         }
                       >
                         {img.id ? (
@@ -838,8 +1077,11 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
                             <Image size={24} />
                           </div>
                         )}
-                        {isUserInbox && !isMarkedDelete && (
-                          <div className={`pending-image-checkbox ${isSelected ? 'checked' : ''}`}>
+                        {!isMarkedDelete && (
+                          <div
+                            className={`pending-image-checkbox ${isSelected ? 'checked' : ''}`}
+                            onClick={(e) => { e.stopPropagation(); toggleImageSelection(folderId, img.id); }}
+                          >
                             {isSelected ? <CheckSquare size={18} /> : <Square size={18} />}
                           </div>
                         )}
@@ -848,7 +1090,7 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
                             <Trash2 size={16} />
                           </div>
                         )}
-                        <div className={`pending-image-name${isMarkedDelete ? ' delete-name' : ''}`}>{img.name}</div>
+                        <div className={`pending-image-name${isMarkedDelete ? ' delete-name' : ''}`}>{parseFuchsMeta(img.description)?.title || img.name}</div>
                         <button
                           className={`pending-image-delete-toggle ${isMarkedDelete ? 'active' : ''}`}
                           onClick={(e) => { e.stopPropagation(); toggleDeleteMark(folderId, img.id); }}
@@ -856,15 +1098,6 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
                         >
                           <Trash2 size={12} />
                         </button>
-                        {isUserInbox && !isMarkedDelete && (
-                          <button
-                            className="pending-image-zoom"
-                            onClick={(e) => { e.stopPropagation(); openLightbox(folderId, idx); }}
-                            title="Vergrößern"
-                          >
-                            <Search size={12} />
-                          </button>
-                        )}
                       </div>
                     );
                   })}
@@ -896,88 +1129,256 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
         )}
 
         <div className="pending-modal-body">
-          {/* Delete Requests Section */}
-          {deleteRequests.length > 0 && (
-            <div className="delete-requests-section">
-              <div className="delete-requests-header">
+          {/* Delete Requests Section - collapsed by default, user must click to expand */}
+          {localDeleteRequests.length > 0 && (() => {
+            const uniqueRequesters = [...new Set(localDeleteRequests.map(r => r.requested_by).filter(Boolean))];
+            const requesterText = uniqueRequesters.length > 0
+              ? `von ${uniqueRequesters.join(', ')}`
+              : '';
+            return (
+            <div className={`delete-requests-section ${deletesSectionExpanded ? 'expanded' : 'collapsed'}`}>
+              <div
+                className="delete-requests-header"
+                onClick={() => setDeletesSectionExpanded(!deletesSectionExpanded)}
+                style={{ cursor: 'pointer' }}
+              >
                 <Trash2 size={16} />
-                <span>Löschanfragen vom Handy ({deleteRequests.length})</span>
-                <div className="delete-requests-actions">
-                  <button
-                    className="btn-pending btn-accept btn-small"
-                    onClick={() => handleProcessDeleteRequests(deleteRequests.map(r => r.id))}
-                    disabled={processing.delete_requests}
-                    title="Alle löschen"
-                  >
-                    <Trash2 size={14} />
-                    Alle löschen
-                  </button>
-                  <button
-                    className="btn-pending btn-dismiss btn-small"
-                    onClick={() => handleDismissDeleteRequests(deleteRequests.map(r => r.id))}
-                    disabled={processing.delete_requests}
-                    title="Anfragen verwerfen (Bilder behalten)"
-                  >
-                    <X size={14} />
-                    Verwerfen
-                  </button>
-                </div>
+                <span>{localDeleteRequests.length} {localDeleteRequests.length === 1 ? 'Löschanfrage' : 'Löschanfragen'} {requesterText}</span>
+                {deletesSectionExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
               </div>
-              <div className="delete-requests-list">
-                {deleteRequests.map(req => (
-                  <div key={req.id} className="delete-request-item">
-                    <div className="delete-request-info">
-                      <Image size={14} />
-                      <span className="delete-request-filename">{req.file_name}</span>
-                      {req.project_name ? (
-                        <span className="delete-request-project">
-                          <FolderOpen size={12} />
-                          {req.project_name}
-                        </span>
-                      ) : (
-                        <span className="delete-request-no-project">Kein Projekt</span>
-                      )}
-                    </div>
-                    <div className="delete-request-meta">
-                      <span className="delete-request-by">{req.requested_by}</span>
-                      <span className="delete-request-date">
-                        {new Date(req.requested_at).toLocaleDateString('de-DE', {
-                          day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
-                        })}
-                      </span>
-                    </div>
-                    <div className="delete-request-item-actions">
-                      <button
-                        className="btn-pending btn-delete btn-icon"
-                        onClick={() => handleProcessDeleteRequests([req.id])}
-                        disabled={processing.delete_requests}
-                        title="Bild löschen"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                      <button
-                        className="btn-pending btn-dismiss btn-icon"
-                        onClick={() => handleDismissDeleteRequests([req.id])}
-                        disabled={processing.delete_requests}
-                        title="Anfrage verwerfen"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
+
+              {deletesSectionExpanded && (
+                <>
+                  <div className="delete-requests-bulk-actions">
+                    <button
+                      className="btn-pending btn-accept btn-small"
+                      onClick={() => handleProcessDeleteRequests(localDeleteRequests.map(r => r.id))}
+                      title="Alle löschen"
+                    >
+                      <Trash2 size={14} />
+                      Alle löschen
+                    </button>
+                    <button
+                      className="btn-pending btn-dismiss btn-small"
+                      onClick={() => handleDismissDeleteRequests(localDeleteRequests.map(r => r.id))}
+                      title="Anfragen verwerfen (Bilder behalten)"
+                    >
+                      <X size={14} />
+                      Verwerfen
+                    </button>
                   </div>
-                ))}
+
+                  {groupedDeleteRequests.map(group => {
+                    const isExpanded = expandedDeleteGroup === (group.name || '__no_project__');
+                    const groupKey = group.name || '__no_project__';
+                    const groupRequesters = [...new Set(group.items.map(r => r.requested_by).filter(Boolean))];
+                    return (
+                      <div key={groupKey} className="delete-group">
+                        <div
+                          className="delete-group-header"
+                          onClick={() => setExpandedDeleteGroup(isExpanded ? null : groupKey)}
+                        >
+                          <FolderOpen size={16} />
+                          <span className="delete-group-name">{group.name || 'Kein Projekt'}</span>
+                          <span className="delete-group-count">
+                            {group.items.length} {group.items.length === 1 ? 'Bild' : 'Bilder'}
+                            {groupRequesters.length > 0 && <span className="delete-group-requester"> — Löschanfrage von {groupRequesters.join(', ')}</span>}
+                          </span>
+                          <div className="delete-group-actions">
+                            <button
+                              className="btn-pending btn-delete btn-icon"
+                              onClick={(e) => { e.stopPropagation(); handleProcessDeleteRequests(group.items.map(r => r.id)); }}
+                              title="Alle in dieser Gruppe löschen"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                            <button
+                              className="btn-pending btn-dismiss btn-icon"
+                              onClick={(e) => { e.stopPropagation(); handleDismissDeleteRequests(group.items.map(r => r.id)); }}
+                              title="Gruppe verwerfen"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                          {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </div>
+
+                        {isExpanded && (
+                          <div className="delete-group-images">
+                            <div className="pending-images-grid">
+                              {group.items.map((req, idx) => {
+                                const previewUrl = group.name
+                                  ? `/api/mobile/inbox/delete-preview/${encodeURIComponent(group.name)}/${encodeURIComponent(req.file_name)}`
+                                  : null;
+                                return (
+                                  <div key={req.id} className="pending-image-card marked-delete delete-preview-card">
+                                    {previewUrl ? (
+                                      <img
+                                        src={previewUrl}
+                                        alt={req.file_name}
+                                        onClick={() => setDeletePreviewLightbox({
+                                          images: group.items.map(r => ({
+                                            id: null,
+                                            name: r.file_name,
+                                            previewUrl: `/api/mobile/inbox/delete-preview/${encodeURIComponent(group.name)}/${encodeURIComponent(r.file_name)}`,
+                                          })),
+                                          startIndex: idx,
+                                        })}
+                                      />
+                                    ) : (
+                                      <div className="pending-image-placeholder">
+                                        <Image size={24} />
+                                      </div>
+                                    )}
+                                    <div className="pending-image-name delete-name">{req.file_name}</div>
+                                    <div className="delete-preview-meta">
+                                      <span>Löschanfrage von {req.requested_by}</span>
+                                      <span>
+                                        {new Date(req.requested_at).toLocaleDateString('de-DE', {
+                                          day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+                                        })}
+                                      </span>
+                                    </div>
+                                    <div className="delete-preview-actions">
+                                      <button
+                                        className="btn-pending btn-delete btn-icon"
+                                        onClick={(e) => { e.stopPropagation(); handleProcessDeleteRequests([req.id]); }}
+                                        title="Löschen"
+                                      >
+                                        <Trash2 size={12} />
+                                      </button>
+                                      <button
+                                        className="btn-pending btn-dismiss btn-icon"
+                                        onClick={(e) => { e.stopPropagation(); handleDismissDeleteRequests([req.id]); }}
+                                        title="Verwerfen"
+                                      >
+                                        <X size={12} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+            );
+          })()}
+
+          {/* Project Changes Section - new images uploaded to existing projects */}
+          {localProjectChanges.length > 0 && (
+            <div className={`project-changes-section ${projectChangesSectionExpanded ? 'expanded' : 'collapsed'}`}>
+              <div
+                className="project-changes-header"
+                onClick={() => setProjectChangesSectionExpanded(!projectChangesSectionExpanded)}
+                style={{ cursor: 'pointer' }}
+              >
+                <Plus size={16} />
+                <span>
+                  {localProjectChanges.reduce((sum, c) => sum + c.new_images.length, 0)} neue Bilder in {localProjectChanges.length} {localProjectChanges.length === 1 ? 'Projekt' : 'Projekten'}
+                </span>
+                {projectChangesSectionExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
               </div>
-              {processing.delete_requests && (
-                <div className="delete-requests-processing">
-                  <Loader size={16} className="spinning" />
-                  <span>{processing.delete_requests === 'processing' ? 'Wird gelöscht...' : 'Wird verworfen...'}</span>
+
+              {projectChangesSectionExpanded && (
+                <div className="project-changes-list">
+                  {localProjectChanges.map(change => {
+                    const key = `pc_${change.project_name}`;
+                    const isExpanded = expandedProjectChange === change.project_name;
+                    return (
+                      <div key={change.project_name} className="project-change-card">
+                        <div
+                          className="project-change-card-header"
+                          onClick={() => setExpandedProjectChange(isExpanded ? null : change.project_name)}
+                        >
+                          <div className="project-change-info">
+                            <div
+                              className="project-change-color"
+                              style={{ backgroundColor: change.project_color || '#3b82f6' }}
+                            />
+                            <div>
+                              <div className="project-change-name">{change.project_name}</div>
+                              <div className="project-change-meta">
+                                <Image size={12} />
+                                {change.new_images.length} neue {change.new_images.length === 1 ? 'Bild' : 'Bilder'}
+                                <span className="project-change-existing">
+                                  ({change.total_local_images} lokal / {change.total_drive_images} auf Drive)
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="project-change-actions">
+                            {processing[key] ? (
+                              <Loader size={18} className="spinning" />
+                            ) : (
+                              <>
+                                <button
+                                  className="btn-pending btn-accept"
+                                  onClick={(e) => { e.stopPropagation(); handleConfirmProjectChanges(change); }}
+                                  title="Bilder herunterladen und bestätigen"
+                                >
+                                  <Check size={16} />
+                                  Bestätigen
+                                </button>
+                                <button
+                                  className="btn-pending btn-delete"
+                                  onClick={(e) => { e.stopPropagation(); handleRejectProjectChanges(change); }}
+                                  title="Bilder ablehnen und von Drive löschen"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                                <button
+                                  className="btn-pending btn-view"
+                                  onClick={(e) => { e.stopPropagation(); handleViewProject(change); }}
+                                  title="Projekt anzeigen"
+                                >
+                                  <Eye size={16} />
+                                  Anzeigen
+                                </button>
+                              </>
+                            )}
+                            {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                          </div>
+                        </div>
+
+                        {isExpanded && (
+                          <div className="project-change-images">
+                            <div className="pending-images-grid">
+                              {change.new_images.map((img, idx) => (
+                                <div
+                                  key={img.id}
+                                  className="pending-image-card project-change-image"
+                                  title={parseFuchsMeta(img.description)?.title || img.name}
+                                  onClick={() => setProjectChangeLightbox({
+                                    images: change.new_images,
+                                    startIndex: idx,
+                                  })}
+                                >
+                                  <img
+                                    src={`/api/mobile/project-changes/image-proxy/${img.id}`}
+                                    alt={img.name}
+                                  />
+                                  <div className="pending-image-name">{parseFuchsMeta(img.description)?.title || img.name}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
           )}
 
           {/* Upload Projects */}
-          {projects.length === 0 && deleteRequests.length === 0 ? (
+          {projects.length === 0 && localDeleteRequests.length === 0 && localProjectChanges.length === 0 ? (
             <div className="pending-empty">
               <Inbox size={48} strokeWidth={1} />
               <p>Keine neuen Uploads in der Inbox</p>
@@ -993,6 +1394,23 @@ function InboxModal({ projects, deleteRequests = [], onClose, onRefresh }) {
           images={lightbox.images}
           startIndex={lightbox.startIndex}
           onClose={() => setLightbox(null)}
+        />
+      )}
+
+      {deletePreviewLightbox && (
+        <DeletePreviewLightbox
+          images={deletePreviewLightbox.images}
+          startIndex={deletePreviewLightbox.startIndex}
+          onClose={() => setDeletePreviewLightbox(null)}
+        />
+      )}
+
+      {projectChangeLightbox && (
+        <ImageLightbox
+          images={projectChangeLightbox.images}
+          startIndex={projectChangeLightbox.startIndex}
+          onClose={() => setProjectChangeLightbox(null)}
+          imageUrlFn={(img) => `/api/mobile/project-changes/image-proxy/${img.id}`}
         />
       )}
     </div>

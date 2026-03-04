@@ -21,6 +21,23 @@ export const storeTokens = async (accessToken, refreshToken, expiresIn) => {
 };
 
 /**
+ * Store which OAuth scope was granted (e.g. 'drive' vs 'drive.file')
+ */
+export const storeGrantedScope = async (scopeString) => {
+  await setSetting('grantedScope', scopeString);
+};
+
+/**
+ * Check if the token has full Drive access (not just drive.file)
+ */
+export const hasFullDriveScope = async () => {
+  const scope = await getSetting('grantedScope');
+  if (!scope) return false;
+  const scopes = scope.split(' ');
+  return scopes.includes('https://www.googleapis.com/auth/drive');
+};
+
+/**
  * Get a valid access token (refreshes automatically if expired)
  * Uses the backend OAuth proxy for refresh since Web-type client IDs require client_secret.
  */
@@ -75,15 +92,19 @@ export const getAccessToken = async () => {
 const refreshAccessToken = async (refreshToken) => {
   const clientId = await getGoogleClientId();
   if (!clientId) throw new Error('Keine Google Client ID konfiguriert');
+  const clientSecret = await getSetting('googleClientSecret');
+
+  const params = [
+    'grant_type=refresh_token',
+    `refresh_token=${encodeURIComponent(refreshToken)}`,
+    `client_id=${encodeURIComponent(clientId)}`,
+  ];
+  if (clientSecret) params.push(`client_secret=${encodeURIComponent(clientSecret)}`);
 
   const response = await fetch(TOKEN_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: [
-      'grant_type=refresh_token',
-      `refresh_token=${encodeURIComponent(refreshToken)}`,
-      `client_id=${encodeURIComponent(clientId)}`,
-    ].join('&'),
+    body: params.join('&'),
   });
 
   if (!response.ok) {
@@ -103,16 +124,20 @@ const refreshAccessToken = async (refreshToken) => {
 export const exchangeCodeForTokens = async (code, redirectUri) => {
   const clientId = await getGoogleClientId();
   if (!clientId) throw new Error('Keine Google Client ID konfiguriert');
+  const clientSecret = await getSetting('googleClientSecret');
+
+  const params = [
+    'grant_type=authorization_code',
+    `code=${encodeURIComponent(code)}`,
+    `client_id=${encodeURIComponent(clientId)}`,
+    `redirect_uri=${encodeURIComponent(redirectUri)}`,
+  ];
+  if (clientSecret) params.push(`client_secret=${encodeURIComponent(clientSecret)}`);
 
   const response = await fetch(TOKEN_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: [
-      'grant_type=authorization_code',
-      `code=${encodeURIComponent(code)}`,
-      `client_id=${encodeURIComponent(clientId)}`,
-      `redirect_uri=${encodeURIComponent(redirectUri)}`,
-    ].join('&'),
+    body: params.join('&'),
   });
 
   if (!response.ok) {

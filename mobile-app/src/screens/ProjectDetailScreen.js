@@ -1,8 +1,9 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, Image,
-  Dimensions, RefreshControl, ActivityIndicator, Alert,
+  Dimensions, RefreshControl, ActivityIndicator,
 } from 'react-native';
+import { useDialog } from '../components/CustomDialog';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -14,6 +15,7 @@ const NUM_COLUMNS = 3;
 const IMAGE_SIZE = (SCREEN_WIDTH - 32 - (NUM_COLUMNS - 1) * 4) / NUM_COLUMNS;
 
 export default function ProjectDetailScreen({ navigation, route }) {
+  const { alert } = useDialog();
   const { projectId, projectName, projectFolderId } = route.params;
   const [images, setImages] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -64,11 +66,11 @@ export default function ProjectDetailScreen({ navigation, route }) {
 
   const handleSyncImages = async () => {
     if (images.length === 0) {
-      Alert.alert('Keine Bilder', 'Dieses Projekt hat noch keine Bilder zum Herunterladen.');
+      alert('Keine Bilder', 'Dieses Projekt hat noch keine Bilder zum Herunterladen.');
       return;
     }
 
-    Alert.alert(
+    alert(
       'Bilder herunterladen',
       `${images.length} ${images.length === 1 ? 'Bild' : 'Bilder'} aus "${projectName}" herunterladen?`,
       [
@@ -91,12 +93,12 @@ export default function ProjectDetailScreen({ navigation, route }) {
         }
       );
 
-      Alert.alert(
+      alert(
         'Download abgeschlossen',
         `${downloaded} von ${images.length} Bildern heruntergeladen.`
       );
     } catch (error) {
-      Alert.alert('Fehler', 'Download fehlgeschlagen: ' + error.message);
+      alert('Fehler', 'Download fehlgeschlagen: ' + error.message);
     } finally {
       setSyncing(false);
       setSyncProgress('');

@@ -97,6 +97,20 @@ export const readJsonFileByName = async (folderId, fileName) => {
 };
 
 /**
+ * Get the parent folder IDs of a file/folder
+ */
+export const getFileParents = async (fileId) => {
+  const headers = await getHeaders();
+  const response = await fetch(
+    `${DRIVE_API}/files/${fileId}?fields=parents`,
+    { headers }
+  );
+  if (!response.ok) return [];
+  const data = await response.json();
+  return data.parents || [];
+};
+
+/**
  * Get file metadata
  */
 export const getFileMetadata = async (fileId) => {
@@ -117,11 +131,14 @@ export const getFileMetadata = async (fileId) => {
 /**
  * Upload a file to Drive using resumable upload (good for large files)
  */
-export const uploadFile = async (folderId, fileName, fileUri, mimeType = 'image/jpeg') => {
+export const uploadFile = async (folderId, fileName, fileUri, mimeType = 'image/jpeg', description = null) => {
   const token = await getAccessToken();
   if (!token) throw new Error('Nicht mit Google angemeldet');
 
   // Step 1: Initiate resumable upload
+  const metadata = { name: fileName, parents: [folderId] };
+  if (description) metadata.description = description;
+
   const initResponse = await fetch(
     `${DRIVE_UPLOAD_API}/files?uploadType=resumable&fields=id,name,size`,
     {
@@ -130,10 +147,7 @@ export const uploadFile = async (folderId, fileName, fileUri, mimeType = 'image/
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json; charset=UTF-8',
       },
-      body: JSON.stringify({
-        name: fileName,
-        parents: [folderId],
-      }),
+      body: JSON.stringify(metadata),
     }
   );
 
@@ -316,6 +330,20 @@ export const getThumbnailSource = async (thumbnailLink) => {
 // ============================================================
 // Connection Check
 // ============================================================
+
+/**
+ * Delete a file or folder from Drive (permanently)
+ */
+export const deleteFile = async (fileId) => {
+  const headers = await getHeaders();
+  const response = await fetch(`${DRIVE_API}/files/${fileId}`, {
+    method: 'DELETE',
+    headers,
+  });
+  if (!response.ok && response.status !== 204) {
+    throw new Error(`Löschen fehlgeschlagen (${response.status})`);
+  }
+};
 
 /**
  * Check if we can access a Drive folder

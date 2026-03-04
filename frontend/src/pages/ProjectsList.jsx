@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Search, Plus, Edit2, Save, X, CheckSquare, Square, ChevronLeft, ChevronRight, Trash2, Pencil, RefreshCw } from 'lucide-react';
 import ImageEditor from '../components/ImageEditor';
 import DeleteProjectModal from '../components/DeleteProjectModal';
+import DeleteImageDialog from '../components/DeleteImageDialog';
 import './ProjectsList.css';
 
 // Helper function to format SQLite timestamps (which are in UTC)
@@ -22,6 +24,8 @@ const formatSQLiteDate = (dateString) => {
 };
 
 function ProjectsList() {
+  const location = useLocation();
+  const routerNavigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [searchQuery, setSearchQuery] = useState(''); // Kombiniertes Suchfeld für Projekte + Tags
   const [loading, setLoading] = useState(false);
@@ -51,9 +55,12 @@ function ProjectsList() {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
   const [showEditor, setShowEditor] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const modalImageRef = useRef(null);
   const [showAllProjectsInSidebar, setShowAllProjectsInSidebar] = useState(false);
   const [sidebarProjectSearch, setSidebarProjectSearch] = useState('');
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [notesValue, setNotesValue] = useState('');
 
   useEffect(() => {
     loadProjects();
@@ -67,6 +74,24 @@ function ProjectsList() {
       }
     }
   }, [searchQuery]);
+
+  // Auto-sync every time the Projekte tab is opened
+  useEffect(() => {
+    handleSync();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-open project modal when navigated from InboxBanner "Anzeigen" button
+  useEffect(() => {
+    if (location.state?.openProject && projects.length > 0) {
+      const projectName = location.state.openProject;
+      const project = projects.find(p => p.folder_name === projectName);
+      if (project) {
+        handleViewProject(project);
+      }
+      // Clear the state so it doesn't re-trigger
+      routerNavigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state, projects]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadProjects = async () => {
     setLoading(true);
@@ -311,7 +336,27 @@ function ProjectsList() {
   const closeImageViewer = useCallback(() => {
     setSelectedImage(null);
     setShowEditor(false);
+    setEditingNotes(false);
   }, []);
+
+  const handleSaveNotes = async () => {
+    if (!selectedImage) return;
+    try {
+      const response = await fetch(`/api/drive/images/${selectedImage.id}/notes`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: notesValue.trim() })
+      });
+      if (response.ok) {
+        const updatedImage = await response.json();
+        setSelectedImage(updatedImage);
+        setEditingNotes(false);
+        if (viewingProject) loadProjectFiles(viewingProject.id);
+      }
+    } catch (error) {
+      console.error('Error saving notes:', error);
+    }
+  };
 
   const handleZoomIn = () => {
     setZoomLevel(prev => Math.min(prev + 0.25, 5));
@@ -469,34 +514,43 @@ function ProjectsList() {
     }
   };
 
-  // Delete image
-  const handleDeleteImage = async () => {
+  // Delete image - open dialog
+  const handleDeleteImage = () => {
     if (!selectedImage.id) {
       alert('Nur registrierte Bilder können gelöscht werden');
       return;
     }
+    setShowDeleteDialog(true);
+  };
 
-    const confirmDelete = window.confirm(
-      `Möchtest du das Bild "${selectedImage.name}" wirklich löschen?\n\nDies löscht das Bild nur aus der Datenbank, nicht vom Laufwerk.`
-    );
+  // Perform the actual delete
+  const performDelete = async (deleteFromDrive, deleteFromProjects) => {
+    const imageToDelete = selectedImage;
+    setShowDeleteDialog(false);
 
-    if (!confirmDelete) return;
+    if (!imageToDelete || !imageToDelete.id) return;
 
     try {
-      const response = await fetch(`/api/drive/images/${selectedImage.id}?deleteFromDrive=false`, {
-        method: 'DELETE'
-      });
+      const response = await fetch(
+        `/api/drive/images/${imageToDelete.id}?deleteFromDrive=${deleteFromDrive}&deleteFromProjects=${deleteFromProjects}`,
+        { method: 'DELETE' }
+      );
 
       if (response.ok) {
+        const result = await response.json();
         closeImageViewer();
         // Reload project files
         if (viewingProject) {
           loadProjectFiles(viewingProject.id);
         }
-        alert('Bild erfolgreich gelöscht');
+        if (result.driveFileNotFound) {
+          alert('Das Bild war nicht mehr auf Google Drive vorhanden. Es wurde aus der Software gelöscht.');
+        } else {
+          alert('Bild erfolgreich gelöscht');
+        }
       } else {
         const error = await response.json();
-        alert(`Fehler beim Löschen: ${error.message}`);
+        alert(`Fehler beim Löschen: ${error.message || error.error}`);
       }
     } catch (error) {
       console.error('Error deleting image:', error);
@@ -697,7 +751,11 @@ function ProjectsList() {
 
       {viewingProject && (
         <div className="modal-overlay" onClick={closeProjectModal}>
-          <div className="modal project-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="project-modal-wrapper" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-external-close" onClick={closeProjectModal} title="Schließen">
+              <X size={24} />
+            </button>
+            <div className="project-modal">
             <div className="modal-header">
               <h2>{viewingProject.folder_name}</h2>
               <div className="modal-header-actions">
@@ -708,9 +766,6 @@ function ProjectsList() {
                 >
                   <Trash2 size={16} />
                   Löschen
-                </button>
-                <button className="modal-close" onClick={closeProjectModal}>
-                  <X size={24} />
                 </button>
               </div>
             </div>
@@ -858,8 +913,22 @@ function ProjectsList() {
                         onClick={() => handleImageClick(image)}
                         style={{ cursor: 'pointer' }}
                       >
+                        {image.id && (
+                          <button
+                            className="project-image-delete-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedImage(image);
+                              setEditingName(image.name);
+                              setShowDeleteDialog(true);
+                            }}
+                            title="Bild löschen"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
                         <img src={image.url} alt={image.name} />
-                        <div className="project-image-name">{image.name}</div>
+                        <div className="project-image-name" title={image.name}>{image.name}</div>
                       </div>
                     ))}
                   </div>
@@ -884,6 +953,7 @@ function ProjectsList() {
                 )
               ) : null}
             </div>
+          </div>
           </div>
         </div>
       )}
@@ -1050,6 +1120,74 @@ function ProjectsList() {
                       </div>
                     )}
                   </div>
+
+                  {/* GPS Location */}
+                  <div className="modal-section">
+                    <label>GPS-Standort</label>
+                    {selectedImage.gps_latitude != null && selectedImage.gps_longitude != null ? (
+                      <button
+                        className="gps-map-btn"
+                        onClick={() => window.open(
+                          `https://www.google.com/maps?q=${selectedImage.gps_latitude},${selectedImage.gps_longitude}`,
+                          '_blank'
+                        )}
+                        title={`${selectedImage.gps_latitude.toFixed(6)}, ${selectedImage.gps_longitude.toFixed(6)}`}
+                      >
+                        <span className="gps-icon">📍</span>
+                        <span>Auf Google Maps öffnen</span>
+                        <span className="gps-coords">
+                          {selectedImage.gps_latitude.toFixed(5)}, {selectedImage.gps_longitude.toFixed(5)}
+                        </span>
+                      </button>
+                    ) : (
+                      <div className="detail-text" style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>
+                        Keine GPS-Daten vorhanden
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Notes */}
+                  <div className="modal-section">
+                    <div className="notes-header">
+                      <label>Notizen</label>
+                      {!editingNotes ? (
+                        <button
+                          className="notes-edit-btn"
+                          onClick={() => { setEditingNotes(true); setNotesValue(selectedImage.image_notes || ''); }}
+                          title="Notizen bearbeiten"
+                        >
+                          <Pencil size={12} />
+                        </button>
+                      ) : (
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <button className="notes-edit-btn notes-save-btn" onClick={handleSaveNotes} title="Speichern">
+                            <Save size={12} />
+                          </button>
+                          <button className="notes-edit-btn" onClick={() => setEditingNotes(false)} title="Abbrechen">
+                            <X size={12} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    {editingNotes ? (
+                      <textarea
+                        className="notes-edit-textarea"
+                        value={notesValue}
+                        onChange={(e) => setNotesValue(e.target.value)}
+                        placeholder="Notizen eingeben..."
+                        rows={3}
+                        autoFocus
+                      />
+                    ) : selectedImage.image_notes ? (
+                      <div className="image-notes-display">
+                        {selectedImage.image_notes}
+                      </div>
+                    ) : (
+                      <div className="detail-text" style={{ color: 'var(--text-tertiary)', fontStyle: 'italic', fontSize: '0.8125rem' }}>
+                        Keine Notizen
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Lower section: Project assignment */}
@@ -1209,6 +1347,15 @@ function ProjectsList() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Delete Image Dialog */}
+      {showDeleteDialog && selectedImage && (
+        <DeleteImageDialog
+          image={selectedImage}
+          onDelete={performDelete}
+          onClose={() => setShowDeleteDialog(false)}
+        />
       )}
 
       {deletingProject && (
