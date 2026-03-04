@@ -195,6 +195,17 @@ export const createProject = async (name) => {
   // Create project folder under inbox/
   const folder = await findOrCreateFolder(inboxFolderId, name);
 
+  // Write creator info so desktop inbox shows who created this project
+  try {
+    const userName = await getSetting('userName', '');
+    if (userName) {
+      await createJsonFile(folder.id, '_meta.json', {
+        created_by: userName,
+        created_at: new Date().toISOString(),
+      });
+    }
+  } catch {}
+
   return {
     success: true,
     id: folder.id,
@@ -276,10 +287,11 @@ export const uploadImage = async (fileUri, fileName, mimeType, projectId = null,
     }
   }
 
-  // Build metadata description (GPS, title, notes) to store on Drive
+  // Build metadata description (GPS, title, notes, uploader) to store on Drive
   let description = null;
   const parsedGps = gpsData ? (typeof gpsData === 'string' ? JSON.parse(gpsData) : gpsData) : null;
-  if (parsedGps || customTitle || notes) {
+  const userName = await getSetting('userName', '');
+  if (parsedGps || customTitle || notes || userName) {
     const meta = {};
     if (parsedGps) {
       meta.gps = {
@@ -290,6 +302,7 @@ export const uploadImage = async (fileUri, fileName, mimeType, projectId = null,
     }
     if (customTitle) meta.title = customTitle;
     if (notes) meta.notes = notes;
+    if (userName) meta.uploaded_by = userName;
     description = `[FUCHS_META]${JSON.stringify(meta)}`;
   }
 

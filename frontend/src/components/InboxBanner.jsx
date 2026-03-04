@@ -52,6 +52,8 @@ function InboxBanner() {
   if (totalCount === 0 && !showModal) return null;
 
   const bannerDeleteRequesters = [...new Set(deleteRequests.map(r => r.requested_by).filter(Boolean))];
+  const bannerInboxUploaders = [...new Set(inboxItems.map(i => i.device_user).filter(u => u && u !== 'Handy-App'))];
+  const bannerChangeUploaders = [...new Set(projectChanges.flatMap(c => c.uploaders || []).filter(Boolean))];
 
   return (
     <>
@@ -60,11 +62,11 @@ function InboxBanner() {
           <div className="inbox-banner-content">
             <Inbox size={18} />
             <span>
-              {inboxItems.length > 0 && `Neue Uploads von der Handy-App (${inboxItems.length})`}
+              {inboxItems.length > 0 && `Neue Uploads (${inboxItems.length})${bannerInboxUploaders.length > 0 ? ` von ${bannerInboxUploaders.join(', ')}` : ''}`}
               {inboxItems.length > 0 && (deleteRequests.length > 0 || projectChanges.length > 0) && ' · '}
               {deleteRequests.length > 0 && `${deleteRequests.length} ${deleteRequests.length === 1 ? 'Löschanfrage' : 'Löschanfragen'}${bannerDeleteRequesters.length > 0 ? ` von ${bannerDeleteRequesters.join(', ')}` : ''}`}
               {deleteRequests.length > 0 && projectChanges.length > 0 && ' · '}
-              {projectChanges.length > 0 && `${totalProjectChangeImages} neue Bilder in ${projectChanges.length} ${projectChanges.length === 1 ? 'Projekt' : 'Projekten'}`}
+              {projectChanges.length > 0 && `${totalProjectChangeImages} neue Bilder in ${projectChanges.length} ${projectChanges.length === 1 ? 'Projekt' : 'Projekten'}${bannerChangeUploaders.length > 0 ? ` von ${bannerChangeUploaders.join(', ')}` : ''}`}
             </span>
             {scanning && <Loader size={14} className="spinning" />}
           </div>
@@ -910,6 +912,12 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
             {isUserInbox ? <User size={20} /> : <FolderOpen size={20} />}
             <div>
               <div className="pending-project-name">{project.project_name}</div>
+              {!isUserInbox && project.device_user && project.device_user !== 'Handy-App' && (
+                <div className="pending-project-uploader">
+                  <User size={11} />
+                  von {project.device_user}
+                </div>
+              )}
               <div className="pending-project-meta">
                 <Image size={12} />
                 {project.image_count || 0} {(project.image_count || 0) === 1 ? 'Bild' : 'Bilder'}
@@ -1311,6 +1319,9 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
                               <div className="project-change-meta">
                                 <Image size={12} />
                                 {change.new_images.length} neue {change.new_images.length === 1 ? 'Bild' : 'Bilder'}
+                                {change.uploaders && change.uploaders.length > 0 && (
+                                  <span className="project-change-uploader">· von {change.uploaders.join(', ')}</span>
+                                )}
                                 <span className="project-change-existing">
                                   ({change.total_local_images} lokal / {change.total_drive_images} auf Drive)
                                 </span>

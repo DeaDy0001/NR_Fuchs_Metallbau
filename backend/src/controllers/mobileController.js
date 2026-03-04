@@ -1183,14 +1183,26 @@ const getInbox = async (req, res) => {
             // Get image counts for each folder
             driveInboxProjects = await Promise.all(folders.map(async (f) => {
               let image_count = 0;
+              let metaCreatedBy = null;
               try {
                 const files = await listFilesInFolder(f.id);
-                image_count = files.length;
+                // Count only actual images (exclude JSON meta files)
+                image_count = files.filter(fi => fi.mimeType && fi.mimeType.startsWith('image/')).length;
+                // Try to read _meta.json for creator info written by mobile app
+                const metaFile = files.find(fi => fi.name === '_meta.json');
+                if (metaFile) {
+                  try {
+                    const meta = await readDriveFileAsJson(metaFile.id);
+                    metaCreatedBy = meta?.created_by || null;
+                  } catch {}
+                }
               } catch {}
 
               // Detect if folder is a device inbox (UUID name) vs a project
               const isUserInbox = isDeviceIdFolder(f.name);
-              const deviceUser = isUserInbox ? (resolveDeviceUser(f.name) || 'Unbekannt') : null;
+              const deviceUser = isUserInbox
+                ? (resolveDeviceUser(f.name) || metaCreatedBy || 'Unbekannt')
+                : (metaCreatedBy || 'Handy-App');
 
               return {
                 id: `drive_inbox_${f.id}`,
@@ -1203,7 +1215,7 @@ const getInbox = async (req, res) => {
                 status: isUserInbox ? 'user_inbox' : 'new_project',
                 source: 'drive_inbox',
                 is_user_inbox: isUserInbox,
-                device_user: isUserInbox ? deviceUser : 'Handy-App',
+                device_user: deviceUser,
                 device_name: 'Google Drive',
                 uploaded_at: f.modifiedTime || new Date().toISOString(),
               };
@@ -2845,11 +2857,23 @@ const getProjectChanges = async (req, res) => {
           // Check if project exists in DB
           const project = db.prepare('SELECT id, folder_name, color FROM projects WHERE folder_name = ?').get(folder.name);
 
+          // Parse uploaders from image descriptions ([FUCHS_META]{...} format)
+          const uploaders = new Set();
+          for (const img of newImages) {
+            if (img.description && img.description.startsWith('[FUCHS_META]')) {
+              try {
+                const meta = JSON.parse(img.description.slice('[FUCHS_META]'.length));
+                if (meta.uploaded_by) uploaders.add(meta.uploaded_by);
+              } catch {}
+            }
+          }
+
           changes.push({
             project_name: folder.name,
             project_id: project?.id || null,
             project_color: project?.color || '#3b82f6',
             drive_folder_id: folder.id,
+            uploaders: [...uploaders],
             new_images: newImages.map(img => ({
               id: img.id,
               name: img.name,
