@@ -87,6 +87,10 @@ const startServer = async () => {
     const { initializeAppUpdateWatcher } = require('./services/appUpdateService');
     initializeAppUpdateWatcher();
 
+    // Ensure Drive folder structure is correct (startup + every 60 min)
+    const { initializeDriveStructureWatcher } = require('./services/driveStructureService');
+    initializeDriveStructureWatcher();
+
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`
 ╔═══════════════════════════════════════════╗
