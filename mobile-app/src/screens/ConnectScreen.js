@@ -47,41 +47,37 @@ export default function ConnectScreen() {
   };
 
   const parseQrData = (data) => {
+    const extractFields = (obj) => ({
+      name: obj.name || 'Drive-Verbindung',
+      rootFolderId: obj.rootFolderId,
+      googleClientId: obj.googleClientId || null,
+      googleClientSecret: obj.googleClientSecret || null,
+      serverUrl: obj.serverUrl || null,
+      webClientId: obj.webClientId || null,
+      webClientSecret: obj.webClientSecret || null,
+      webRedirectUri: obj.webRedirectUri || null,
+    });
+
     // Format 1: Setup URL (dual-purpose QR code - works in browser AND in app)
-    // http://192.168.x.x:3001/api/mobile/connect/setup?d=<base64url-encoded-json>
     try {
       const setupMatch = data.match(/\/api\/mobile\/connect\/setup\?d=([A-Za-z0-9_-]+)/);
       if (setupMatch) {
         const decoded = JSON.parse(atob(setupMatch[1].replace(/-/g, '+').replace(/_/g, '/')));
         if (decoded.type === 'fuchs_drive' && decoded.rootFolderId) {
-          return {
-            name: decoded.name || 'Drive-Verbindung',
-            rootFolderId: decoded.rootFolderId,
-            googleClientId: decoded.googleClientId || null,
-            googleClientSecret: decoded.googleClientSecret || null,
-            serverUrl: decoded.serverUrl || null,
-          };
+          return extractFields(decoded);
         }
       }
     } catch {}
 
-    // Format 2: JSON (from desktop software - legacy)
-    // {"type":"fuchs_drive","googleClientId":"...","rootFolderId":"...","name":"..."}
+    // Format 2: JSON (legacy)
     try {
       const parsed = JSON.parse(data);
       if (parsed.type === 'fuchs_drive' && parsed.rootFolderId) {
-        return {
-          name: parsed.name || 'Drive-Verbindung',
-          rootFolderId: parsed.rootFolderId,
-          googleClientId: parsed.googleClientId || null,
-          googleClientSecret: parsed.googleClientSecret || null,
-          serverUrl: parsed.serverUrl || null,
-        };
+        return extractFields(parsed);
       }
     } catch {}
 
     // Format 3: URL with folder ID as parameter
-    // fuchs://drive?name=Firma&root=FOLDER_ID
     try {
       if (data.startsWith('fuchs://')) {
         const url = new URL(data);
@@ -89,16 +85,15 @@ export default function ConnectScreen() {
         const name = url.searchParams.get('name') || 'Drive-Verbindung';
         const clientId = url.searchParams.get('clientId') || null;
         const serverUrl = url.searchParams.get('serverUrl') || null;
-        if (rootId) return { name, rootFolderId: rootId, googleClientId: clientId, serverUrl };
+        if (rootId) return { name, rootFolderId: rootId, googleClientId: clientId, serverUrl, webClientId: null, webClientSecret: null, webRedirectUri: null };
       }
     } catch {}
 
     // Format 4: Plain Google Drive folder URL
-    // https://drive.google.com/drive/folders/FOLDER_ID
     try {
       const match = data.match(/drive\.google\.com\/drive\/folders\/([a-zA-Z0-9_-]+)/);
       if (match) {
-        return { name: 'Google Drive', rootFolderId: match[1], googleClientId: null, serverUrl: null };
+        return { name: 'Google Drive', rootFolderId: match[1], googleClientId: null, serverUrl: null, webClientId: null, webClientSecret: null, webRedirectUri: null };
       }
     } catch {}
 
@@ -142,6 +137,11 @@ export default function ConnectScreen() {
         if (parsed.googleClientSecret) {
           await setSetting('googleClientSecret', parsed.googleClientSecret);
         }
+
+        // Store Web Application credentials for direct WebView OAuth (no server needed)
+        if (parsed.webClientId) await setSetting('webClientId', parsed.webClientId);
+        if (parsed.webClientSecret) await setSetting('webClientSecret', parsed.webClientSecret);
+        if (parsed.webRedirectUri) await setSetting('webRedirectUri', parsed.webRedirectUri);
 
         // Save the Drive connection (without meta/inbox folders - will be created after Google Sign-In)
         await addDriveConnection(parsed.name, parsed.rootFolderId);
@@ -204,6 +204,11 @@ export default function ConnectScreen() {
           await setSetting('googleClientSecret', parsed.googleClientSecret);
         }
 
+        // Update Web Application credentials for direct WebView OAuth
+        if (parsed.webClientId) await setSetting('webClientId', parsed.webClientId);
+        if (parsed.webClientSecret) await setSetting('webClientSecret', parsed.webClientSecret);
+        if (parsed.webRedirectUri) await setSetting('webRedirectUri', parsed.webRedirectUri);
+
         alert('Verbunden!', `"${connectionName}" wurde verbunden.`);
         setShowScanner(false);
 
@@ -264,13 +269,37 @@ export default function ConnectScreen() {
   // ---- Scope Upgrade: WebView OAuth to get full drive scope ----
 
   const startScopeUpgrade = async () => {
+    // Priority 1: Direct WebView OAuth (no server needed)
+    const wClientId = await getSetting('webClientId');
+    const wClientSecret = await getSetting('webClientSecret');
+    const wRedirectUri = await getSetting('webRedirectUri');
+
+    if (wClientId && wClientSecret && wRedirectUri) {
+      const scopes = [
+        'https://www.googleapis.com/auth/drive',
+        'https://www.googleapis.com/auth/userinfo.profile',
+        'https://www.googleapis.com/auth/userinfo.email',
+      ];
+      const params = new URLSearchParams({
+        client_id: wClientId,
+        redirect_uri: wRedirectUri,
+        response_type: 'code',
+        scope: scopes.join(' '),
+        access_type: 'offline',
+        prompt: 'consent',
+      });
+      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+      setScopeUpgrade({ authUrl, redirectUri: wRedirectUri, sessionId: null, serverUrl: null, direct: true, webClientId: wClientId, webClientSecret: wClientSecret });
+      return;
+    }
+
+    // Priority 2: Via server
     const serverUrl = await getSetting('serverUrl');
     if (!serverUrl) {
       alert(
         'Eingeschränkter Zugriff',
-        'Dein Login hat nur eingeschränkte Berechtigungen (drive.file statt drive).\n\n' +
-        'Für Zugriff auf freigegebene Ordner muss die Desktop-Software laufen.\n\n' +
-        'Bitte starte die Desktop-Software, scanne den QR-Code erneut und melde dich neu an.'
+        'Dein Login hat nur eingeschränkte Berechtigungen.\n\n' +
+        'Bitte scanne den QR-Code der Desktop-Software erneut, um die Verbindung zu aktualisieren.'
       );
       return;
     }
@@ -288,19 +317,14 @@ export default function ConnectScreen() {
       if (!res.ok) throw new Error(`Server-Fehler ${res.status}`);
 
       const { sessionId, authUrl, redirectUri } = await res.json();
-      setScopeUpgrade({ authUrl, redirectUri, sessionId, serverUrl });
+      setScopeUpgrade({ authUrl, redirectUri, sessionId, serverUrl, direct: false });
       setScopeUpgradeLoading(false);
     } catch (e) {
       setScopeUpgradeLoading(false);
       const reason = e.name === 'AbortError' ? 'Timeout' : e.message;
       alert(
         'Eingeschränkter Zugriff',
-        `Dein Login hat nur eingeschränkte Berechtigungen.\n\n` +
-        `Desktop-Server nicht erreichbar (${reason}).\n\n` +
-        `Bitte stelle sicher, dass:\n` +
-        `- Die Desktop-Software läuft\n` +
-        `- Handy und PC im selben WLAN sind\n` +
-        `- Windows-Firewall Port 3001 erlaubt`
+        `Desktop-Server nicht erreichbar (${reason}).\n\nBitte scanne den QR-Code erneut.`
       );
     }
   };
@@ -319,24 +343,53 @@ export default function ConnectScreen() {
       }
 
       if (code) {
-        exchangeUpgradeCode(code, scopeUpgrade.redirectUri, scopeUpgrade.serverUrl);
+        exchangeUpgradeCode(code);
       }
       return false;
     }
     return true;
   };
 
-  const exchangeUpgradeCode = async (code, redirectUri, serverUrl) => {
+  const exchangeUpgradeCode = async (code) => {
+    const { redirectUri, serverUrl, direct, webClientId: wId, webClientSecret: wSecret } = scopeUpgrade;
     setScopeUpgrade(null);
     setConnecting(true);
     try {
-      const res = await fetch(`${serverUrl}/api/mobile/auth/exchange`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, redirect_uri: redirectUri }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Token-Austausch fehlgeschlagen');
+      let data;
+
+      if (direct && wId && wSecret) {
+        // Direct exchange with Google
+        const res = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            code,
+            client_id: wId,
+            client_secret: wSecret,
+            redirect_uri: redirectUri,
+            grant_type: 'authorization_code',
+          }).toString(),
+        });
+        data = await res.json();
+        if (!res.ok) throw new Error(data.error_description || data.error || 'Token-Austausch fehlgeschlagen');
+        // Fetch user info
+        const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${data.access_token}` },
+        });
+        const userInfo = await userRes.json();
+        data.user_name = userInfo.name || '';
+        data.user_email = userInfo.email || '';
+        data.user_photo = userInfo.picture || '';
+      } else {
+        // Exchange via server
+        const res = await fetch(`${serverUrl}/api/mobile/auth/exchange`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, redirect_uri: redirectUri }),
+        });
+        data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Token-Austausch fehlgeschlagen');
+      }
 
       // Store new tokens with full drive scope
       await storeTokens(data.access_token, data.refresh_token, data.expires_in || 3600);

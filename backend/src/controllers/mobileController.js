@@ -100,6 +100,12 @@ const generateConnectToken = (req, res) => {
     const primaryAddress = selectedAddress || (networkAddresses.length > 0 ? networkAddresses[0].address : 'localhost');
     const serverUrl = `http://${primaryAddress}:${serverPort}`;
 
+    // Include Web Application credentials so mobile app can do WebView OAuth
+    // directly with Google (without needing to reach this server)
+    const webClientId = process.env.GOOGLE_CLIENT_ID || '';
+    const webClientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
+    const webRedirectUri = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/auth/google/callback';
+
     // Build QR code data as JSON for the mobile app to parse
     const qrPayload = {
       type: 'fuchs_drive',
@@ -108,6 +114,9 @@ const generateConnectToken = (req, res) => {
       rootFolderId,
       name: drivePath.name || 'Fuchs Metallbau',
       serverUrl,
+      webClientId: webClientId !== googleClientId ? webClientId : undefined,
+      webClientSecret: webClientSecret !== googleClientSecret ? webClientSecret : undefined,
+      webRedirectUri,
     };
 
     // Encode payload as base64url in a URL so:

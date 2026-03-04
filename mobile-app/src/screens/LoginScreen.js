@@ -26,6 +26,9 @@ export default function LoginScreen() {
   const [clientId, setClientId] = useState(null);
   const [clientSecret, setClientSecret] = useState(null);
   const [serverUrl, setServerUrl] = useState(null);
+  const [webClientId, setWebClientId] = useState(null);
+  const [webClientSecret, setWebClientSecret] = useState(null);
+  const [webRedirectUri, setWebRedirectUri] = useState(null);
   const [loading, setLoading] = useState(true);
   const [authLoading, setAuthLoading] = useState(false);
 
@@ -85,12 +88,17 @@ export default function LoginScreen() {
     const id = await getSetting('googleClientId');
     const secret = await getSetting('googleClientSecret');
     const url = await getSetting('serverUrl');
+    const wId = await getSetting('webClientId');
+    const wSecret = await getSetting('webClientSecret');
+    const wRedirect = await getSetting('webRedirectUri');
     console.log('[Fuchs] LoginScreen - clientId:', id ? id.substring(0, 20) + '...' : 'none');
-    console.log('[Fuchs] LoginScreen - clientSecret:', secret ? 'set' : 'none');
-    console.log('[Fuchs] LoginScreen - serverUrl:', url);
+    console.log('[Fuchs] LoginScreen - webClientId:', wId ? wId.substring(0, 20) + '...' : 'none');
     setClientId(id);
     setClientSecret(secret);
     setServerUrl(url);
+    setWebClientId(wId);
+    setWebClientSecret(wSecret);
+    setWebRedirectUri(wRedirect);
     setLoading(false);
   };
 
@@ -146,8 +154,26 @@ export default function LoginScreen() {
       .finally(() => clearTimeout(timer));
   };
 
+  /** Build a Google OAuth URL directly (no server needed) */
+  const buildDirectAuthUrl = (wClientId, wRedirect) => {
+    const scopes = [
+      'https://www.googleapis.com/auth/drive',
+      'https://www.googleapis.com/auth/userinfo.profile',
+      'https://www.googleapis.com/auth/userinfo.email',
+    ];
+    const params = new URLSearchParams({
+      client_id: wClientId,
+      redirect_uri: wRedirect,
+      response_type: 'code',
+      scope: scopes.join(' '),
+      access_type: 'offline',
+      prompt: 'consent',
+    });
+    return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+  };
+
   const startGoogleSignIn = async () => {
-    if (!clientId) {
+    if (!clientId && !webClientId) {
       alert('Fehler', 'Keine Google Client-ID konfiguriert. Bitte zuerst QR-Code scannen.');
       return;
     }
@@ -156,40 +182,43 @@ export default function LoginScreen() {
     setUserCode(null);
     setWebViewAuth(null);
 
-    // Priority 1: WebView OAuth via Desktop-Server (supports full drive scope)
-    addDebug(`serverUrl: ${serverUrl || 'NICHT GESETZT'}`);
+    // Priority 1: Direct WebView OAuth (no server needed, full drive scope)
+    // Uses Web Application client credentials from QR code
+    if (webClientId && webClientSecret && webRedirectUri) {
+      addDebug('Starte WebView OAuth (direkt, drive-Scope)');
+      const authUrl = buildDirectAuthUrl(webClientId, webRedirectUri);
+      setWebViewAuth({ authUrl, redirectUri: webRedirectUri, sessionId: null, direct: true });
+      setAuthLoading(false);
+      return;
+    }
 
+    // Priority 2: WebView OAuth via Desktop-Server
     if (serverUrl) {
       try {
-        addDebug(`Verbinde mit Server...`);
+        addDebug('Versuche Server-WebView OAuth...');
         const res = await fetchWithTimeout(`${serverUrl}/api/mobile/auth/init-login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
         });
-
         if (res.ok) {
           const { sessionId, authUrl, redirectUri } = await res.json();
-          addDebug('WebView OAuth gestartet (drive-Scope)');
-          setWebViewAuth({ authUrl, redirectUri, sessionId });
+          addDebug('WebView OAuth via Server gestartet');
+          setWebViewAuth({ authUrl, redirectUri, sessionId, direct: false });
           setAuthLoading(false);
-          return; // WebView OAuth started successfully
+          return;
         }
-        const errBody = await res.text().catch(() => '');
-        addDebug(`Server-Fehler ${res.status}: ${errBody.substring(0, 60)}`);
       } catch (e) {
-        const reason = e.name === 'AbortError' ? 'Timeout (8s)' : e.message;
-        addDebug(`Server NICHT erreichbar: ${reason}`);
+        addDebug(`Server nicht erreichbar: ${e.message?.substring(0, 30)}`);
       }
     }
 
     addDebug('Fallback: Device Flow (eingeschränkter Scope)');
 
-    // Priority 2: Device Flow (works without server, but limited drive.file scope)
+    // Priority 3: Device Flow (works without anything, but limited scope)
     try {
       const scopes = config.google.scopes;
       let result = await requestDeviceCode(scopes);
 
-      // If full scope fails, retry with limited scope
       if (!result.ok) {
         addDebug('drive-Scope abgelehnt, versuche drive.file...');
         result = await requestDeviceCode([
@@ -200,7 +229,7 @@ export default function LoginScreen() {
       }
 
       if (!result.ok) {
-        throw new Error('Google-Anmeldung konnte nicht gestartet werden. Bitte stelle sicher, dass die Desktop-Software läuft und beide Geräte im selben Netzwerk sind.');
+        throw new Error('Google-Anmeldung konnte nicht gestartet werden.');
       }
 
       const { device_code, user_code, verification_url, expires_in, interval } = result.data;
@@ -223,10 +252,7 @@ export default function LoginScreen() {
       if (isMountedRef.current) {
         setAuthLoading(false);
         setUserCode(null);
-        const hint = error.message?.includes('Network')
-          ? 'Keine Internetverbindung.\n\nBitte prüfe, ob dein Handy mit dem Internet verbunden ist (WLAN oder mobile Daten).'
-          : error.message;
-        alert('Anmeldung fehlgeschlagen', hint);
+        alert('Anmeldung fehlgeschlagen', error.message);
       }
     }
   };
@@ -377,24 +403,54 @@ export default function LoginScreen() {
   };
 
   const exchangeCodeForTokens = async (code, redirectUri) => {
+    const isDirect = webViewAuth?.direct;
     try {
       setWebViewAuth(null); // Close WebView
       setAuthLoading(true);
 
-      const res = await fetch(`${serverUrl}/api/mobile/auth/exchange`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, redirect_uri: redirectUri }),
-      });
+      let tokenData;
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Token-Austausch fehlgeschlagen');
+      if (isDirect && webClientId && webClientSecret) {
+        // Direct exchange with Google (no server needed)
+        console.log('[Fuchs] Exchanging code directly with Google...');
+        const res = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            code,
+            client_id: webClientId,
+            client_secret: webClientSecret,
+            redirect_uri: redirectUri,
+            grant_type: 'authorization_code',
+          }).toString(),
+        });
+        tokenData = await res.json();
+        if (!res.ok) {
+          throw new Error(tokenData.error_description || tokenData.error || 'Token-Austausch fehlgeschlagen');
+        }
+        // Fetch user info
+        const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        });
+        const userInfo = await userRes.json();
+        tokenData.user_name = userInfo.name || '';
+        tokenData.user_email = userInfo.email || '';
+        tokenData.user_photo = userInfo.picture || '';
+      } else {
+        // Exchange via server
+        const res = await fetch(`${serverUrl}/api/mobile/auth/exchange`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, redirect_uri: redirectUri }),
+        });
+        tokenData = await res.json();
+        if (!res.ok) {
+          throw new Error(tokenData.error || 'Token-Austausch fehlgeschlagen');
+        }
       }
 
       console.log('[Fuchs] WebView OAuth successful!');
-      await handleTokenSuccess(data);
+      await handleTokenSuccess(tokenData);
     } catch (error) {
       console.error('[Fuchs] Token exchange error:', error);
       if (isMountedRef.current) {
