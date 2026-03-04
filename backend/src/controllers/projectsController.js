@@ -665,6 +665,20 @@ const getProjectFiles = async (req, res) => {
 
     // Scan for images in Bilder folder
     const imagesFolderPath = path.join(projectFolderPath, 'Bilder');
+    const THUMBS_DIR = path.join(__dirname, '../../../uploads/thumbnails');
+    await fs.ensureDir(THUMBS_DIR);
+
+    // Returns /uploads/thumbnails/... URL for a project image, generating if needed
+    const getOrMakeThumbnail = async (filePath, projectId, fileName) => {
+      const baseNoExt = path.basename(fileName, path.extname(fileName));
+      const thumbName = `proj_${projectId}_${baseNoExt.replace(/[^a-zA-Z0-9_-]/g, '_')}.jpg`;
+      const thumbPath = path.join(THUMBS_DIR, thumbName);
+      if (!await fs.pathExists(thumbPath)) {
+        try { await generateThumbnail(filePath, thumbPath); } catch { return null; }
+      }
+      return `/uploads/thumbnails/${thumbName}`;
+    };
+
     let images = [];
     if (await fs.pathExists(imagesFolderPath)) {
       const imageFiles = await fs.readdir(imagesFolderPath);
@@ -755,6 +769,9 @@ const getProjectFiles = async (req, res) => {
           const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
           const projectImageUrl = `/api/projects/${projectId}/file/image/${encodeURIComponent(fileName)}`;
 
+          // Generate thumbnail
+          const regThumbUrl = await getOrMakeThumbnail(filePath, projectId, fileName);
+
           // Insert into database (using correct column names from schema)
           const result = db.prepare(`
             INSERT INTO drive_images (
@@ -782,7 +799,7 @@ const getProjectFiles = async (req, res) => {
             now,
             projectImageUrl,  // file_url (required!)
             projectImageUrl,  // local_path
-            projectImageUrl,  // thumbnail_url
+            regThumbUrl || projectImageUrl,  // thumbnail_url
             `image/${fileName.split('.').pop().toLowerCase()}`,
             subfolder || null,
             null  // drive_path_id = NULL for project images
@@ -814,10 +831,14 @@ const getProjectFiles = async (req, res) => {
 
           if (dbImage) {
             // Use full DB info but override paths to use project copy
+            const thumbUrl = await getOrMakeThumbnail(filePath, id, file);
+            if (thumbUrl && dbImage.thumbnail_url !== thumbUrl) {
+              db.prepare('UPDATE drive_images SET thumbnail_url = ? WHERE id = ?').run(thumbUrl, dbImage.id);
+            }
             return {
               ...dbImage,
               local_path: projectImageUrl,
-              thumbnail_url: projectImageUrl,
+              thumbnail_url: thumbUrl || projectImageUrl,
               url: projectImageUrl,
               type: 'image',
               projects: projectsStmt.all(dbImage.id)  // Add projects list
@@ -834,24 +855,26 @@ const getProjectFiles = async (req, res) => {
             if (imageId) {
               // Successfully registered - fetch the full DB entry
               const newDbImage = db.prepare('SELECT * FROM drive_images WHERE id = ?').get(imageId);
+              const newThumbUrl = await getOrMakeThumbnail(filePath, id, file);
 
               return {
                 ...newDbImage,
                 local_path: projectImageUrl,
-                thumbnail_url: projectImageUrl,
+                thumbnail_url: newThumbUrl || projectImageUrl,
                 url: projectImageUrl,
                 type: 'image',
                 projects: projectsStmt.all(imageId)  // Add projects list
               };
             } else {
               // Fallback if registration failed
+              const fbThumbUrl = await getOrMakeThumbnail(filePath, id, file);
               return {
                 name: file,
                 original_name: file,
                 path: filePath,
                 url: projectImageUrl,
                 local_path: projectImageUrl,
-                thumbnail_url: projectImageUrl,
+                thumbnail_url: fbThumbUrl || projectImageUrl,
                 type: 'image',
                 ...metadata
               };
@@ -1234,13 +1257,24 @@ const acceptPendingProject = async (req, res) => {
             fileSize = stats.size;
           } catch (e) { /* ignore */ }
 
+          // Generate thumbnail
+          const apThumbsDir = path.join(__dirname, '../../../uploads/thumbnails');
+          await fs.ensureDir(apThumbsDir);
+          const apBaseNoExt = path.basename(img.name, path.extname(img.name));
+          const apThumbName = `proj_${projectId}_${apBaseNoExt.replace(/[^a-zA-Z0-9_-]/g, '_')}.jpg`;
+          let apThumbUrl = projectImageUrl;
+          try {
+            await generateThumbnail(localPath, path.join(apThumbsDir, apThumbName));
+            apThumbUrl = `/uploads/thumbnails/${apThumbName}`;
+          } catch {}
+
           const imgResult = db.prepare(`
             INSERT INTO drive_images (
               name, original_name, local_path, thumbnail_url, file_url,
               mime_type, drive_file_id, drive_path_id, file_size, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
           `).run(
-            img.name, img.name, projectImageUrl, projectImageUrl, projectImageUrl,
+            img.name, img.name, projectImageUrl, apThumbUrl, projectImageUrl,
             img.mimeType || 'image/jpeg', img.id, fileSize, now
           );
           imageId = imgResult.lastInsertRowid;
@@ -1327,13 +1361,24 @@ const mergePendingProject = async (req, res) => {
             fileSize = stats.size;
           } catch (e) { /* ignore */ }
 
+          // Generate thumbnail
+          const mpThumbsDir = path.join(__dirname, '../../../uploads/thumbnails');
+          await fs.ensureDir(mpThumbsDir);
+          const mpBaseNoExt = path.basename(img.name, path.extname(img.name));
+          const mpThumbName = `proj_${targetProjectId}_${mpBaseNoExt.replace(/[^a-zA-Z0-9_-]/g, '_')}.jpg`;
+          let mpThumbUrl = projectImageUrl;
+          try {
+            await generateThumbnail(localPath, path.join(mpThumbsDir, mpThumbName));
+            mpThumbUrl = `/uploads/thumbnails/${mpThumbName}`;
+          } catch {}
+
           const imgResult = db.prepare(`
             INSERT INTO drive_images (
               name, original_name, local_path, thumbnail_url, file_url,
               mime_type, drive_file_id, drive_path_id, file_size, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
           `).run(
-            img.name, img.name, projectImageUrl, projectImageUrl, projectImageUrl,
+            img.name, img.name, projectImageUrl, mpThumbUrl, projectImageUrl,
             img.mimeType || 'image/jpeg', img.id, fileSize, now
           );
           imageId = imgResult.lastInsertRowid;

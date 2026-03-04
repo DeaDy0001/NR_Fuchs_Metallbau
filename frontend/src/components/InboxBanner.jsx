@@ -655,7 +655,12 @@ function InboxModal({ projects, deleteRequests = [], projectChanges = [], onClos
       });
       if (response.ok) {
         hasChangesRef.current = true;
+        const result = await response.json();
         showNotification(`"${item.project_name}" in Projekte verschoben`);
+        // Auto-activate the confirmed project in ProjectsList
+        if (result.projectId) {
+          window.dispatchEvent(new CustomEvent('projectActivated', { detail: { projectId: result.projectId } }));
+        }
         triggerBackgroundSync();
         await onRefresh();
       } else {

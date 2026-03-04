@@ -419,7 +419,7 @@ export default function ImageViewScreen({ route, navigation }) {
 
     alert(
       'Foto löschen',
-      `"${getDisplayName()}" vom Handy löschen?`,
+      `"${getDisplayName()}" löschen?\n\nDas Bild wird vom Handy gelöscht und eine Löschanfrage an die Desktop-Software gesendet.`,
       [
         { text: 'Abbrechen', style: 'cancel' },
         {
@@ -430,7 +430,7 @@ export default function ImageViewScreen({ route, navigation }) {
               id: currentImage.id,
               file_name: currentImage.name,
               file_uri: currentImage.localUri,
-            }]);
+            }], true);
             processDeleteQueue();
 
             setDeletedIds(prev => new Set([...prev, currentImage.id]));

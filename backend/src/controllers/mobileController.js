@@ -1372,6 +1372,17 @@ const confirmInboxProject = async (req, res) => {
             }
 
             const displayName = imgTitle || path.basename(img.name, path.extname(img.name));
+
+            // Generate thumbnail
+            await fs.ensureDir(THUMBNAILS_DIR);
+            const ciBaseNoExt = path.basename(img.name, path.extname(img.name));
+            const ciThumbName = `proj_${projectId}_${ciBaseNoExt.replace(/[^a-zA-Z0-9_-]/g, '_')}.jpg`;
+            let ciThumbUrl = projectImageUrl;
+            try {
+              await generateThumbnail(destPath, path.join(THUMBNAILS_DIR, ciThumbName));
+              ciThumbUrl = `/uploads/thumbnails/${ciThumbName}`;
+            } catch {}
+
             const imgResult = db.prepare(`
               INSERT INTO drive_images (
                 name, original_name, local_path, thumbnail_url, file_url,
@@ -1379,7 +1390,7 @@ const confirmInboxProject = async (req, res) => {
                 photo_taken_at, gps_latitude, gps_longitude, gps_altitude, image_notes
               ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
             `).run(
-              displayName, img.name, projectImageUrl, projectImageUrl, projectImageUrl,
+              displayName, img.name, projectImageUrl, ciThumbUrl, projectImageUrl,
               img.mimeType || 'image/jpeg', img.id, fileSize, now,
               imgPhotoTakenAt, imgGpsLat, imgGpsLon, imgGpsAlt, imgNotes
             );
@@ -1414,6 +1425,7 @@ const confirmInboxProject = async (req, res) => {
     console.log(`✅ Project "${projectName}" confirmed: ${downloaded}/${images.length} images downloaded and registered`);
     res.json({
       success: true,
+      projectId,
       message: `Projekt "${projectName}" wurde erstellt (${downloaded}/${images.length} Bilder heruntergeladen)`,
     });
   } catch (error) {
