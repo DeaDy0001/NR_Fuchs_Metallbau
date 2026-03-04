@@ -83,9 +83,8 @@ const startServer = async () => {
     const { initializeAutoSync } = require('./services/driveSyncService');
     initializeAutoSync();
 
-    // Watch for new mobile APK and auto-upload to Google Drive
-    const { initializeAppUpdateWatcher } = require('./services/appUpdateService');
-    initializeAppUpdateWatcher();
+    // APK-Upload zu Google Drive nur manuell (Einstellungen → Handy App → APK hochladen)
+    // Auto-Upload deaktiviert um ungewollte Uploads beim Serverstart zu vermeiden
 
     // Ensure Drive folder structure is correct (startup + every 60 min)
     const { initializeDriveStructureWatcher } = require('./services/driveStructureService');

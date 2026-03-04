@@ -72,21 +72,38 @@ pause
 exit /b 1
 
 REM ── 4. EAS Projekt pruefen/initialisieren ──
+REM Die projectId wird in eas-project.json gespeichert (gitignored),
+REM NICHT in app.json – so gibt es keine Git-Konflikte beim Pull.
 :CHECK_PROJECT
 echo.
 echo  Pruefe EAS Projekt-Konfiguration...
 
+if exist "eas-project.json" goto :PROJECT_OK
+
 findstr /c:"projectId" app.json >nul 2>&1
-if !ERRORLEVEL! equ 0 goto :PROJECT_OK
+if !ERRORLEVEL! equ 0 (
+    REM Alte projectId aus app.json → nach eas-project.json migrieren
+    echo  [..] Migriere projectId von app.json nach eas-project.json...
+    for /f "tokens=2 delims=:" %%a in ('findstr /c:"projectId" app.json') do (
+        set "RAW_ID=%%a"
+    )
+    REM Entferne Anfuehrungszeichen und Whitespace per PowerShell
+    powershell -Command ^
+        "$raw = (Get-Content 'app.json' -Raw | ConvertFrom-Json).expo.extra.eas.projectId; if (-not $raw) { $raw = (Get-Content 'app.json' -Raw | ConvertFrom-Json).expo.projectId }; if ($raw) { '{\"projectId\":\"' + $raw + '\"}' | Set-Content 'eas-project.json' -Encoding UTF8; Write-Host '  [OK] eas-project.json erstellt' } else { Write-Host '  [WARN] Keine projectId gefunden' }"
+    goto :PROJECT_OK
+)
 
 echo.
 echo  EAS Projekt muss einmalig konfiguriert werden.
 echo  Waehle "Create a new EAS project" wenn gefragt.
+echo  (Die ID wird in eas-project.json gespeichert, nicht in app.json)
 echo.
 call eas init
-REM Exit-Code von eas init ist unzuverlaessig, pruefen ob projectId jetzt da ist
-findstr /c:"projectId" app.json >nul 2>&1
+REM eas init hat projectId in app.json geschrieben → migrieren
+powershell -Command ^
+    "$raw = (Get-Content 'app.json' -Raw | ConvertFrom-Json).expo.extra.eas.projectId; if (-not $raw) { $raw = (Get-Content 'app.json' -Raw | ConvertFrom-Json).expo.projectId }; if ($raw) { '{\"projectId\":\"' + $raw + '\"}' | Set-Content 'eas-project.json' -Encoding UTF8; Write-Host '  [OK] eas-project.json erstellt' } else { exit 1 }"
 if !ERRORLEVEL! neq 0 goto :PROJECT_FAIL
+if not exist "eas-project.json" goto :PROJECT_FAIL
 echo  [OK] EAS Projekt konfiguriert
 goto :INSTALL_DEPS
 
@@ -213,7 +230,7 @@ echo.
 
 REM Schritt 1: Cache leeren und Abhaengigkeiten installieren
 echo  [1/3] Loesche Build-Cache...
-wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && rm -rf dist/ .expo/ node_modules/.cache android/ 2>/dev/null; echo ok"
+wsl -d Ubuntu -e /bin/bash -c "cd '!WSL_PATH!' && rm -rf dist/ .expo/ node_modules/.cache android/app.apk 2>/dev/null; echo ok"
 echo  [OK] Cache geleert
 echo.
 echo  [2/3] Installiere Abhaengigkeiten in WSL...
