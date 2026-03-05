@@ -8,11 +8,11 @@ import { useAuth } from '../contexts/AuthContext';
 import './InboxPage.css';
 
 const TYPE_CONFIG = {
-  image_upload:   { icon: Upload,      label: 'Foto hochgeladen',  color: '#3b82f6' },
-  project_create: { icon: FolderPlus,  label: 'Projekt erstellt',  color: '#10b981' },
-  inbox_item:     { icon: Camera,      label: 'Neue Uploads',      color: '#f59e0b' },
-  delete_request: { icon: Trash2,      label: 'Löschanfrage',      color: '#ef4444' },
-  project_change: { icon: GitMerge,    label: 'Projektänderung',   color: '#8b5cf6' },
+  image_upload:   { icons: [{ Icon: Upload,     color: '#3b82f6' }],                                          label: 'Foto hochgeladen'  },
+  project_create: { icons: [{ Icon: FolderPlus, color: '#10b981' }],                                          label: 'Projekt erstellt'  },
+  inbox_item:     { icons: [{ Icon: Camera,     color: '#f59e0b' }, { Icon: FolderPlus, color: '#10b981' }],  label: 'Neue Uploads'      },
+  delete_request: { icons: [{ Icon: Trash2,     color: '#ef4444' }],                                          label: 'Löschanfrage'      },
+  project_change: { icons: [{ Icon: Camera,     color: '#f59e0b' }, { Icon: GitMerge,   color: '#8b5cf6' }],  label: 'Projektänderung'   },
 };
 
 function formatDate(isoStr) {
@@ -563,8 +563,14 @@ function ProjectChangeRow({ change, canManage, onRemove, onActivity }) {
 // ─── Delete Requests ──────────────────────────────────────────────────────────
 function DeleteRequestRow({ req, canManage, onRemove, onActivity }) {
   const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [imgError, setImgError] = useState(false);
 
   const now = () => new Date().toISOString();
+
+  const previewSrc = req.project_name
+    ? `/api/mobile/inbox/delete-preview/${encodeURIComponent(req.project_name)}/${encodeURIComponent(req.file_name)}`
+    : null;
 
   const handleProcess = async () => {
     if (!confirm(`Datei „${req.file_name}" wirklich löschen?`)) return;
@@ -590,7 +596,7 @@ function DeleteRequestRow({ req, canManage, onRemove, onActivity }) {
 
   return (
     <div className="inbox-entry-card">
-      <div className="inbox-entry-header" style={{ cursor: 'default' }}>
+      <div className="inbox-entry-header" onClick={() => setExpanded(e => !e)} style={{ cursor: 'pointer' }}>
         <div className="inbox-entry-header-left">
           <EntryIconGroup icons={[{ Icon: Trash2, color: '#ef4444' }]} />
           <div>
@@ -603,17 +609,35 @@ function DeleteRequestRow({ req, canManage, onRemove, onActivity }) {
             </div>
           </div>
         </div>
-        {canManage && (
-          <div className="inbox-entry-header-right" style={{ display: 'flex', gap: 8 }}>
-            <button className="inbox-action-btn inbox-action-delete" onClick={handleProcess} disabled={busy} style={{ padding: '4px 10px', fontSize: '0.8rem' }}>
+        <div className="inbox-entry-header-right" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {canManage && (<>
+            <button className="inbox-action-btn inbox-action-delete" onClick={e => { e.stopPropagation(); handleProcess(); }} disabled={busy} style={{ padding: '4px 10px', fontSize: '0.8rem' }}>
               <Trash2 size={13} />Löschen
             </button>
-            <button className="inbox-action-btn inbox-action-cancel" onClick={handleDismiss} disabled={busy} style={{ padding: '4px 10px', fontSize: '0.8rem' }}>
+            <button className="inbox-action-btn inbox-action-cancel" onClick={e => { e.stopPropagation(); handleDismiss(); }} disabled={busy} style={{ padding: '4px 10px', fontSize: '0.8rem' }}>
               <X size={13} />Abweisen
             </button>
-          </div>
-        )}
+          </>)}
+          {expanded ? <ChevronUp size={16} className="inbox-chevron" /> : <ChevronDown size={16} className="inbox-chevron" />}
+        </div>
       </div>
+
+      {expanded && (
+        <div className="inbox-entry-body">
+          {!previewSrc || imgError ? (
+            <p className="inbox-entry-no-images">
+              {imgError ? 'Bild nicht lokal verfügbar' : 'Kein Projekt angegeben – Vorschau nicht möglich'}
+            </p>
+          ) : (
+            <div className="inbox-image-grid">
+              <div className="inbox-image-thumb">
+                <img src={previewSrc} alt={req.file_name} loading="lazy" onError={() => setImgError(true)} />
+                <span className="inbox-image-name">{req.file_name}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -833,13 +857,10 @@ export default function InboxPage() {
               <div key={dateKey} className="inbox-day-group">
                 <div className="inbox-day-label">{dateKey}</div>
                 {items.map(a => {
-                  const cfg = TYPE_CONFIG[a.type] || { icon: Inbox, label: a.type, color: '#6b7280' };
-                  const Icon = cfg.icon;
+                  const cfg = TYPE_CONFIG[a.type] || { icons: [{ Icon: Inbox, color: '#6b7280' }], label: a.type };
                   return (
                     <div key={a.id} className="inbox-activity-item">
-                      <div className="inbox-activity-icon" style={{ background: cfg.color + '22', color: cfg.color }}>
-                        <Icon size={16} />
-                      </div>
+                      <EntryIconGroup icons={cfg.icons} />
                       <div className="inbox-activity-body">
                         <div className="inbox-activity-title">{a.title}</div>
                         {a.description && <div className="inbox-activity-desc">{a.description}</div>}
