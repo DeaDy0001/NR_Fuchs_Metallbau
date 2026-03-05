@@ -1,6 +1,6 @@
 import * as Network from 'expo-network';
 import { getSetting, getQueuedUploads, updateUploadStatus } from './database';
-import { uploadImage } from './api';
+import { uploadImage, flushImageRequests } from './api';
 import { processImageForUpload } from './imageProcessor';
 import { sendUploadCompleteNotification } from './backgroundSync';
 
@@ -107,6 +107,9 @@ export const processUploadQueue = async () => {
     notifyListeners({ type: 'processing', count: queue.length });
 
     let uploadedCount = 0;
+    // Collect successful uploads to write image_requests.json at end of batch
+    const uploadedItems = [];
+
     for (const item of queue) {
       try {
         // Max 3 retries
@@ -137,7 +140,7 @@ export const processUploadQueue = async () => {
           console.warn('Image processing failed, uploading original:', e.message);
         }
 
-        // Step 2: Upload to Google Drive
+        // Step 2: Upload to Google Drive inbox/images/ (new Postfach approach)
         notifyListeners({
           type: 'uploading',
           item,
@@ -148,24 +151,34 @@ export const processUploadQueue = async () => {
           uploadUri,
           uploadFileName,
           uploadMimeType,
-          item.project_folder_id || item.project_id,
-          item.project_name,
+          item.project_folder_id || null,
+          item.project_name || null,
           item.gps_data || null,
           item.custom_title || null,
           item.notes || null
         );
 
-        // Step 3: Report metadata (GPS, title, notes) to desktop server (optional/best-effort)
+        // Step 3: Report metadata to desktop server (best-effort, legacy endpoint)
         if (item.gps_data || item.custom_title || item.notes) {
           reportMetadataToServer(item, uploadResult?.fileId || null);
         }
 
         await updateUploadStatus(item.id, 'uploaded');
         uploadedCount++;
+        uploadedItems.push({ item, fileId: uploadResult?.fileId, uniqueFileName: uploadResult?.uniqueFileName || uploadFileName });
         notifyListeners({ type: 'uploaded', item, progress: { ...uploadProgress } });
       } catch (error) {
         await updateUploadStatus(item.id, 'failed', error.message);
         notifyListeners({ type: 'error', item, error: error.message });
+      }
+    }
+
+    // Step 3b: Write image_requests.json grouping all uploaded images by project
+    if (uploadedItems.length > 0) {
+      try {
+        await flushImageRequests(uploadedItems);
+      } catch (e) {
+        console.warn('[uploadQueue] flushImageRequests failed:', e.message);
       }
     }
 

@@ -94,6 +94,17 @@ router.post('/inbox/process-delete', mobile.processDeleteRequests);
 router.post('/inbox/dismiss-delete', mobile.dismissDeleteRequests);
 router.delete('/inbox/:folderId', mobile.deleteInboxProject);
 
+// Postfach – JSON-based inbox (called from desktop)
+router.get('/inbox/requests', mobile.getInboxRequests);
+router.post('/inbox/process-image', mobile.processImageRequest);
+router.post('/inbox/reject-image', mobile.rejectImageRequest);
+router.post('/inbox/process-projekt', mobile.processProjektRequest);
+router.post('/inbox/reject-projekt', mobile.rejectProjektRequest);
+router.post('/inbox/process-projekt-change', mobile.processProjektChangeRequest);
+router.post('/inbox/reject-projekt-change', mobile.rejectProjektChangeRequest);
+router.post('/inbox/process-image-change', mobile.processImageChangeRequest);
+router.post('/inbox/reject-image-change', mobile.rejectImageChangeRequest);
+
 // Project changes (new images uploaded from mobile to existing projects)
 router.get('/project-changes', mobile.getProjectChanges);
 router.get('/project-changes/image-proxy/:fileId', mobile.proxyProjectChangeImage);

@@ -46,14 +46,14 @@ function Sidebar({ collapsed, moduleMitarbeiter }) {
           <Link
             to="/inbox"
             className={`menu-item ${isActive('/inbox') ? 'active' : ''}`}
-            title={collapsed ? 'Inbox' : ''}
+            title={collapsed ? 'Postfach' : ''}
           >
             <div className="menu-item-content">
               <div className="menu-item-icon-wrap">
                 <Inbox size={20} />
                 {inboxUnread > 0 && <span className="inbox-badge" />}
               </div>
-              {!collapsed && <span className="menu-item-label">Inbox</span>}
+              {!collapsed && <span className="menu-item-label">Postfach</span>}
             </div>
           </Link>
         )}

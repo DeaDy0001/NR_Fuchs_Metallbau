@@ -7,7 +7,7 @@ import { useDialog } from '../components/CustomDialog';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
-import { fetchProjectImages, getImageUrl, saveProjectMetadata } from '../services/api';
+import { fetchProjectImages, getImageUrl, saveProjectMetadata, reportProjectNotes } from '../services/api';
 import { downloadProjectImages } from '../services/syncService';
 import { getCachedProjectByFolderId, cacheProject } from '../services/database';
 
@@ -29,6 +29,11 @@ export default function ProjectDetailScreen({ navigation, route }) {
   const [imageAuth, setImageAuth] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState('');
+
+  // Notes FAB state
+  const [showNotesModal, setShowNotesModal] = useState(false);
+  const [notesText, setNotesText] = useState('');
+  const [sendingNotes, setSendingNotes] = useState(false);
 
   // Metadata state
   const [meta, setMeta] = useState({ color: null, notes: null, tags: [] });
@@ -85,6 +90,22 @@ export default function ProjectDetailScreen({ navigation, route }) {
     await loadImages();
     await loadMeta();
     setRefreshing(false);
+  };
+
+  const handleSendNotes = async () => {
+    const text = notesText.trim();
+    if (!text) return;
+    setSendingNotes(true);
+    try {
+      await reportProjectNotes(projectId, projectFolderId, projectName, text);
+      setNotesText('');
+      setShowNotesModal(false);
+      alert('Gesendet', 'Ihre Notiz wurde an die Desktop-Software übermittelt.');
+    } catch (e) {
+      alert('Fehler', 'Notiz konnte nicht gesendet werden: ' + e.message);
+    } finally {
+      setSendingNotes(false);
+    }
   };
 
   const openEditModal = () => {
@@ -272,6 +293,14 @@ export default function ProjectDetailScreen({ navigation, route }) {
         }
       />
 
+      {/* FAB - Notes (left of camera) */}
+      <TouchableOpacity
+        style={styles.fabNotes}
+        onPress={() => { setNotesText(''); setShowNotesModal(true); }}
+      >
+        <Ionicons name="document-text-outline" size={26} color="white" />
+      </TouchableOpacity>
+
       {/* FAB - Take photo */}
       <TouchableOpacity
         style={styles.fab}
@@ -279,6 +308,48 @@ export default function ProjectDetailScreen({ navigation, route }) {
       >
         <Ionicons name="camera" size={28} color="white" />
       </TouchableOpacity>
+
+      {/* Notes Modal */}
+      <Modal
+        visible={showNotesModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowNotesModal(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowNotesModal(false)}>
+              <Ionicons name="close" size={24} color={colors.textSecondary} />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Notiz senden</Text>
+            <TouchableOpacity
+              onPress={handleSendNotes}
+              disabled={sendingNotes || !notesText.trim()}
+              style={[styles.saveBtn, (sendingNotes || !notesText.trim()) && styles.saveBtnDisabled]}
+            >
+              {sendingNotes
+                ? <ActivityIndicator size="small" color="white" />
+                : <Text style={styles.saveBtnText}>Senden</Text>
+              }
+            </TouchableOpacity>
+          </View>
+          <View style={styles.notesModalBody}>
+            <Text style={styles.notesModalHint}>
+              Notiz zu „{projectName}" an die Desktop-Software senden:
+            </Text>
+            <TextInput
+              style={styles.notesModalInput}
+              value={notesText}
+              onChangeText={setNotesText}
+              placeholder="Notiz eingeben..."
+              placeholderTextColor={colors.textTertiary}
+              multiline
+              autoFocus
+              textAlignVertical="top"
+            />
+          </View>
+        </View>
+      </Modal>
 
       {/* Edit Metadata Modal */}
       <Modal
@@ -424,11 +495,24 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', paddingTop: 40, gap: 12 },
   emptyText: { color: colors.textTertiary, fontSize: 15 },
 
-  // FAB
+  // FABs
   fab: {
     position: 'absolute', bottom: 24, right: 24, width: 56, height: 56, borderRadius: 28,
     backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center',
     elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8,
+  },
+  fabNotes: {
+    position: 'absolute', bottom: 24, right: 92, width: 56, height: 56, borderRadius: 28,
+    backgroundColor: colors.bgSecondary, borderWidth: 1, borderColor: colors.border,
+    alignItems: 'center', justifyContent: 'center',
+    elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8,
+  },
+  notesModalBody: { flex: 1, padding: 16 },
+  notesModalHint: { fontSize: 13, color: colors.textSecondary, marginBottom: 12 },
+  notesModalInput: {
+    flex: 1, backgroundColor: colors.inputBg || colors.cardBg,
+    borderWidth: 1, borderColor: colors.border, borderRadius: 10,
+    padding: 14, fontSize: 16, color: colors.textPrimary,
   },
 
   // Edit Modal

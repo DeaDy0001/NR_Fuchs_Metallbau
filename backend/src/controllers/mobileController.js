@@ -2,7 +2,7 @@ const db = require('../config/database');
 const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
-const { compressImage, generateThumbnail, findSubfolder, findOrCreateSubfolder, moveFileOnDrive, listFoldersInFolder, listFilesInFolder, extractFolderId, deleteFileFromDrive, downloadFile, getFileMetadata, listAllFilesInFolder, readDriveFileAsJson, updateDriveFileContent, shareFolderWithUser, removeFolderPermission } = require('../services/googleDriveService');
+const { compressImage, generateThumbnail, findSubfolder, findOrCreateSubfolder, moveFileOnDrive, listFoldersInFolder, listFilesInFolder, extractFolderId, deleteFileFromDrive, downloadFile, getFileMetadata, listAllFilesInFolder, readDriveFileAsJson, updateDriveFileContent, upsertJsonFileToDrive, shareFolderWithUser, removeFolderPermission } = require('../services/googleDriveService');
 const { readExifData, writeExifData } = require('../services/exifService');
 const { google } = require('googleapis');
 const os = require('os');
@@ -3510,6 +3510,485 @@ const removeGoogleUser = async (req, res) => {
   }
 };
 
+// ============================================================
+// POSTFACH – JSON-BASED INBOX ENDPOINTS
+// ============================================================
+
+const INBOX_JSON_FILES = [
+  'image_requests.json',
+  'projekt_requests.json',
+  'image_change_requests.json',
+  'projekt_change_requests.json',
+  'delete_requests.json',
+];
+
+/**
+ * Helper: get root folder ID + metaFolder + inboxFolder from DB
+ */
+const _getInboxSetup = async () => {
+  const drivePath = db.prepare('SELECT * FROM drive_paths LIMIT 1').get();
+  if (!drivePath) throw new Error('Kein Google Drive Ordner konfiguriert');
+
+  let rootFolderId = drivePath.path;
+  const urlMatch = drivePath.path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (urlMatch) rootFolderId = urlMatch[1];
+
+  const metaFolder = await findSubfolder(rootFolderId, 'NR_Fuchs_Meta');
+  if (!metaFolder) throw new Error('NR_Fuchs_Meta Ordner nicht gefunden');
+
+  const inboxFolder = await findOrCreateSubfolder(metaFolder.id, 'inbox');
+
+  return { rootFolderId, drivePathId: drivePath.id, metaFolder, inboxFolder };
+};
+
+/**
+ * Helper: read a named JSON file from the inbox folder.
+ * Returns { fileId, data: [] } – data is always an array.
+ */
+const _readInboxJson = async (inboxFolderId, fileName) => {
+  try {
+    const files = await listFilesInFolder(inboxFolderId);
+    const file = files.find(f => f.name === fileName);
+    if (!file) return { fileId: null, data: [] };
+    const data = await readDriveFileAsJson(file.id);
+    return { fileId: file.id, data: Array.isArray(data) ? data : [] };
+  } catch {
+    return { fileId: null, data: [] };
+  }
+};
+
+/**
+ * Helper: write updated JSON back to Drive inbox. Deletes file when array is empty.
+ */
+const _saveInboxJson = async (inboxFolderId, fileName, fileId, data) => {
+  if (data.length === 0) {
+    if (fileId) {
+      try { await deleteFileFromDrive(fileId); } catch {}
+    }
+    return;
+  }
+  if (fileId) {
+    await updateDriveFileContent(fileId, data);
+  } else {
+    await upsertJsonFileToDrive(inboxFolderId, fileName, data);
+  }
+};
+
+/**
+ * GET /api/mobile/inbox/requests
+ * Returns all pending JSON request entries in parallel (fast – no folder scanning)
+ */
+const getInboxRequests = async (req, res) => {
+  try {
+    const { inboxFolder } = await _getInboxSetup();
+
+    const [imgRes, projRes, imgChgRes, projChgRes, delRes] = await Promise.all(
+      INBOX_JSON_FILES.map(f => _readInboxJson(inboxFolder.id, f))
+    );
+
+    res.json({
+      image_requests: imgRes.data,
+      projekt_requests: projRes.data,
+      image_change_requests: imgChgRes.data,
+      projekt_change_requests: projChgRes.data,
+      delete_requests: delRes.data,
+    });
+  } catch (error) {
+    console.error('[Postfach] getInboxRequests error:', error.message);
+    res.status(500).json({ error: 'Fehler beim Laden der Postfach-Anfragen: ' + error.message });
+  }
+};
+
+/**
+ * POST /api/mobile/inbox/process-image
+ * Body: { requestId, selectedImageIds (optional array – for partial), projectId }
+ * Downloads images from inbox/images/, registers in DB, assigns to project.
+ */
+const processImageRequest = async (req, res) => {
+  try {
+    const { requestId, selectedImageIds, projectId } = req.body;
+    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+
+    const { inboxFolder, drivePathId } = await _getInboxSetup();
+
+    // Read image_requests.json
+    const { fileId, data } = await _readInboxJson(inboxFolder.id, 'image_requests.json');
+    const entry = data.find(e => e.id === requestId);
+    if (!entry) return res.status(404).json({ error: 'Anfrage nicht gefunden' });
+
+    // Find images subfolder
+    const imagesSubfolder = await findSubfolder(inboxFolder.id, 'images');
+    if (!imagesSubfolder) return res.status(400).json({ error: 'inbox/images Ordner nicht gefunden' });
+
+    // Determine which images to process
+    const toProcess = selectedImageIds && selectedImageIds.length > 0
+      ? entry.images.filter(img => selectedImageIds.includes(img.drive_file_id))
+      : entry.images;
+
+    // Resolve target project
+    let targetProjectId = projectId ? parseInt(projectId) : null;
+    if (!targetProjectId && entry.project_folder_id) {
+      // Find project by Drive folder reference
+      const proj = db.prepare("SELECT id FROM projects WHERE drive_folder_id = ? OR folder_name = ?")
+        .get(entry.project_folder_id, entry.project_name || '');
+      if (proj) targetProjectId = proj.id;
+    }
+
+    const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    let downloaded = 0;
+
+    for (const img of toProcess) {
+      try {
+        // Download image from inbox/images/ to local drive uploads dir
+        const imageId = await downloadAndRegisterImage(
+          img.drive_file_id,
+          img.file_name,
+          img.mime_type || 'image/jpeg',
+          drivePathId,
+          'mobile_inbox',
+          null
+        );
+
+        // Assign to project if we have one
+        if (imageId && targetProjectId) {
+          db.prepare('INSERT OR IGNORE INTO image_project_assignments (image_id, project_id) VALUES (?, ?)')
+            .run(imageId, targetProjectId);
+        }
+
+        // Also copy to local project Bilder folder if project_path configured
+        if (settings?.project_path && targetProjectId) {
+          try {
+            const proj = db.prepare('SELECT folder_name FROM projects WHERE id = ?').get(targetProjectId);
+            if (proj) {
+              const bilderDir = path.join(settings.project_path, proj.folder_name, 'Bilder');
+              await fs.ensureDir(bilderDir);
+              // Image is already downloaded in downloadAndRegisterImage; we do a best-effort copy
+              const imgRow = db.prepare('SELECT local_path FROM drive_images WHERE id = ?').get(imageId);
+              if (imgRow?.local_path) {
+                const absPath = path.join(__dirname, '../../../', imgRow.local_path.replace(/^\//, ''));
+                const destPath = path.join(bilderDir, img.file_name);
+                if (!await fs.pathExists(destPath)) {
+                  await fs.copy(absPath, destPath).catch(() => {});
+                }
+              }
+            }
+          } catch {}
+        }
+
+        // Delete from inbox/images/ on Drive
+        try { await deleteFileFromDrive(img.drive_file_id); } catch {}
+        downloaded++;
+      } catch (e) {
+        console.error(`[Postfach] Failed to process image ${img.file_name}:`, e.message);
+      }
+    }
+
+    // Update JSON: remove processed images from entry (or whole entry)
+    const processedIds = new Set(toProcess.map(i => i.drive_file_id));
+    entry.images = entry.images.filter(i => !processedIds.has(i.drive_file_id));
+
+    const updatedData = entry.images.length > 0
+      ? data.map(e => e.id === requestId ? entry : e)
+      : data.filter(e => e.id !== requestId);
+
+    await _saveInboxJson(inboxFolder.id, 'image_requests.json', fileId, updatedData);
+
+    // Log activity when fully processed
+    if (entry.images.length === 0) {
+      const projName = targetProjectId
+        ? (db.prepare('SELECT folder_name FROM projects WHERE id = ?').get(targetProjectId)?.folder_name || entry.project_name)
+        : 'Bibliothek';
+      logActivity(
+        'image_upload',
+        `${downloaded} Bild${downloaded !== 1 ? 'er' : ''} hinzugefügt`,
+        `Zu „${projName}" – von ${entry.user_name || entry.device_name}`,
+        entry.device_name,
+        `img_req_${requestId}`
+      );
+    }
+
+    res.json({ success: true, downloaded, remaining: entry.images.length });
+  } catch (error) {
+    console.error('[Postfach] processImageRequest error:', error.message);
+    res.status(500).json({ error: 'Fehler beim Verarbeiten: ' + error.message });
+  }
+};
+
+/**
+ * POST /api/mobile/inbox/reject-image
+ * Body: { requestId, selectedImageIds (optional) }
+ * Deletes images from inbox/images/ and removes from JSON.
+ */
+const rejectImageRequest = async (req, res) => {
+  try {
+    const { requestId, selectedImageIds } = req.body;
+    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+
+    const { inboxFolder } = await _getInboxSetup();
+    const { fileId, data } = await _readInboxJson(inboxFolder.id, 'image_requests.json');
+    const entry = data.find(e => e.id === requestId);
+    if (!entry) return res.status(404).json({ error: 'Anfrage nicht gefunden' });
+
+    const toDelete = selectedImageIds && selectedImageIds.length > 0
+      ? entry.images.filter(img => selectedImageIds.includes(img.drive_file_id))
+      : entry.images;
+
+    for (const img of toDelete) {
+      try { await deleteFileFromDrive(img.drive_file_id); } catch {}
+    }
+
+    const deletedIds = new Set(toDelete.map(i => i.drive_file_id));
+    entry.images = entry.images.filter(i => !deletedIds.has(i.drive_file_id));
+
+    const updatedData = entry.images.length > 0
+      ? data.map(e => e.id === requestId ? entry : e)
+      : data.filter(e => e.id !== requestId);
+
+    await _saveInboxJson(inboxFolder.id, 'image_requests.json', fileId, updatedData);
+    res.json({ success: true, remaining: entry.images.length });
+  } catch (error) {
+    console.error('[Postfach] rejectImageRequest error:', error.message);
+    res.status(500).json({ error: 'Fehler beim Ablehnen: ' + error.message });
+  }
+};
+
+/**
+ * POST /api/mobile/inbox/process-projekt
+ * Body: { requestId, projectName? (override) }
+ * Creates Drive folder + local folder + DB project entry.
+ */
+const processProjektRequest = async (req, res) => {
+  try {
+    const { requestId, projectName: nameOverride } = req.body;
+    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+
+    const { metaFolder, inboxFolder, drivePathId } = await _getInboxSetup();
+    const { fileId, data } = await _readInboxJson(inboxFolder.id, 'projekt_requests.json');
+    const entry = data.find(e => e.id === requestId);
+    if (!entry) return res.status(404).json({ error: 'Anfrage nicht gefunden' });
+
+    const projectName = nameOverride || entry.project_name;
+    if (!projectName) return res.status(400).json({ error: 'Projektname fehlt' });
+
+    // Create project folder in Drive under Projekte/
+    const projekteFolder = await findOrCreateSubfolder(metaFolder.id, 'Projekte');
+    const newDriveFolder = await findOrCreateSubfolder(projekteFolder.id, projectName);
+
+    // Create project in DB
+    const existing = db.prepare('SELECT id FROM projects WHERE folder_name = ?').get(projectName);
+    let projectId;
+    if (existing) {
+      projectId = existing.id;
+    } else {
+      const result = db.prepare("INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)")
+        .run(projectName, '#3b82f6', entry.notes || '');
+      projectId = result.lastInsertRowid;
+    }
+
+    // Create local project folder
+    const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    if (settings?.project_path) {
+      const bilderDir = path.join(settings.project_path, projectName, 'Bilder');
+      await fs.ensureDir(bilderDir);
+    }
+
+    // Remove from JSON
+    const updatedData = data.filter(e => e.id !== requestId);
+    await _saveInboxJson(inboxFolder.id, 'projekt_requests.json', fileId, updatedData);
+
+    logActivity(
+      'project_create',
+      `Projekt angelegt: „${projectName}"`,
+      `Anfrage von ${entry.user_name || entry.device_name}`,
+      entry.device_name,
+      `proj_req_${requestId}`
+    );
+
+    res.json({ success: true, projectId, projectName });
+  } catch (error) {
+    console.error('[Postfach] processProjektRequest error:', error.message);
+    res.status(500).json({ error: 'Fehler beim Erstellen des Projekts: ' + error.message });
+  }
+};
+
+/**
+ * POST /api/mobile/inbox/reject-projekt
+ * Body: { requestId }
+ */
+const rejectProjektRequest = async (req, res) => {
+  try {
+    const { requestId } = req.body;
+    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+
+    const { inboxFolder } = await _getInboxSetup();
+    const { fileId, data } = await _readInboxJson(inboxFolder.id, 'projekt_requests.json');
+    const updatedData = data.filter(e => e.id !== requestId);
+    await _saveInboxJson(inboxFolder.id, 'projekt_requests.json', fileId, updatedData);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[Postfach] rejectProjektRequest error:', error.message);
+    res.status(500).json({ error: 'Fehler: ' + error.message });
+  }
+};
+
+/**
+ * POST /api/mobile/inbox/process-projekt-change
+ * Body: { requestId }
+ * Appends/replaces notes on existing project in DB.
+ */
+const processProjektChangeRequest = async (req, res) => {
+  try {
+    const { requestId } = req.body;
+    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+
+    const { inboxFolder } = await _getInboxSetup();
+    const { fileId, data } = await _readInboxJson(inboxFolder.id, 'projekt_change_requests.json');
+    const entry = data.find(e => e.id === requestId);
+    if (!entry) return res.status(404).json({ error: 'Anfrage nicht gefunden' });
+
+    // Find project
+    let project = entry.project_id
+      ? db.prepare('SELECT * FROM projects WHERE id = ?').get(entry.project_id)
+      : db.prepare('SELECT * FROM projects WHERE folder_name = ?').get(entry.project_name);
+
+    if (!project) return res.status(404).json({ error: 'Projekt nicht gefunden' });
+
+    // Append notes
+    const newNotes = entry.notes || '';
+    const combined = project.notes
+      ? `${project.notes}\n\n${newNotes}`.trim()
+      : newNotes;
+
+    db.prepare("UPDATE projects SET notes = ?, updated_at = datetime('now') WHERE id = ?")
+      .run(combined, project.id);
+
+    // Push updated project.json to Drive
+    const updatedProject = db.prepare('SELECT * FROM projects WHERE id = ?').get(project.id);
+    try {
+      const projectsCtrl = require('./projectsController');
+      projectsCtrl.pushProjectJsonToDrive(updatedProject).catch(() => {});
+    } catch {}
+
+    // Remove from JSON
+    const updatedData = data.filter(e => e.id !== requestId);
+    await _saveInboxJson(inboxFolder.id, 'projekt_change_requests.json', fileId, updatedData);
+
+    logActivity(
+      'project_notes',
+      `Projektnotiz zu „${project.folder_name}"`,
+      `Von ${entry.user_name || entry.device_name}`,
+      entry.device_name,
+      `proj_chg_${requestId}`
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[Postfach] processProjektChangeRequest error:', error.message);
+    res.status(500).json({ error: 'Fehler: ' + error.message });
+  }
+};
+
+/**
+ * POST /api/mobile/inbox/reject-projekt-change
+ * Body: { requestId }
+ */
+const rejectProjektChangeRequest = async (req, res) => {
+  try {
+    const { requestId } = req.body;
+    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+
+    const { inboxFolder } = await _getInboxSetup();
+    const { fileId, data } = await _readInboxJson(inboxFolder.id, 'projekt_change_requests.json');
+    const updatedData = data.filter(e => e.id !== requestId);
+    await _saveInboxJson(inboxFolder.id, 'projekt_change_requests.json', fileId, updatedData);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[Postfach] rejectProjektChangeRequest error:', error.message);
+    res.status(500).json({ error: 'Fehler: ' + error.message });
+  }
+};
+
+/**
+ * POST /api/mobile/inbox/process-image-change
+ * Body: { requestId }
+ * Updates image name/notes in DB.
+ */
+const processImageChangeRequest = async (req, res) => {
+  try {
+    const { requestId } = req.body;
+    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+
+    const { inboxFolder } = await _getInboxSetup();
+    const { fileId, data } = await _readInboxJson(inboxFolder.id, 'image_change_requests.json');
+    const entry = data.find(e => e.id === requestId);
+    if (!entry) return res.status(404).json({ error: 'Anfrage nicht gefunden' });
+
+    // Find image in DB
+    const image = entry.drive_file_id
+      ? db.prepare('SELECT * FROM drive_images WHERE drive_file_id = ?').get(entry.drive_file_id)
+      : db.prepare('SELECT * FROM drive_images WHERE original_name = ? ORDER BY id DESC LIMIT 1').get(entry.file_name);
+
+    if (image) {
+      const { custom_title, notes } = entry.changes || {};
+      const updates = [];
+      const params = [];
+
+      if (custom_title !== undefined && custom_title !== null) {
+        updates.push('name = ?');
+        params.push(custom_title);
+      }
+      if (notes !== undefined && notes !== null) {
+        updates.push('image_notes = ?');
+        params.push(notes);
+      }
+
+      if (updates.length > 0) {
+        params.push(image.id);
+        db.prepare(`UPDATE drive_images SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+      }
+    } else {
+      console.warn(`[Postfach] Image not found in DB for change request ${requestId}`);
+    }
+
+    // Remove from JSON
+    const updatedData = data.filter(e => e.id !== requestId);
+    await _saveInboxJson(inboxFolder.id, 'image_change_requests.json', fileId, updatedData);
+
+    logActivity(
+      'image_change',
+      `Bildinfo geändert: „${entry.file_name}"`,
+      `Von ${entry.user_name || entry.device_name}`,
+      entry.device_name,
+      `img_chg_${requestId}`
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[Postfach] processImageChangeRequest error:', error.message);
+    res.status(500).json({ error: 'Fehler: ' + error.message });
+  }
+};
+
+/**
+ * POST /api/mobile/inbox/reject-image-change
+ * Body: { requestId }
+ */
+const rejectImageChangeRequest = async (req, res) => {
+  try {
+    const { requestId } = req.body;
+    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+
+    const { inboxFolder } = await _getInboxSetup();
+    const { fileId, data } = await _readInboxJson(inboxFolder.id, 'image_change_requests.json');
+    const updatedData = data.filter(e => e.id !== requestId);
+    await _saveInboxJson(inboxFolder.id, 'image_change_requests.json', fileId, updatedData);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[Postfach] rejectImageChangeRequest error:', error.message);
+    res.status(500).json({ error: 'Fehler: ' + error.message });
+  }
+};
+
 module.exports = {
   getActivities,
   markActivitiesRead,
@@ -3545,6 +4024,16 @@ module.exports = {
   proxyProjectChangeImage,
   confirmProjectChanges,
   rejectProjectChanges,
+  // Postfach – new JSON-based endpoints
+  getInboxRequests,
+  processImageRequest,
+  rejectImageRequest,
+  processProjektRequest,
+  rejectProjektRequest,
+  processProjektChangeRequest,
+  rejectProjektChangeRequest,
+  processImageChangeRequest,
+  rejectImageChangeRequest,
   mobileGoogleAuth,
   mobileGoogleCallback,
   mobileRefreshToken,

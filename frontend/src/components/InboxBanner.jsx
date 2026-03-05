@@ -9,16 +9,17 @@ function InboxBanner() {
 
   const refresh = useCallback(async () => {
     try {
-      // Poll inbox + project-changes so the backend can log new activities
-      await Promise.allSettled([
-        fetch('/api/mobile/inbox'),
-        fetch('/api/mobile/project-changes'),
-      ]);
-      // Then check how many unread activities were produced
-      const res = await fetch('/api/mobile/activities?unread_count=1');
-      if (res.ok) {
-        const data = await res.json();
-        setUnreadCount(data.unread_count || 0);
+      // Poll new JSON-based requests to detect new inbox items
+      const reqRes = await fetch('/api/mobile/inbox/requests');
+      if (reqRes.ok) {
+        const data = await reqRes.json();
+        const count =
+          (data.image_requests?.length || 0) +
+          (data.projekt_requests?.length || 0) +
+          (data.image_change_requests?.length || 0) +
+          (data.projekt_change_requests?.length || 0) +
+          (data.delete_requests?.length || 0);
+        setUnreadCount(count);
       }
     } catch {
       // ignore network errors
@@ -45,8 +46,8 @@ function InboxBanner() {
         <Inbox size={18} />
         <span>
           {unreadCount === 1
-            ? '1 neue Handy-App Aktivität'
-            : `${unreadCount} neue Handy-App Aktivitäten`}
+            ? '1 neue Postfach-Anfrage'
+            : `${unreadCount} neue Postfach-Anfragen`}
         </span>
         <span className="inbox-banner-cta">Jetzt ansehen →</span>
       </div>
