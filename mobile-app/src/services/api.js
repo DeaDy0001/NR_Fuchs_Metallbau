@@ -90,6 +90,7 @@ export const fetchProjects = async (onProject = null) => {
       id: folder.id,
       folder_name: folder.name,
       folder_id: folder.id,
+      db_id: meta.db_id || null,
       color: meta.color || null,
       notes: meta.notes || null,
       tags: JSON.stringify(meta.tags || []),

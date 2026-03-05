@@ -140,6 +140,7 @@ router.use(mobile.authenticateDevice);
 router.get('/projects', mobile.getProjects);
 router.get('/projects/:id/images', mobile.getProjectImages);
 router.post('/projects', mobile.createProject);
+router.patch('/projects/:id', mobile.updateProjectMeta);
 
 // Upload
 router.post('/upload', upload.single('image'), mobile.uploadImage);

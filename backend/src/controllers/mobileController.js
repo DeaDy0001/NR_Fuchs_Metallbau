@@ -821,6 +821,52 @@ const createProject = (req, res) => {
   }
 };
 
+/**
+ * Update project metadata (color, notes, tags) from mobile app
+ * PATCH /api/mobile/projects/:id
+ */
+const updateProjectMeta = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { color, notes, tags } = req.body;
+
+    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(parseInt(id));
+    if (!project) {
+      return res.status(404).json({ error: 'Projekt nicht gefunden' });
+    }
+
+    const updates = [];
+    const params = [];
+
+    if (color !== undefined) { updates.push('color = ?'); params.push(color); }
+    if (notes !== undefined) { updates.push('notes = ?'); params.push(notes); }
+    if (tags !== undefined) { updates.push('tags = ?'); params.push(JSON.stringify(Array.isArray(tags) ? tags : [])); }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'Keine Felder zum Aktualisieren angegeben' });
+    }
+
+    updates.push("updated_at = datetime('now')");
+    params.push(project.id);
+
+    db.prepare(`UPDATE projects SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+
+    const updatedProject = db.prepare('SELECT * FROM projects WHERE id = ?').get(project.id);
+
+    // Push updated project.json to Drive async
+    const projectsCtrl = require('./projectsController');
+    projectsCtrl.pushProjectJsonToDrive(updatedProject).catch(() => {});
+
+    res.json({
+      ...updatedProject,
+      tags: updatedProject.tags ? JSON.parse(updatedProject.tags) : [],
+    });
+  } catch (error) {
+    console.error('Error updating project meta from mobile:', error);
+    res.status(500).json({ error: 'Fehler beim Aktualisieren' });
+  }
+};
+
 // ============================================================
 // IMAGE UPLOAD
 // ============================================================
@@ -3426,6 +3472,7 @@ module.exports = {
   getProjects,
   getProjectImages,
   createProject,
+  updateProjectMeta,
   uploadImage,
   getSyncData,
   getImage,

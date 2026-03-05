@@ -26,5 +26,6 @@ router.put('/:id/rename', projectsController.renameProject);
 router.delete('/:id', projectsController.deleteProject);
 router.post('/sync', projectsController.syncProjects);
 router.post('/sync-drive', projectsController.syncProjectsToDrive);
+router.post('/sync-metadata-from-drive', projectsController.syncMetadataFromDrive);
 
 module.exports = router;

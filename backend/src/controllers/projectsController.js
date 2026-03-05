@@ -36,6 +36,7 @@ const pushProjectJsonToDrive = async (project) => {
     const projectFolder = await findOrCreate(projektFolder.id, project.folder_name);
     const tags = project.tags ? (typeof project.tags === 'string' ? JSON.parse(project.tags) : project.tags) : [];
     await upsertJsonFileToDrive(projectFolder.id, 'project.json', {
+      db_id: project.id || null,
       color: project.color || null,
       notes: project.notes || null,
       tags,
@@ -1630,6 +1631,7 @@ const syncProjectsToDrive = async (req, res) => {
             ? (typeof project.tags === 'string' ? JSON.parse(project.tags) : project.tags)
             : [];
           await upsertJsonFileToDrive(projectDriveFolder.id, 'project.json', {
+            db_id: project.id || null,
             color: project.color || null,
             notes: project.notes || null,
             tags,
@@ -1735,6 +1737,102 @@ const syncProjectsToDrive = async (req, res) => {
   }
 };
 
+/**
+ * Pull project metadata (color, notes, tags) from Drive project.json files and update DB.
+ * Reads NR_Fuchs_Meta/Projekte/<name>/project.json for each known project folder.
+ * Only updates DB if the Drive JSON's updated_at is newer than the DB's updated_at.
+ * POST /api/projects/sync-metadata-from-drive
+ */
+const syncMetadataFromDrive = async (req, res) => {
+  try {
+    if (!await isAuthenticated()) {
+      return res.status(401).json({ error: 'Nicht mit Google angemeldet' });
+    }
+
+    const projekteFolder = await findProjekteFolderOnDrive();
+    if (!projekteFolder) {
+      return res.json({ updated: 0, message: 'Kein Projekte-Ordner auf Drive gefunden' });
+    }
+
+    const { readDriveFileAsJson } = require('../services/googleDriveService');
+
+    // List all project folders on Drive
+    const driveFolders = await listFoldersInFolder(projekteFolder.id);
+    const setting = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+
+    let updated = 0;
+    const details = [];
+
+    for (const folder of driveFolders) {
+      try {
+        // Find project.json inside this folder
+        const files = await listFilesInFolder(folder.id);
+        const metaFile = files.find(f => f.name === 'project.json');
+        if (!metaFile) continue;
+
+        const meta = await readDriveFileAsJson(metaFile.id);
+        if (!meta) continue;
+
+        // Find matching project in DB by folder_name
+        const project = db.prepare('SELECT * FROM projects WHERE folder_name = ?').get(folder.name);
+        if (!project) continue;
+
+        // Compare updated_at: only update if Drive is newer
+        const driveDate = meta.updated_at ? new Date(meta.updated_at) : null;
+        const dbDate = project.updated_at ? new Date(project.updated_at) : null;
+
+        if (driveDate && dbDate && driveDate <= dbDate) continue;
+
+        // Build update fields from Drive JSON (only update fields present in meta)
+        const updates = [];
+        const params = [];
+
+        if (meta.color !== undefined && meta.color !== project.color) {
+          updates.push('color = ?');
+          params.push(meta.color || null);
+        }
+        if (meta.notes !== undefined && meta.notes !== project.notes) {
+          updates.push('notes = ?');
+          params.push(meta.notes || null);
+        }
+        if (meta.tags !== undefined) {
+          const driveTagsStr = JSON.stringify(Array.isArray(meta.tags) ? meta.tags : []);
+          if (driveTagsStr !== (project.tags || '[]')) {
+            updates.push('tags = ?');
+            params.push(driveTagsStr);
+          }
+        }
+
+        if (updates.length === 0) continue;
+
+        updates.push("updated_at = ?");
+        params.push(meta.updated_at || new Date().toISOString());
+        params.push(project.id);
+
+        db.prepare(`UPDATE projects SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+
+        // Also update local .project.json if path configured
+        if (setting?.project_path) {
+          const projectFolderPath = path.join(setting.project_path, project.folder_name);
+          const updatedProject = db.prepare('SELECT * FROM projects WHERE id = ?').get(project.id);
+          await writeProjectMetadata(updatedProject, projectFolderPath).catch(() => {});
+        }
+
+        updated++;
+        details.push(folder.name);
+      } catch (e) {
+        console.warn(`[Projects] syncMetadataFromDrive: Fehler bei "${folder.name}":`, e.message);
+      }
+    }
+
+    console.log(`[Projects] syncMetadataFromDrive: ${updated} Projekte aktualisiert`);
+    res.json({ updated, details, message: `${updated} Projekt(e) von Drive aktualisiert` });
+  } catch (error) {
+    console.error('Error syncing metadata from Drive:', error);
+    res.status(500).json({ error: 'Sync fehlgeschlagen: ' + error.message });
+  }
+};
+
 module.exports = {
   getProjectSettings,
   setProjectPath,
@@ -1756,6 +1854,8 @@ module.exports = {
   deletePendingProject,
   // Google Drive sync
   syncProjectsToDrive,
+  syncMetadataFromDrive,
+  pushProjectJsonToDrive,
   // Year detection
   setYearMode,
 };

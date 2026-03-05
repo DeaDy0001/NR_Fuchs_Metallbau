@@ -34,6 +34,8 @@ function ProjectsSettings() {
   const [driveSyncing, setDriveSyncing] = useState(false);
   const [includePhotos, setIncludePhotos] = useState(true);
   const [driveSyncResult, setDriveSyncResult] = useState(null);
+  const [metaSyncing, setMetaSyncing] = useState(false);
+  const [metaSyncResult, setMetaSyncResult] = useState(null);
 
   // Year detection
   const [yearMode, setYearMode] = useState('flat');
@@ -154,6 +156,24 @@ function ProjectsSettings() {
       setDriveSyncResult({ success: false, error: 'Verbindungsfehler: ' + error.message });
     } finally {
       setDriveSyncing(false);
+    }
+  };
+
+  const handleMetaSyncFromDrive = async () => {
+    setMetaSyncing(true);
+    setMetaSyncResult(null);
+    try {
+      const response = await fetch('/api/projects/sync-metadata-from-drive', { method: 'POST' });
+      const data = await response.json();
+      if (response.ok) {
+        setMetaSyncResult({ success: true, updated: data.updated, details: data.details || [], message: data.message });
+      } else {
+        setMetaSyncResult({ success: false, error: data.error || 'Synchronisierung fehlgeschlagen' });
+      }
+    } catch (error) {
+      setMetaSyncResult({ success: false, error: 'Verbindungsfehler: ' + error.message });
+    } finally {
+      setMetaSyncing(false);
     }
   };
 
@@ -392,6 +412,37 @@ function ProjectsSettings() {
               </>
             ) : (
               <span>{driveSyncResult.error}</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="settings-section">
+        <h2>Metadaten von Drive lesen</h2>
+        <p className="section-description">
+          Liest Farbe, Notizen und Tags aus den <code>project.json</code>-Dateien auf Google Drive
+          (NR_Fuchs_Meta/Projekte/) und aktualisiert die Datenbank – z.B. nach Änderungen in der Handy-App.
+          Es werden nur Einträge aktualisiert, die auf Drive neuer sind als in der Software.
+        </p>
+        <button
+          className="btn btn-secondary"
+          onClick={handleMetaSyncFromDrive}
+          disabled={metaSyncing}
+        >
+          <Cloud size={18} className={metaSyncing ? 'spinning' : ''} />
+          {metaSyncing ? 'Lese Metadaten von Drive...' : 'Metadaten von Drive lesen'}
+        </button>
+        {metaSyncResult && (
+          <div className={`drive-sync-result ${metaSyncResult.success ? 'success' : 'error'}`} style={{ marginTop: 12 }}>
+            {metaSyncResult.success ? (
+              <>
+                <strong>{metaSyncResult.message}</strong>
+                {metaSyncResult.details && metaSyncResult.details.length > 0 && (
+                  <ul>{metaSyncResult.details.map((d, i) => <li key={i}>{d}</li>)}</ul>
+                )}
+              </>
+            ) : (
+              <span>{metaSyncResult.error}</span>
             )}
           </div>
         )}
