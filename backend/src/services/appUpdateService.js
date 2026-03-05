@@ -50,12 +50,21 @@ const getUpdateFolder = async (rootFolderId) => {
 };
 
 const deleteIfExists = async (folderId, fileName) => {
+  let files;
   try {
-    const files = await listAllFilesInFolder(folderId);
-    for (const f of files.filter(f => f.name === fileName)) {
+    files = await listAllFilesInFolder(folderId);
+  } catch (e) {
+    console.error(`[AppUpdate] Fehler beim Auflisten des Ordners (${fileName} nicht gelöscht):`, e.message);
+    return;
+  }
+  for (const f of files.filter(f => f.name === fileName)) {
+    try {
       await deleteFileFromDrive(f.id);
+      console.log(`[AppUpdate] Alte Datei gelöscht: ${fileName} (${f.id})`);
+    } catch (e) {
+      console.error(`[AppUpdate] Konnte ${fileName} (${f.id}) nicht löschen:`, e.message);
     }
-  } catch {}
+  }
 };
 
 // ── core upload ──────────────────────────────────────────────────────────────
