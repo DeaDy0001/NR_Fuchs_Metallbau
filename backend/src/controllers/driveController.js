@@ -4,7 +4,6 @@ const fs = require('fs-extra');
 const { syncDrivePath, startAutoSync, stopAutoSync } = require('../services/driveSyncService');
 const { deleteFile, compressImage, generateThumbnail, moveFileOnDrive, getFileMetadata, findOrCreateSubfolder, findSubfolder, extractFolderId, createFolderOnDrive, listFoldersInFolder, upsertJsonFileToDrive } = require('../services/googleDriveService');
 const { isAuthenticated } = require('../services/authService');
-const { isAuthenticated } = require('../services/authService');
 
 /**
  * Build and upload settings.json to NR_Fuchs_Meta/src/settings/ on Google Drive.
