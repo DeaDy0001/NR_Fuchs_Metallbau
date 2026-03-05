@@ -1,13 +1,14 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Image, FolderKanban, Inbox } from 'lucide-react';
+import { Image, FolderKanban, Inbox, User, LogOut } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import './Sidebar.css';
 
 function Sidebar({ collapsed }) {
   const location = useLocation();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const [inboxUnread, setInboxUnread] = useState(0);
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const viewTabs = user?.permissions?.view_tabs || ['inbox', 'images', 'projects'];
 
   const checkUnread = useCallback(async () => {
@@ -84,6 +85,44 @@ function Sidebar({ collapsed }) {
         )}
 
       </nav>
+
+      {/* User section */}
+      <div className="sidebar-user-section">
+        <button
+          className={`sidebar-user-btn${collapsed ? ' collapsed' : ''}`}
+          onClick={() => setShowUserMenu(v => !v)}
+          title={user?.name || 'Benutzer'}
+        >
+          {user?.picture
+            ? <img src={user.picture} alt={user?.name} className="sidebar-user-avatar" referrerPolicy="no-referrer" />
+            : <div className="sidebar-user-avatar sidebar-user-avatar-placeholder"><User size={16} /></div>
+          }
+          {!collapsed && <span className="sidebar-user-name">{user?.name || 'Benutzer'}</span>}
+        </button>
+
+        {showUserMenu && (
+          <>
+            <div className="sidebar-user-overlay" onClick={() => setShowUserMenu(false)} />
+            <div className="sidebar-user-menu">
+              <div className="sidebar-user-info">
+                {user?.picture && (
+                  <img src={user.picture} alt={user?.name} className="sidebar-menu-avatar" referrerPolicy="no-referrer" />
+                )}
+                <div>
+                  <div className="sidebar-user-fullname">{user?.name}</div>
+                  <div className="sidebar-user-email">{user?.email}</div>
+                  {user?.role_name && <div className="sidebar-user-role">{user.role_name}</div>}
+                </div>
+              </div>
+              <div className="sidebar-user-divider" />
+              <button className="sidebar-user-logout" onClick={() => { setShowUserMenu(false); logout(); }}>
+                <LogOut size={14} />
+                Abmelden
+              </button>
+            </div>
+          </>
+        )}
+      </div>
 
       {/* NetRock Footer */}
       <div className="sidebar-footer">

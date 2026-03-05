@@ -15,8 +15,8 @@ const tabs = [
   { id: 'images', label: 'Bilder', icon: Image },
   { id: 'projects', label: 'Projekte', icon: FolderKanban },
   { id: 'mobile', label: 'Handy App', icon: Smartphone },
-  { id: 'update', label: 'Update', icon: Download },
   { id: 'users', label: 'Benutzer', icon: Users },
+  { id: 'update', label: 'Update', icon: Download },
 ];
 
 const devTab = { id: 'dev', label: 'Dev', icon: Code };

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Fuchs Metallbau",
     "slug": "fuchs-metallbau",
-    "version": "1.0.1",
+    "version": "test_version",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
