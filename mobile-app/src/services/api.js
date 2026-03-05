@@ -185,26 +185,18 @@ export const createProject = async (name) => {
 
   // Check if folder already exists in inbox
   const existing = await findFolder(inboxFolderId, name);
-  if (existing) {
-    return {
-      success: true,
-      id: existing.id,
-      folder_name: name,
-      folder_id: existing.id,
-    };
-  }
+  const folder = existing || await findOrCreateFolder(inboxFolderId, name);
 
-  // Create project folder under inbox/
-  const folder = await findOrCreateFolder(inboxFolderId, name);
-
-  // Write creator info so desktop inbox shows who created this project
+  // Write/update creator info so desktop inbox shows who created this project
   try {
     const userName = await getSetting('userName', '');
     if (userName) {
-      await createJsonFile(folder.id, '_meta.json', {
-        created_by: userName,
-        created_at: new Date().toISOString(),
-      });
+      const existingFiles = await listFiles(folder.id, { name: '_meta.json', fields: 'files(id,name)' });
+      if (existingFiles.length > 0) {
+        await updateJsonFile(existingFiles[0].id, { created_by: userName, created_at: new Date().toISOString() });
+      } else {
+        await createJsonFile(folder.id, '_meta.json', { created_by: userName, created_at: new Date().toISOString() });
+      }
     }
   } catch {}
 
