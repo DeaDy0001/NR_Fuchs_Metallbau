@@ -310,6 +310,7 @@ function InboxItemRow({ item, projects, canManage, onRemove, onActivity }) {
     const next = !expanded;
     setExpanded(next);
     if (next) loadImages();
+    else setImages(null);
   };
 
   const now = () => new Date().toISOString();
@@ -568,9 +569,8 @@ function DeleteRequestRow({ req, canManage, onRemove, onActivity }) {
 
   const now = () => new Date().toISOString();
 
-  const previewSrc = req.project_name
-    ? `/api/mobile/inbox/delete-preview/${encodeURIComponent(req.project_name)}/${encodeURIComponent(req.file_name)}`
-    : null;
+  const previewSrc = `/api/mobile/inbox/delete-preview/${encodeURIComponent(req.file_name)}${req.project_name ? `?project=${encodeURIComponent(req.project_name)}` : ''}`;
+  const localProject = req._local_project || req.project_name || null;
 
   const handleProcess = async () => {
     if (!confirm(`Datei „${req.file_name}" wirklich löschen?`)) return;
@@ -624,10 +624,12 @@ function DeleteRequestRow({ req, canManage, onRemove, onActivity }) {
 
       {expanded && (
         <div className="inbox-entry-body">
-          {!previewSrc || imgError ? (
-            <p className="inbox-entry-no-images">
-              {imgError ? 'Bild nicht lokal verfügbar' : 'Kein Projekt angegeben – Vorschau nicht möglich'}
-            </p>
+          <div style={{ marginBottom: 8, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+            <strong>Projekt:</strong>{' '}
+            {localProject ? <span style={{ color: 'var(--text-primary)' }}>{localProject}</span> : <span style={{ fontStyle: 'italic' }}>Nicht in einem Projekt</span>}
+          </div>
+          {imgError ? (
+            <p className="inbox-entry-no-images">Bild nicht lokal verfügbar</p>
           ) : (
             <div className="inbox-image-grid">
               <div className="inbox-image-thumb">

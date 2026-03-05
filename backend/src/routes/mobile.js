@@ -83,7 +83,7 @@ router.post('/activities/read', mobile.markActivitiesRead);
 // Inbox (called from desktop)
 router.get('/inbox', mobile.getInbox);
 router.get('/inbox/image-proxy/:fileId', mobile.proxyInboxImage);
-router.get('/inbox/delete-preview/:projectName/:fileName', mobile.previewDeleteRequestImage);
+router.get('/inbox/delete-preview/:fileName', mobile.previewDeleteRequestImage);
 router.get('/inbox/:folderId/images', mobile.getInboxImages);
 router.post('/inbox/confirm', mobile.confirmInboxProject);
 router.post('/inbox/add-to-library', mobile.addToLibrary);

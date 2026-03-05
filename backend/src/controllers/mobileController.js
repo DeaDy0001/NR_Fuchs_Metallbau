@@ -1381,27 +1381,40 @@ const getInbox = async (req, res) => {
       console.error('Error reading delete requests:', e.message);
     }
 
-    // Log new inbox folders as activities (deduplicated by folder id)
+    // Mark inbox folders as seen for deduplication only — activities are logged when the user processes them.
     for (const item of driveInboxProjects) {
-      const sourceId = `inbox_folder_${item.drive_folder_id}`;
-      const title = item.is_user_inbox
-        ? `${item.image_count} Foto${item.image_count !== 1 ? 's' : ''} hochgeladen`
-        : `Neues Projekt: „${item.original_name}"`;
-      const desc = item.is_user_inbox
-        ? `ohne Projektzuordnung von ${item.device_user}`
-        : `${item.image_count} Bild${item.image_count !== 1 ? 'er' : ''} warten auf Bestätigung`;
-      logActivity('inbox_item', title, desc, item.device_user, sourceId);
+      markSourceIdSeen(`inbox_folder_${item.drive_folder_id}`);
     }
 
-    // Log new delete requests (deduplicated by file name + requester)
+    // Mark delete request source_ids as seen (deduplicated) but do NOT log visible activities yet.
+    // Activities are only logged when the request is actually processed or dismissed.
     for (const req of deleteRequests) {
       const reqName = req.file_name || req.fileName || '';
       const reqBy = req.requested_by || 'Unbekannt';
       const sourceId = `delete_req_${reqName}_${reqBy}`;
-      logActivity('delete_request', 'Löschanfrage', `„${reqName}" von ${reqBy}`, reqBy, sourceId);
+      markSourceIdSeen(sourceId);
     }
 
-    res.json({ projects: driveInboxProjects, deleteRequests });
+    // Enrich delete requests with local DB info (project + thumbnail)
+    const enrichedDeleteRequests = deleteRequests.map(req => {
+      const fileName = req.file_name || req.fileName || '';
+      const dbImage = db.prepare(`
+        SELECT di.thumbnail_path, di.local_path, p.folder_name as local_project_name, p.id as local_project_id
+        FROM drive_images di
+        LEFT JOIN projects p ON p.id = di.project_id
+        WHERE di.original_name = ? OR di.name = ?
+        LIMIT 1
+      `).get(fileName, fileName);
+
+      return {
+        ...req,
+        _local_project: dbImage?.local_project_name || null,
+        _local_project_id: dbImage?.local_project_id || null,
+        _has_local_preview: !!(dbImage?.thumbnail_path || dbImage?.local_path),
+      };
+    });
+
+    res.json({ projects: driveInboxProjects, deleteRequests: enrichedDeleteRequests });
   } catch (error) {
     console.error('Error getting inbox:', error);
     res.status(500).json({ error: 'Failed to get inbox' });
@@ -1572,6 +1585,7 @@ const confirmInboxProject = async (req, res) => {
     }
 
     console.log(`✅ Project "${projectName}" confirmed: ${downloaded}/${images.length} images downloaded and registered`);
+    logActivity('project_create', `Projekt angelegt: „${projectName}"`, `${downloaded} Bild${downloaded !== 1 ? 'er' : ''} aus Inbox importiert`, null, null);
     res.json({
       success: true,
       projectId,
@@ -1831,6 +1845,7 @@ const mergeSelectedInboxImages = async (req, res) => {
       // Non-critical
     }
 
+    logActivity('project_change', `Inbox zusammengeführt`, `${movedCount} Bild${movedCount !== 1 ? 'er' : ''} in Projekt übertragen`, null, null);
     res.json({
       success: true,
       movedCount,
@@ -1907,6 +1922,7 @@ const deleteInboxProject = async (req, res) => {
       // Non-critical
     }
 
+    logActivity('delete_request', 'Inbox-Eintrag gelöscht', 'Eintrag aus Inbox entfernt', null, null);
     res.json({ success: true, message: 'Projekt aus Inbox gelöscht' });
   } catch (error) {
     console.error('Error deleting inbox project:', error);
@@ -2843,6 +2859,13 @@ const processDeleteRequests = async (req, res) => {
       await deleteFileFromDrive(deleteFile.id);
     }
 
+    // Log activity for each processed delete request
+    for (const req of requestsToProcess) {
+      const reqName = req.file_name || req.fileName || '';
+      const reqBy = req.requested_by || null;
+      logActivity('delete_request', 'Löschanfrage ausgeführt', `„${reqName}"${req.project_name ? ` aus „${req.project_name}"` : ''} gelöscht`, reqBy, `delete_done_${req.id}`);
+    }
+
     res.json({
       success: true,
       deletedCount,
@@ -2885,6 +2908,7 @@ const dismissDeleteRequests = async (req, res) => {
     if (!deleteFile) return res.status(404).json({ error: 'Keine Löschanfragen gefunden' });
 
     const allRequests = await readDriveFileAsJson(deleteFile.id);
+    const dismissed = Array.isArray(allRequests) ? allRequests.filter(r => requestIds.includes(r.id)) : [];
     const remaining = Array.isArray(allRequests)
       ? allRequests.filter(r => !requestIds.includes(r.id))
       : [];
@@ -2895,6 +2919,13 @@ const dismissDeleteRequests = async (req, res) => {
       await deleteFileFromDrive(deleteFile.id);
     }
 
+    // Log activity for each dismissed request
+    for (const req of dismissed) {
+      const reqName = req.file_name || req.fileName || '';
+      const reqBy = req.requested_by || null;
+      logActivity('delete_request', 'Löschanfrage abgewiesen', `„${reqName}" – Datei behalten`, reqBy, `delete_dismissed_${req.id}`);
+    }
+
     res.json({ success: true, dismissed: requestIds.length });
   } catch (error) {
     console.error('Error dismissing delete requests:', error);
@@ -2903,23 +2934,51 @@ const dismissDeleteRequests = async (req, res) => {
 };
 
 /**
- * Preview a delete request image from local project folder
- * GET /api/mobile/inbox/delete-preview/:projectName/:fileName
+ * Preview a delete request image.
+ * Searches: (1) local project Bilder/ folder, (2) drive_images DB by filename (thumbnail), (3) redirect to thumbnail URL.
+ * GET /api/mobile/inbox/delete-preview/:fileName?project=projectName
  */
 const previewDeleteRequestImage = async (req, res) => {
   try {
-    const { projectName, fileName } = req.params;
+    const { fileName } = req.params;
+    const projectName = req.query.project;
     const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
-    if (!settings?.project_path) {
-      return res.status(404).json({ error: 'Kein Projektpfad konfiguriert' });
+
+    // 1. Try local project Bilder/ folder
+    if (projectName && settings?.project_path) {
+      const filePath = path.join(settings.project_path, projectName, 'Bilder', fileName);
+      if (await fs.pathExists(filePath)) {
+        return res.sendFile(path.resolve(filePath));
+      }
     }
 
-    const filePath = path.join(settings.project_path, projectName, 'Bilder', fileName);
-    if (await fs.pathExists(filePath)) {
-      return res.sendFile(path.resolve(filePath));
+    // 2. Search drive_images DB by filename for thumbnail or local file
+    const dbImage = db.prepare(`
+      SELECT di.*, p.folder_name as project_folder
+      FROM drive_images di
+      LEFT JOIN projects p ON p.id = di.project_id
+      WHERE di.original_name = ? OR di.name = ?
+      ORDER BY di.created_at DESC LIMIT 1
+    `).get(fileName, fileName);
+
+    if (dbImage) {
+      // Try thumbnail (typically /uploads/thumbnails/...)
+      if (dbImage.thumbnail_url && dbImage.thumbnail_url.startsWith('/uploads/')) {
+        const thumbPath = path.join(__dirname, '../../../', dbImage.thumbnail_url);
+        if (await fs.pathExists(thumbPath)) {
+          return res.sendFile(path.resolve(thumbPath));
+        }
+      }
+      // Try local project path via project_folder
+      if (dbImage.project_folder && settings?.project_path) {
+        const filePath = path.join(settings.project_path, dbImage.project_folder, 'Bilder', fileName);
+        if (await fs.pathExists(filePath)) {
+          return res.sendFile(path.resolve(filePath));
+        }
+      }
     }
 
-    res.status(404).json({ error: 'Bild nicht lokal gefunden' });
+    res.status(404).json({ error: 'Bild nicht gefunden' });
   } catch (error) {
     console.error('Error serving delete request preview:', error);
     res.status(500).json({ error: error.message });
@@ -3035,16 +3094,7 @@ const getProjectChanges = async (req, res) => {
       if (unlogged.length > 0) {
         // Only log if at least one image was explicitly uploaded via the mobile app
         // (detected by [FUCHS_META] tag). Desktop Drive operations must not appear in Inbox.
-        if (change.uploaders.length > 0) {
-          const uploader = change.uploaders.join(', ');
-          logActivity(
-            'project_change',
-            `${unlogged.length} neue${unlogged.length === 1 ? 's Bild' : ' Bilder'} in Projekt „${change.project_name}"`,
-            `hochgeladen von ${uploader}`,
-            uploader
-          );
-        }
-        // Mark all images as seen regardless, so they don't retrigger on the next scan
+        // Mark all images as seen — activity is logged when the user confirms/rejects, not on detection
         for (const img of unlogged) markSourceIdSeen(`drive_img_${img.id}`);
       }
     }
@@ -3177,6 +3227,7 @@ const confirmProjectChanges = async (req, res) => {
       }
     }
 
+    logActivity('project_change', `${downloaded} neue${downloaded !== 1 ? ' Bilder' : 's Bild'} bestätigt`, `In Projekt „${projectName}" importiert`, null, null);
     res.json({
       success: true,
       message: `${downloaded}/${fileIds.length} Bilder für "${projectName}" heruntergeladen`,
@@ -3210,6 +3261,7 @@ const rejectProjectChanges = async (req, res) => {
       }
     }
 
+    logActivity('project_change', `${deleted} Bild${deleted !== 1 ? 'er' : ''} abgelehnt`, `Aus Projekt „${projectName}" gelöscht`, null, null);
     res.json({
       success: true,
       message: `${deleted}/${fileIds.length} Bilder aus "${projectName}" gelöscht`,
