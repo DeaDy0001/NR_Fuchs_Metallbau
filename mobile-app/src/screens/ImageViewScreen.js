@@ -567,8 +567,38 @@ export default function ImageViewScreen({ route, navigation }) {
         )}
       </View>
 
-      {/* Metadata editing modal */}
-      {editingField && (
+      {/* Notes editing - fullscreen modal so keyboard never overlaps */}
+      {editingField === 'notes' && (
+        <Modal
+          animationType="slide"
+          onShow={() => {
+            setTimeout(() => editInputRef.current?.focus(), 100);
+          }}
+        >
+          <View style={styles.notesFullScreen}>
+            <View style={styles.notesFullScreenHeader}>
+              <Text style={styles.notesFullScreenTitle}>Notizen</Text>
+              <TouchableOpacity onPress={saveEditField}>
+                <Ionicons name="checkmark-circle" size={28} color={colors.accent} />
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              ref={editInputRef}
+              style={styles.notesFullScreenInput}
+              value={editFieldValue}
+              onChangeText={setEditFieldValue}
+              placeholder="Notizen eingeben..."
+              placeholderTextColor={colors.textTertiary}
+              multiline
+              textAlignVertical="top"
+              autoFocus
+            />
+          </View>
+        </Modal>
+      )}
+
+      {/* Title editing - bottom-sheet with proper keyboard avoidance */}
+      {editingField === 'title' && (
         <Modal
           transparent
           animationType="slide"
@@ -578,32 +608,26 @@ export default function ImageViewScreen({ route, navigation }) {
         >
           <KeyboardAvoidingView
             style={{ flex: 1 }}
-            behavior="padding"
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           >
             <TouchableOpacity style={styles.editModalOverlay} activeOpacity={1} onPress={saveEditField}>
               <View style={styles.editModalContent} onStartShouldSetResponder={() => true}>
                 <View style={styles.editModalHeader}>
-                  <Text style={styles.editModalTitle}>
-                    {editingField === 'title' ? 'Bild-Titel' : 'Notizen'}
-                  </Text>
+                  <Text style={styles.editModalTitle}>Bild-Titel</Text>
                   <TouchableOpacity onPress={saveEditField}>
                     <Ionicons name="checkmark-circle" size={28} color={colors.accent} />
                   </TouchableOpacity>
                 </View>
                 <TextInput
                   ref={editInputRef}
-                  style={[
-                    styles.editModalInput,
-                    editingField === 'notes' && { height: 120, textAlignVertical: 'top' }
-                  ]}
+                  style={styles.editModalInput}
                   value={editFieldValue}
                   onChangeText={setEditFieldValue}
-                  placeholder={editingField === 'title' ? 'Bildname eingeben...' : 'Notizen eingeben...'}
+                  placeholder="Bildname eingeben..."
                   placeholderTextColor={colors.textTertiary}
                   autoFocus
-                  multiline={editingField === 'notes'}
-                  returnKeyType={editingField === 'title' ? 'done' : 'default'}
-                  onSubmitEditing={editingField === 'title' ? saveEditField : undefined}
+                  returnKeyType="done"
+                  onSubmitEditing={saveEditField}
                 />
               </View>
             </TouchableOpacity>
@@ -724,6 +748,37 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textTertiary,
     fontWeight: '500',
+  },
+
+  // Notes fullscreen
+  notesFullScreen: {
+    flex: 1,
+    backgroundColor: colors.bgPrimary,
+    padding: 20,
+    paddingTop: 60,
+  },
+  notesFullScreenHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  notesFullScreenTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  notesFullScreenInput: {
+    flex: 1,
+    backgroundColor: colors.inputBg || colors.bgSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: colors.textPrimary,
+    textAlignVertical: 'top',
   },
 
   // Edit modal
