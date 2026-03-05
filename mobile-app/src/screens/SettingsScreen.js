@@ -7,7 +7,7 @@ import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
 import { getSetting, setSetting, getCachedProjects } from '../services/database';
 import { getCacheSize, clearCache, cleanupCache, downloadProjectImages } from '../services/syncService';
-import { fetchProjectImages, downloadAppUpdateApk } from '../services/api';
+import { fetchProjectImages, downloadAppUpdateApk, checkAppUpdate } from '../services/api';
 import Slider from '../components/Slider';
 import * as FileSystem from 'expo-file-system/legacy';
 import Constants from 'expo-constants';
@@ -46,6 +46,8 @@ export default function SettingsScreen({ navigation }) {
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateDownloading, setUpdateDownloading] = useState(false);
   const [updateDownloadProgress, setUpdateDownloadProgress] = useState(0);
+  const [reinstalling, setReinstalling] = useState(false);
+  const [reinstallProgress, setReinstallProgress] = useState(0);
 
   const installedVersion = Constants.expoConfig?.version || '0.0.0';
 
@@ -103,6 +105,32 @@ export default function SettingsScreen({ navigation }) {
     } finally {
       setUpdateDownloading(false);
       setUpdateDownloadProgress(0);
+    }
+  };
+
+  const handleReinstall = async () => {
+    setReinstalling(true);
+    setReinstallProgress(0);
+    try {
+      const update = await checkAppUpdate();
+      if (!update?.apkFileId) {
+        alert('Fehler', 'APK nicht auf Google Drive gefunden.');
+        return;
+      }
+      const uri = await downloadAppUpdateApk(update.apkFileId, (pct) => {
+        setReinstallProgress(pct);
+      });
+      const contentUri = await FileSystem.getContentUriAsync(uri);
+      await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+        data: contentUri,
+        flags: 1,
+        type: 'application/vnd.android.package-archive',
+      });
+    } catch (e) {
+      alert('Fehler', 'Download fehlgeschlagen: ' + (e.message || 'Unbekannter Fehler'));
+    } finally {
+      setReinstalling(false);
+      setReinstallProgress(0);
     }
   };
 
@@ -337,6 +365,21 @@ export default function SettingsScreen({ navigation }) {
         {!updateChecking && !updateAvailable && (
           <Text style={styles.updateUpToDate}>App ist aktuell</Text>
         )}
+
+        {/* Reinstall button — always visible */}
+        <View style={styles.reinstallBox}>
+          {reinstalling ? (
+            <View style={styles.updateProgressBox}>
+              <View style={[styles.updateProgressBar, { width: `${reinstallProgress}%` }]} />
+              <Text style={styles.updateProgressText}>{reinstallProgress}% heruntergeladen…</Text>
+            </View>
+          ) : (
+            <TouchableOpacity style={styles.reinstallButton} onPress={handleReinstall}>
+              <Ionicons name="refresh-circle-outline" size={18} color={colors.textSecondary} />
+              <Text style={styles.reinstallButtonText}>App erneut installieren</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {/* User */}
@@ -741,6 +784,15 @@ const styles = StyleSheet.create({
   updateProgressText: {
     fontSize: 12, color: 'white', textAlign: 'center', fontWeight: '500',
   },
+
+  reinstallBox: { marginTop: 10 },
+  reinstallButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, padding: 10, borderRadius: 8,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  reinstallButtonText: { fontSize: 13, color: colors.textSecondary },
 
   // Download section
   downloadButton: {
