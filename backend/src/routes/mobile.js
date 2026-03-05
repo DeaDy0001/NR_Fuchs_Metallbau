@@ -76,6 +76,10 @@ router.post('/register-google-user', mobile.registerGoogleUser);
 router.get('/google-users', mobile.getGoogleUsers);
 router.delete('/google-users/:userId', mobile.removeGoogleUser);
 
+// Inbox activity log
+router.get('/activities', mobile.getActivities);
+router.post('/activities/read', mobile.markActivitiesRead);
+
 // Inbox (called from desktop)
 router.get('/inbox', mobile.getInbox);
 router.get('/inbox/image-proxy/:fileId', mobile.proxyInboxImage);

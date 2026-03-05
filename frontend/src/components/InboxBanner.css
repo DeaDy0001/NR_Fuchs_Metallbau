@@ -21,6 +21,13 @@
   font-size: 14px;
 }
 
+.inbox-banner-cta {
+  opacity: 0.85;
+  font-weight: 500;
+  font-size: 13px;
+  margin-left: 4px;
+}
+
 /* ========== Modal Overlay ========== */
 .pending-modal-overlay {
   position: fixed;

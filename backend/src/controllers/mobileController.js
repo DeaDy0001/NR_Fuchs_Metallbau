@@ -43,6 +43,70 @@ const getNetworkAddresses = () => {
 };
 
 // ============================================================
+// INBOX ACTIVITY LOG
+// ============================================================
+
+/**
+ * Log a new activity entry. source_id is used for deduplication:
+ * same source_id will not be inserted twice.
+ */
+const logActivity = (type, title, description, deviceName, sourceId) => {
+  try {
+    if (sourceId) {
+      const existing = db.prepare('SELECT id FROM inbox_activities WHERE source_id = ?').get(sourceId);
+      if (existing) return;
+    }
+    db.prepare(`
+      INSERT INTO inbox_activities (type, title, description, device_name, source_id)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(type, title, description || null, deviceName || null, sourceId || null);
+  } catch (e) {
+    console.error('Error logging activity:', e.message);
+  }
+};
+
+/** Mark a source_id as already-logged without creating a visible activity entry. */
+const markSourceIdSeen = (sourceId) => {
+  try {
+    db.prepare(`
+      INSERT OR IGNORE INTO inbox_activities (type, title, source_id, is_new)
+      VALUES ('_marker', '', ?, 0)
+    `).run(sourceId);
+  } catch (e) {
+    console.error('Error marking source_id seen:', e.message);
+  }
+};
+
+/** GET /api/mobile/activities */
+const getActivities = (req, res) => {
+  try {
+    if (req.query.unread_count === '1') {
+      const row = db.prepare("SELECT COUNT(*) as count FROM inbox_activities WHERE is_new = 1 AND type != '_marker'").get();
+      return res.json({ unread_count: row.count });
+    }
+    const activities = db.prepare(
+      "SELECT * FROM inbox_activities WHERE type != '_marker' ORDER BY created_at DESC"
+    ).all();
+    const unreadRow = db.prepare("SELECT COUNT(*) as count FROM inbox_activities WHERE is_new = 1 AND type != '_marker'").get();
+    res.json({ activities, unread_count: unreadRow.count });
+  } catch (e) {
+    console.error('Error getting activities:', e.message);
+    res.status(500).json({ error: 'Fehler beim Laden der Aktivitäten' });
+  }
+};
+
+/** POST /api/mobile/activities/read – mark all as read */
+const markActivitiesRead = (req, res) => {
+  try {
+    db.prepare("UPDATE inbox_activities SET is_new = 0 WHERE is_new = 1").run();
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Error marking activities read:', e.message);
+    res.status(500).json({ error: 'Fehler beim Markieren' });
+  }
+};
+
+// ============================================================
 // AUTH & DEVICE MANAGEMENT
 // ============================================================
 
@@ -749,6 +813,8 @@ const createProject = (req, res) => {
       name
     );
 
+    logActivity('project_create', `Neues Projekt erstellt`, `„${name}"`, userName);
+
     res.json({ success: true, message: `Projekt "${name}" wurde erstellt und wartet auf Bestätigung in der Software` });
   } catch (error) {
     console.error('Error creating project from mobile:', error);
@@ -877,6 +943,11 @@ const uploadImage = async (req, res) => {
     // Update mobile_uploads with processed status
     db.prepare('UPDATE mobile_uploads SET status = ? WHERE id = ?')
       .run('processed', result.lastInsertRowid);
+
+    // Log activity
+    const displayName = custom_title || path.basename(originalName, ext);
+    const projectInfo = project_name ? ` in Projekt „${project_name}"` : '';
+    logActivity('image_upload', 'Foto hochgeladen', `${displayName}${projectInfo}`, userName);
 
     res.json({
       success: true,
@@ -1262,6 +1333,26 @@ const getInbox = async (req, res) => {
       }
     } catch (e) {
       console.error('Error reading delete requests:', e.message);
+    }
+
+    // Log new inbox folders as activities (deduplicated by folder id)
+    for (const item of driveInboxProjects) {
+      const sourceId = `inbox_folder_${item.drive_folder_id}`;
+      const title = item.is_user_inbox
+        ? `${item.image_count} Foto${item.image_count !== 1 ? 's' : ''} hochgeladen`
+        : `Neues Projekt: „${item.original_name}"`;
+      const desc = item.is_user_inbox
+        ? `ohne Projektzuordnung von ${item.device_user}`
+        : `${item.image_count} Bild${item.image_count !== 1 ? 'er' : ''} warten auf Bestätigung`;
+      logActivity('inbox_item', title, desc, item.device_user, sourceId);
+    }
+
+    // Log new delete requests (deduplicated by file name + requester)
+    for (const req of deleteRequests) {
+      const reqName = req.file_name || req.fileName || '';
+      const reqBy = req.requested_by || 'Unbekannt';
+      const sourceId = `delete_req_${reqName}_${reqBy}`;
+      logActivity('delete_request', 'Löschanfrage', `„${reqName}" von ${reqBy}`, reqBy, sourceId);
     }
 
     res.json({ projects: driveInboxProjects, deleteRequests });
@@ -2889,6 +2980,25 @@ const getProjectChanges = async (req, res) => {
       }
     }
 
+    // Log new project-change images as activities (deduplicated per Drive file id)
+    for (const change of changes) {
+      const unlogged = change.new_images.filter(img => {
+        const existing = db.prepare('SELECT id FROM inbox_activities WHERE source_id = ?').get(`drive_img_${img.id}`);
+        return !existing;
+      });
+      if (unlogged.length > 0) {
+        const uploader = change.uploaders.join(', ') || 'Handy-App';
+        logActivity(
+          'project_change',
+          `${unlogged.length} neue${unlogged.length === 1 ? 's Bild' : ' Bilder'} in Projekt „${change.project_name}"`,
+          `hochgeladen von ${uploader}`,
+          uploader
+        );
+        // Mark each image so it won't trigger again
+        for (const img of unlogged) markSourceIdSeen(`drive_img_${img.id}`);
+      }
+    }
+
     res.json({ changes });
   } catch (error) {
     console.error('Error getting project changes:', error);
@@ -3299,6 +3409,8 @@ const removeGoogleUser = async (req, res) => {
 };
 
 module.exports = {
+  getActivities,
+  markActivitiesRead,
   generateConnectToken,
   getConnectInfo,
   connectLandingPage,

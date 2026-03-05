@@ -81,6 +81,25 @@
   color: var(--text-tertiary);
 }
 
+/* Inbox icon wrapper + yellow dot badge */
+.menu-item-icon-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.inbox-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #f59e0b;
+  border: 1.5px solid var(--bg-secondary);
+}
+
 .menu-item-expand-btn {
   background: none;
   border: none;

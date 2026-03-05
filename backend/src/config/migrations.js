@@ -578,6 +578,37 @@ const migrations = [
     }
   },
   {
+    id: 25,
+    name: 'create_inbox_activities_table',
+    up: () => {
+      console.log('Running migration: create_inbox_activities_table');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS inbox_activities (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          created_at TEXT DEFAULT (datetime('now')),
+          type TEXT NOT NULL,
+          device_name TEXT,
+          title TEXT NOT NULL,
+          description TEXT,
+          source_id TEXT,
+          is_new INTEGER DEFAULT 1
+        )
+      `);
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_inbox_activities_created_at
+        ON inbox_activities(created_at)
+      `);
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_inbox_activities_source_id
+        ON inbox_activities(source_id) WHERE source_id IS NOT NULL
+      `);
+
+      console.log('✓ Migration create_inbox_activities_table completed');
+    }
+  },
+  {
     id: 24,
     name: 'create_mobile_users_table',
     up: () => {
