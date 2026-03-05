@@ -74,7 +74,7 @@ router.get('/me', (req, res) => {
   try {
     const session = db.prepare(`
       SELECT u.id, u.email, u.name, u.picture, u.status, u.role_id,
-             r.name as role_name, r.permissions as role_permissions
+             r.name as role_name, r.permissions as role_permissions, r.is_system as role_is_system
       FROM app_sessions s
       JOIN app_users u ON s.user_id = u.id
       LEFT JOIN app_roles r ON u.role_id = r.id
@@ -98,6 +98,7 @@ router.get('/me', (req, res) => {
         status: session.status,
         role_id: session.role_id,
         role_name: session.role_name,
+        is_admin: session.role_is_system === 1,
         permissions: session.role_permissions ? JSON.parse(session.role_permissions) : {}
       }
     });

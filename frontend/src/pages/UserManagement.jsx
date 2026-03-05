@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Users, Shield, Plus, Trash2, Check, X, ChevronDown, ChevronUp, Link } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 import './UserManagement.css';
 
 const ALL_TABS = [
@@ -118,6 +119,9 @@ function RoleEditor({ role, onSave, onCancel, isNew }) {
 const EMPTY_NEW_USER = { name: '', email: '', password: '', password2: '', role_id: '' };
 
 export default function UserManagement() {
+  const { user: currentUser } = useAuth();
+  const isAdmin = currentUser?.is_admin === true;
+
   const [section, setSection] = useState('users');
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
@@ -290,13 +294,15 @@ export default function UserManagement() {
           <Users size={16} />
           Benutzer
         </button>
-        <button
-          className={`um-section-tab ${section === 'roles' ? 'active' : ''}`}
-          onClick={() => setSection('roles')}
-        >
-          <Shield size={16} />
-          Rollen
-        </button>
+        {isAdmin && (
+          <button
+            className={`um-section-tab ${section === 'roles' ? 'active' : ''}`}
+            onClick={() => setSection('roles')}
+          >
+            <Shield size={16} />
+            Rollen
+          </button>
+        )}
       </div>
 
       {error && <div className="um-error">{error}</div>}
@@ -439,7 +445,7 @@ export default function UserManagement() {
       )}
 
       {/* ========== ROLES ========== */}
-      {section === 'roles' && (
+      {section === 'roles' && isAdmin && (
         <div className="um-roles-section">
           {editingRole === 'new' && (
             <div className="um-role-card">

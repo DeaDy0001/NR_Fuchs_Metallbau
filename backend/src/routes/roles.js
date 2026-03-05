@@ -23,8 +23,8 @@ router.get('/', (req, res) => {
 
 // POST /api/roles — Create new role
 router.post('/', (req, res) => {
-  if (!req.appUser.permissions.access_settings) {
-    return res.status(403).json({ error: 'Keine Berechtigung' });
+  if (!req.appUser.is_admin) {
+    return res.status(403).json({ error: 'Nur Administratoren können Rollen bearbeiten' });
   }
 
   const { name, permissions } = req.body;
@@ -54,8 +54,8 @@ router.post('/', (req, res) => {
 
 // PATCH /api/roles/:id — Update role
 router.patch('/:id', (req, res) => {
-  if (!req.appUser.permissions.access_settings) {
-    return res.status(403).json({ error: 'Keine Berechtigung' });
+  if (!req.appUser.is_admin) {
+    return res.status(403).json({ error: 'Nur Administratoren können Rollen bearbeiten' });
   }
 
   const roleId = parseInt(req.params.id);
@@ -97,8 +97,8 @@ router.patch('/:id', (req, res) => {
 
 // DELETE /api/roles/:id — Delete role (not system roles)
 router.delete('/:id', (req, res) => {
-  if (!req.appUser.permissions.access_settings) {
-    return res.status(403).json({ error: 'Keine Berechtigung' });
+  if (!req.appUser.is_admin) {
+    return res.status(403).json({ error: 'Nur Administratoren können Rollen bearbeiten' });
   }
 
   const roleId = parseInt(req.params.id);
