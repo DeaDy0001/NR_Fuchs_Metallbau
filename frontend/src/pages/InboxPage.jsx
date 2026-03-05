@@ -544,8 +544,6 @@ function ProjectChangeRow({ change, canManage, onRemove, onActivity }) {
             </div>
           )}
 
-          {error && <div className="inbox-entry-error">{error}</div>}
-
           {canManage && (
             <div className="inbox-entry-actions">
               <button className="inbox-action-btn inbox-action-confirm" onClick={handleConfirm}>
@@ -562,32 +560,58 @@ function ProjectChangeRow({ change, canManage, onRemove, onActivity }) {
   );
 }
 
+// ─── Module-level dismissed set: survives tab switches without sessionStorage complexity ─
+const dismissedInboxIds = new Set();
+const dismissedChangeKeys = new Set();
+
+// ─── Cache helpers ─────────────────────────────────────────────────────────────
+const INBOX_CACHE_KEY = 'fuchs_inbox_cache';
+
+function readCache() {
+  try {
+    const raw = sessionStorage.getItem(INBOX_CACHE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function writeCache(data) {
+  try { sessionStorage.setItem(INBOX_CACHE_KEY, JSON.stringify(data)); } catch { /* ignore */ }
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function InboxPage() {
   const { user } = useAuth();
   const canApproveUsers = user?.permissions?.approve_users;
   const canManageInbox = user?.permissions?.manage_inbox;
 
-  const [inboxItems, setInboxItems] = useState([]);
-  const [projectChanges, setProjectChanges] = useState([]);
-  const [projects, setProjects] = useState([]);
-  const [activities, setActivities] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [loadingInbox, setLoadingInbox] = useState(true);
+  // Seed state from cache so items appear instantly on tab return
+  const cached = readCache();
+  const [inboxItems, setInboxItems] = useState(
+    cached ? (cached.inboxItems || []).filter(i => !dismissedInboxIds.has(i.drive_folder_id)) : []
+  );
+  const [projectChanges, setProjectChanges] = useState(
+    cached ? (cached.projectChanges || []).filter(c => !dismissedChangeKeys.has(c.drive_folder_id || c.project_name)) : []
+  );
+  const [projects, setProjects] = useState(cached?.projects || []);
+  const [activities, setActivities] = useState(cached?.activities || []);
+  const [loading, setLoading] = useState(!cached);
+  const [loadingInbox, setLoadingInbox] = useState(!cached);
 
   const loadActivities = useCallback(async () => {
     try {
       const res = await fetch('/api/mobile/activities');
       if (res.ok) {
         const data = await res.json();
-        setActivities(data.activities || []);
+        const fresh = data.activities || [];
+        setActivities(fresh);
       }
     } catch { /* ignore */ }
     setLoading(false);
   }, []);
 
   const loadInbox = useCallback(async () => {
-    setLoadingInbox(true);
+    // Only show spinner when there's nothing cached to display
+    if (!readCache()) setLoadingInbox(true);
     try {
       const [inboxRes, changesRes, projRes] = await Promise.all([
         fetch('/api/mobile/inbox'),
@@ -596,11 +620,13 @@ export default function InboxPage() {
       ]);
       if (inboxRes.ok) {
         const d = await inboxRes.json();
-        setInboxItems(d.projects || d || []);
+        const fresh = (d.projects || d || []).filter(i => !dismissedInboxIds.has(i.drive_folder_id));
+        setInboxItems(fresh);
       }
       if (changesRes.ok) {
         const d = await changesRes.json();
-        setProjectChanges(d.changes || []);
+        const fresh = (d.changes || []).filter(c => !dismissedChangeKeys.has(c.drive_folder_id || c.project_name));
+        setProjectChanges(fresh);
       }
       if (projRes.ok) {
         const d = await projRes.json();
@@ -610,24 +636,39 @@ export default function InboxPage() {
     setLoadingInbox(false);
   }, []);
 
+  // Persist state to cache after updates
+  useEffect(() => {
+    writeCache({ inboxItems, projectChanges, projects, activities });
+  }, [inboxItems, projectChanges, projects, activities]);
+
   useEffect(() => {
     loadActivities();
     loadInbox();
     fetch('/api/mobile/activities/read', { method: 'POST' }).catch(() => {});
   }, [loadActivities, loadInbox]);
 
-  // Optimistic remove handlers — no reload needed
+  // Optimistic remove handlers — also record in dismissed set so re-fetch won't restore them
   const removeInboxItem = useCallback((folderId) => {
+    dismissedInboxIds.add(folderId);
     setInboxItems(prev => prev.filter(i => i.drive_folder_id !== folderId));
   }, []);
 
   const removeProjectChange = useCallback((key) => {
+    dismissedChangeKeys.add(key);
     setProjectChanges(prev => prev.filter(c => (c.drive_folder_id || c.project_name) !== key));
   }, []);
 
-  // Optimistic activity add — prepend to list immediately
+  // Optimistic activity add — deduplicate by title+description to avoid doubles
   const addActivity = useCallback((entry) => {
-    setActivities(prev => [entry, ...prev]);
+    setActivities(prev => {
+      const isDup = prev.some(a =>
+        a.title === entry.title &&
+        a.description === entry.description &&
+        !a.id?.startsWith('local_')
+      );
+      if (isDup) return prev;
+      return [entry, ...prev];
+    });
   }, []);
 
   const grouped = groupByDate(activities);
