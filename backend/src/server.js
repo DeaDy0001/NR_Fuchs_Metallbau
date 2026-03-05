@@ -105,6 +105,10 @@ const startServer = async () => {
     const { initializeDriveStructureWatcher } = require('./services/driveStructureService');
     initializeDriveStructureWatcher();
 
+    // Sync image format settings to NR_Fuchs_Meta/src/settings/settings.json
+    const { syncSettingsToDrive } = require('./controllers/driveController');
+    syncSettingsToDrive().catch(e => console.error('[Settings Sync] Startup sync failed:', e.message));
+
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`
 ╔═══════════════════════════════════════════╗

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { getSetting, setSetting, getUploadQueueCount, getDeleteQueueCount, getActiveDriveConnection, updateDriveConnectionFolders } from '../services/database';
 import { isAuthenticated, clearAuth, getAccessToken } from '../services/googleAuth';
-import { checkFolderAccess, findOrCreateFolder } from '../services/driveService';
+import { checkFolderAccess, findOrCreateFolder, readJsonFileByName } from '../services/driveService';
 import { startQueueProcessing, stopQueueProcessing, addUploadListener, forceProcessQueue } from '../services/uploadQueue';
 import { startHeartbeat, stopHeartbeat } from '../services/heartbeat';
 import { checkAppUpdate } from '../services/api';
@@ -137,6 +137,20 @@ export const AppProvider = ({ children }) => {
             const accessible = await checkFolderAccess(connection.root_folder_id);
             if (accessible) {
               await ensureDriveFolders(connection);
+
+              // Sync server settings (image format etc.) from NR_Fuchs_Meta/src/settings/settings.json
+              try {
+                const srcFolder = await findOrCreateFolder(connection.meta_folder_id, 'src');
+                const settingsFolder = await findOrCreateFolder(srcFolder.id, 'settings');
+                const serverSettings = await readJsonFileByName(settingsFolder.id, 'settings.json');
+                if (serverSettings?.image_format) {
+                  await setSetting('serverImageFormat', serverSettings.image_format);
+                  console.log('[Fuchs] Server image format synced:', serverSettings.image_format);
+                }
+              } catch (e) {
+                console.log('[Fuchs] Could not sync server settings:', e.message);
+              }
+
               setActiveConnection(connection);
               setIsConnected(true);
             } else {

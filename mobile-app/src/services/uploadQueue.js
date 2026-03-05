@@ -124,8 +124,13 @@ export const processUploadQueue = async () => {
         });
 
         let uploadUri = item.file_uri;
+        let uploadMimeType = item.mime_type;
+        let uploadFileName = item.file_name;
         try {
-          uploadUri = await processImageForUpload(item.file_uri, item.file_name);
+          const processed = await processImageForUpload(item.file_uri, item.file_name);
+          uploadUri = processed.uri;
+          uploadMimeType = processed.mimeType;
+          uploadFileName = processed.fileName || item.file_name;
         } catch (e) {
           console.warn('Image processing failed, uploading original:', e.message);
         }
@@ -139,8 +144,8 @@ export const processUploadQueue = async () => {
 
         const uploadResult = await uploadImage(
           uploadUri,
-          item.file_name,
-          item.mime_type,
+          uploadFileName,
+          uploadMimeType,
           item.project_folder_id || item.project_id,
           item.project_name,
           item.gps_data || null,

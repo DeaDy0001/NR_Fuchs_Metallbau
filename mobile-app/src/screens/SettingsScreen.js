@@ -39,6 +39,9 @@ export default function SettingsScreen({ navigation }) {
   const [downloadProgress, setDownloadProgress] = useState('');
   const [downloadMaxDays, setDownloadMaxDays] = useState(60);
 
+  // Server-defined image format (read-only, synced from Drive on startup)
+  const [serverImageFormat, setServerImageFormat] = useState('');
+
   // App update download state (checking comes from AppContext)
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateDownloading, setUpdateDownloading] = useState(false);
@@ -62,6 +65,7 @@ export default function SettingsScreen({ navigation }) {
     setAutoDeleteDays(parseInt(await getSetting('autoDeleteDays', '60')));
     setGpsDefault((await getSetting('gpsDefault', 'true')) === 'true');
     setDownloadMaxDays(parseInt(await getSetting('downloadMaxDays', '60')));
+    setServerImageFormat((await getSetting('serverImageFormat', 'jpeg')).toUpperCase());
 
     const size = await getCacheSize();
     setCacheSize(size);
@@ -376,6 +380,14 @@ export default function SettingsScreen({ navigation }) {
       {/* Upload */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Upload</Text>
+
+        <View style={styles.settingRow}>
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>Bildformat</Text>
+            <Text style={styles.settingDesc}>Wird vom Server festgelegt</Text>
+          </View>
+          <Text style={styles.settingValue}>{serverImageFormat || 'JPEG'}</Text>
+        </View>
 
         <View style={styles.settingRow}>
           <View style={styles.settingInfo}>

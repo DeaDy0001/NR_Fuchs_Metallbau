@@ -2,8 +2,53 @@ const db = require('../config/database');
 const path = require('path');
 const fs = require('fs-extra');
 const { syncDrivePath, startAutoSync, stopAutoSync } = require('../services/driveSyncService');
-const { deleteFile, compressImage, generateThumbnail, moveFileOnDrive, getFileMetadata, findOrCreateSubfolder, findSubfolder, extractFolderId, createFolderOnDrive, listFoldersInFolder } = require('../services/googleDriveService');
+const { deleteFile, compressImage, generateThumbnail, moveFileOnDrive, getFileMetadata, findOrCreateSubfolder, findSubfolder, extractFolderId, createFolderOnDrive, listFoldersInFolder, upsertJsonFileToDrive } = require('../services/googleDriveService');
 const { isAuthenticated } = require('../services/authService');
+const { isAuthenticated } = require('../services/authService');
+
+/**
+ * Build and upload settings.json to NR_Fuchs_Meta/src/settings/ on Google Drive.
+ * Called after path add/update and on server startup.
+ */
+const syncSettingsToDrive = async () => {
+  try {
+    if (!await isAuthenticated()) return;
+
+    const allPaths = db.prepare(
+      'SELECT name, path, compression_enabled, compression_format FROM drive_paths ORDER BY created_at ASC'
+    ).all();
+    if (allPaths.length === 0) return;
+
+    const pathSettings = allPaths.map(p => ({
+      name: p.name,
+      path: p.path,
+      image_format: p.compression_enabled ? (p.compression_format || 'jpeg') : 'original',
+    }));
+
+    const settings = {
+      updated_at: new Date().toISOString(),
+      image_format: pathSettings[0].image_format, // mobile uses first path's format
+      paths: pathSettings,
+    };
+
+    // Find root folder from first path URL
+    const urlMatch = allPaths[0].path.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    if (!urlMatch) return;
+    const rootFolderId = urlMatch[1];
+
+    const metaFolder = await findSubfolder(rootFolderId, 'NR_Fuchs_Meta');
+    if (!metaFolder) return;
+
+    const srcFolder = await findOrCreateSubfolder(metaFolder.id, 'src');
+    const settingsFolder = await findOrCreateSubfolder(srcFolder.id, 'settings');
+
+    await upsertJsonFileToDrive(settingsFolder.id, 'settings.json', settings);
+    console.log(`[Settings Sync] Uploaded settings.json (image_format: ${settings.image_format})`);
+  } catch (e) {
+    console.error('[Settings Sync] Error:', e.message);
+    throw e;
+  }
+};
 
 // Get drive settings (all configured paths)
 const getDriveSettings = (req, res) => {
@@ -81,6 +126,7 @@ const addDrivePath = (req, res) => {
     }
 
     res.json(newPath);
+    syncSettingsToDrive().catch(e => console.error('[Settings Sync] After add failed:', e.message));
   } catch (error) {
     console.error('Error adding drive path:', error);
     res.status(500).json({ error: 'Failed to add drive path' });
@@ -225,6 +271,7 @@ const updateDrivePath = (req, res) => {
     }
 
     res.json(result);
+    syncSettingsToDrive().catch(e => console.error('[Settings Sync] After update failed:', e.message));
   } catch (error) {
     console.error('Error updating drive path:', error);
     res.status(500).json({ error: 'Failed to update drive path' });
@@ -1101,6 +1148,7 @@ const updateImageNotes = async (req, res) => {
 };
 
 module.exports = {
+  syncSettingsToDrive,
   getDriveSettings,
   addDrivePath,
   removeDrivePath,
