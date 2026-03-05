@@ -87,7 +87,6 @@ const syncDrivePath = async (drivePathId) => {
       try {
         // Skip if already synced
         if (existingFileIds.has(file.id)) {
-          console.log(`Skipping already synced file: ${file.name}`);
           continue;
         }
 
