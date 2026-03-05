@@ -377,6 +377,25 @@
   margin-top: 4px;
 }
 
+.um-new-user-form {
+  background: var(--bg-secondary, #1e2330);
+  border: 1px solid var(--border-color, #2d3748);
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.um-new-user-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary, #f1f5f9);
+  margin-bottom: 16px;
+}
+
+.um-select-full {
+  width: 100%;
+}
+
 /* Responsive */
 @media (max-width: 640px) {
   .um-user-row {

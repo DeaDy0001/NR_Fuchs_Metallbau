@@ -115,6 +115,8 @@ function RoleEditor({ role, onSave, onCancel, isNew }) {
   );
 }
 
+const EMPTY_NEW_USER = { name: '', email: '', password: '', password2: '', role_id: '' };
+
 export default function UserManagement() {
   const [section, setSection] = useState('users');
   const [users, setUsers] = useState([]);
@@ -124,6 +126,10 @@ export default function UserManagement() {
   const [expandedRole, setExpandedRole] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [showNewUser, setShowNewUser] = useState(false);
+  const [newUser, setNewUser] = useState(EMPTY_NEW_USER);
+  const [newUserError, setNewUserError] = useState('');
+  const [newUserSaving, setNewUserSaving] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -175,6 +181,37 @@ export default function UserManagement() {
         ));
       }
     } catch { /* ignore */ }
+  };
+
+  const createUser = async (e) => {
+    e.preventDefault();
+    setNewUserError('');
+    if (!newUser.email.trim()) return setNewUserError('E-Mail ist erforderlich.');
+    if (!newUser.password) return setNewUserError('Passwort ist erforderlich.');
+    if (newUser.password !== newUser.password2) return setNewUserError('Passwörter stimmen nicht überein.');
+    setNewUserSaving(true);
+    try {
+      const body = {
+        email: newUser.email.trim(),
+        password: newUser.password,
+        name: newUser.name.trim() || undefined,
+        role_id: newUser.role_id ? parseInt(newUser.role_id) : undefined
+      };
+      const res = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const d = await res.json();
+      if (res.ok) {
+        setNewUser(EMPTY_NEW_USER);
+        setShowNewUser(false);
+        await loadData();
+      } else {
+        setNewUserError(d.error || 'Fehler beim Anlegen.');
+      }
+    } catch { setNewUserError('Netzwerkfehler'); }
+    setNewUserSaving(false);
   };
 
   const saveRole = async (data) => {
@@ -253,6 +290,86 @@ export default function UserManagement() {
       {/* ========== USERS ========== */}
       {section === 'users' && (
         <div className="um-users-list">
+          {/* Create new user */}
+          {!showNewUser ? (
+            <button className="um-btn um-btn-primary um-add-role-btn" onClick={() => setShowNewUser(true)}>
+              <Plus size={14} />
+              Neuen Benutzer anlegen
+            </button>
+          ) : (
+            <div className="um-new-user-form">
+              <div className="um-new-user-title">Neuen Benutzer anlegen</div>
+              <form onSubmit={createUser}>
+                <div className="um-field">
+                  <label>Name (optional)</label>
+                  <input
+                    className="um-input"
+                    value={newUser.name}
+                    onChange={e => setNewUser(p => ({ ...p, name: e.target.value }))}
+                    placeholder="Vorname Nachname"
+                  />
+                </div>
+                <div className="um-field">
+                  <label>E-Mail *</label>
+                  <input
+                    className="um-input"
+                    type="email"
+                    value={newUser.email}
+                    onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))}
+                    placeholder="benutzer@beispiel.at"
+                    required
+                  />
+                </div>
+                <div className="um-field">
+                  <label>Passwort *</label>
+                  <input
+                    className="um-input"
+                    type="password"
+                    value={newUser.password}
+                    onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))}
+                    placeholder="Passwort"
+                    required
+                  />
+                </div>
+                <div className="um-field">
+                  <label>Passwort wiederholen *</label>
+                  <input
+                    className="um-input"
+                    type="password"
+                    value={newUser.password2}
+                    onChange={e => setNewUser(p => ({ ...p, password2: e.target.value }))}
+                    placeholder="Passwort wiederholen"
+                    required
+                  />
+                </div>
+                <div className="um-field">
+                  <label>Rolle</label>
+                  <select
+                    className="um-select um-select-full"
+                    value={newUser.role_id}
+                    onChange={e => setNewUser(p => ({ ...p, role_id: e.target.value }))}
+                  >
+                    <option value="">— Keine Rolle —</option>
+                    {roles.map(r => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
+                </div>
+                {newUserError && <div className="um-error">{newUserError}</div>}
+                <div className="um-role-editor-actions">
+                  <button type="submit" className="um-btn um-btn-primary" disabled={newUserSaving}>
+                    <Check size={14} />
+                    {newUserSaving ? 'Anlegen...' : 'Benutzer anlegen'}
+                  </button>
+                  <button type="button" className="um-btn um-btn-ghost" onClick={() => { setShowNewUser(false); setNewUser(EMPTY_NEW_USER); setNewUserError(''); }}>
+                    <X size={14} />
+                    Abbrechen
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
           {users.length === 0 && <p className="um-empty">Keine Benutzer gefunden.</p>}
           {users.map(user => (
             <div key={user.id} className={`um-user-row ${user.status}`}>

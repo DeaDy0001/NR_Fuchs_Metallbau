@@ -1,7 +1,14 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const db = require('../config/database');
 const sessionAuth = require('../middleware/sessionAuth');
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
 
 // All routes require active session
 router.use(sessionAuth);
@@ -20,6 +27,37 @@ router.get('/', (req, res) => {
     res.json({ users });
   } catch (error) {
     console.error('Error fetching users:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/users — Create a new user (admin only)
+router.post('/', (req, res) => {
+  if (!req.appUser.permissions.access_settings) {
+    return res.status(403).json({ error: 'Keine Berechtigung' });
+  }
+
+  const { email, password, name, role_id } = req.body;
+
+  if (!email || !email.trim()) return res.status(400).json({ error: 'E-Mail ist erforderlich' });
+  if (!password || password.length < 6) return res.status(400).json({ error: 'Passwort muss mindestens 6 Zeichen haben' });
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const displayName = (name && name.trim()) ? name.trim() : normalizedEmail.split('@')[0];
+
+  try {
+    const result = db.prepare(`
+      INSERT INTO app_users (email, name, password_hash, role_id, status)
+      VALUES (?, ?, ?, ?, 'active')
+    `).run(normalizedEmail, displayName, hashPassword(password), role_id || null);
+
+    const user = db.prepare('SELECT u.id, u.email, u.name, u.status, u.created_at, u.role_id, r.name as role_name FROM app_users u LEFT JOIN app_roles r ON u.role_id = r.id WHERE u.id = ?').get(result.lastInsertRowid);
+    res.json({ user });
+  } catch (error) {
+    if (error.message.includes('UNIQUE')) {
+      return res.status(409).json({ error: 'Ein Benutzer mit dieser E-Mail-Adresse existiert bereits' });
+    }
+    console.error('Error creating user:', error);
     res.status(500).json({ error: error.message });
   }
 });

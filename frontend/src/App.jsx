@@ -7,10 +7,9 @@ import ProjectsList from './pages/ProjectsList';
 import InboxPage from './pages/InboxPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LoginPage from './pages/LoginPage';
-import WaitingPage from './pages/WaitingPage';
 
 function AppInner() {
-  const { loading, setupRequired, authenticated, user } = useAuth();
+  const { loading, setupRequired, authenticated } = useAuth();
 
   if (loading) {
     return (
@@ -22,10 +21,6 @@ function AppInner() {
 
   if (setupRequired || !authenticated) {
     return <LoginPage isSetup={setupRequired} />;
-  }
-
-  if (user?.status === 'pending') {
-    return <WaitingPage />;
   }
 
   return <MainApp />;

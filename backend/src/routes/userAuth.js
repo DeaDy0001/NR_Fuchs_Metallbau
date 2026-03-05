@@ -1,26 +1,30 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
-const { google } = require('googleapis');
 const db = require('../config/database');
 
 const SESSION_DURATION_DAYS = 30;
 
-function createUserOAuth2Client(req) {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret) return null;
-
-  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-  const host = req.headers['x-forwarded-host'] || req.get('host');
-  const redirectUri = `${protocol}://${host}/api/auth/user/google/callback`;
-
-  return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+// ─── Password helpers ──────────────────────────────────────────────────────────
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
 }
 
+function verifyPassword(password, stored) {
+  try {
+    const [salt, hash] = stored.split(':');
+    const hashVerify = crypto.scryptSync(password, salt, 64).toString('hex');
+    return hash === hashVerify;
+  } catch {
+    return false;
+  }
+}
+
+// ─── Cookie helpers ────────────────────────────────────────────────────────────
 function setSessionCookie(res, token) {
-  const maxAge = SESSION_DURATION_DAYS * 24 * 60 * 60; // seconds
+  const maxAge = SESSION_DURATION_DAYS * 24 * 60 * 60;
   res.setHeader('Set-Cookie', `fm_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}`);
 }
 
@@ -42,22 +46,25 @@ function parseCookies(req) {
   return cookies;
 }
 
-// GET /api/auth/user/me — Check current session (public)
+function createSession(userId, res) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000)
+    .toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+  db.prepare('INSERT INTO app_sessions (user_id, session_token, expires_at) VALUES (?, ?, ?)').run(userId, token, expiresAt);
+  setSessionCookie(res, token);
+}
+
+// ─── GET /api/auth/user/me ─────────────────────────────────────────────────────
 router.get('/me', (req, res) => {
-  // Check if any users exist (setup mode)
+  // Setup mode: no users at all
   const userCount = db.prepare('SELECT COUNT(*) as count FROM app_users').get();
   if (userCount.count === 0) {
-    // Check if credentials are configured
-    const hasCredentials = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
-    return res.json({ setupRequired: true, credentialsConfigured: hasCredentials });
+    return res.json({ setupRequired: true });
   }
 
   const cookies = parseCookies(req);
   const token = cookies['fm_session'];
-
-  if (!token) {
-    return res.json({ authenticated: false });
-  }
+  if (!token) return res.json({ authenticated: false });
 
   try {
     const session = db.prepare(`
@@ -93,121 +100,59 @@ router.get('/me', (req, res) => {
   }
 });
 
-// GET /api/auth/user/google — Start Google login
-router.get('/google', (req, res) => {
-  const client = createUserOAuth2Client(req);
-  if (!client) {
-    return res.status(500).json({ error: 'Google OAuth nicht konfiguriert. Bitte GOOGLE_CLIENT_ID und GOOGLE_CLIENT_SECRET in der .env Datei setzen.' });
-  }
+// ─── POST /api/auth/user/login ─────────────────────────────────────────────────
+// Also handles first-time setup (creates admin when no users exist)
+router.post('/login', (req, res) => {
+  const { email, password, name } = req.body;
 
-  const authUrl = client.generateAuthUrl({
-    access_type: 'online',
-    scope: ['openid', 'profile', 'email'],
-    prompt: 'select_account'
-  });
+  if (!email || !email.trim()) return res.status(400).json({ error: 'E-Mail ist erforderlich' });
+  if (!password || password.length < 6) return res.status(400).json({ error: 'Passwort muss mindestens 6 Zeichen haben' });
 
-  res.redirect(authUrl);
-});
-
-// GET /api/auth/user/google/callback — OAuth callback
-router.get('/google/callback', async (req, res) => {
-  const { code, error } = req.query;
-
-  const errorPage = (msg) => res.send(`
-    <!DOCTYPE html><html><head><meta charset="utf-8"><title>Login fehlgeschlagen</title>
-    <style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f1117;color:#fff}
-    .box{background:#1a1d2e;padding:40px;border-radius:12px;text-align:center;max-width:400px;border:1px solid #2a2d3e}
-    h2{color:#ef4444;margin-bottom:16px}p{color:#94a3b8}</style></head>
-    <body><div class="box"><h2>Login fehlgeschlagen</h2><p>${msg}</p></div></body></html>
-  `);
-
-  if (error) return errorPage('Anmeldung abgebrochen.');
-  if (!code) return errorPage('Kein Autorisierungscode erhalten.');
+  const normalizedEmail = email.trim().toLowerCase();
 
   try {
-    const client = createUserOAuth2Client(req);
-    if (!client) return errorPage('OAuth nicht konfiguriert.');
-
-    const { tokens } = await client.getToken(code);
-    client.setCredentials(tokens);
-
-    // Get user info
-    const oauth2 = google.oauth2({ version: 'v2', auth: client });
-    const { data: profile } = await oauth2.userinfo.get();
-
-    const { id: googleId, email, name, picture } = profile;
-
-    // Check if any users exist
     const userCount = db.prepare('SELECT COUNT(*) as count FROM app_users').get();
-    const isFirstUser = userCount.count === 0;
+    const isSetup = userCount.count === 0;
 
-    let user = db.prepare('SELECT * FROM app_users WHERE google_id = ?').get(googleId);
-
-    if (!user) {
-      // New user
-      let roleId = null;
-      let status = 'pending';
-
-      if (isFirstUser) {
-        // First user: get Admin role and set as active
-        const adminRole = db.prepare("SELECT id FROM app_roles WHERE is_system = 1 LIMIT 1").get();
-        roleId = adminRole ? adminRole.id : null;
-        status = 'active';
-      }
-
+    if (isSetup) {
+      // First user: create admin
+      const adminRole = db.prepare("SELECT id FROM app_roles WHERE is_system = 1 LIMIT 1").get();
+      const displayName = (name && name.trim()) ? name.trim() : normalizedEmail.split('@')[0];
       const result = db.prepare(`
-        INSERT INTO app_users (google_id, email, name, picture, role_id, status)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(googleId, email, name || email, picture, roleId, status);
+        INSERT INTO app_users (email, name, password_hash, role_id, status)
+        VALUES (?, ?, ?, ?, 'active')
+      `).run(normalizedEmail, displayName, hashPassword(password), adminRole?.id || null);
 
-      user = db.prepare('SELECT * FROM app_users WHERE id = ?').get(result.lastInsertRowid);
-    } else {
-      // Update profile info
-      db.prepare(`
-        UPDATE app_users SET name = ?, picture = ?, last_login = datetime('now') WHERE id = ?
-      `).run(name || email, picture, user.id);
-      user = db.prepare('SELECT * FROM app_users WHERE id = ?').get(user.id);
+      createSession(result.lastInsertRowid, res);
+      return res.json({ success: true });
     }
 
-    // Create session (only for active users)
-    if (user.status === 'active') {
-      const sessionToken = crypto.randomBytes(32).toString('hex');
-      const expiresAt = new Date(Date.now() + SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000)
-        .toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+    // Normal login
+    const user = db.prepare('SELECT * FROM app_users WHERE email = ?').get(normalizedEmail);
 
-      db.prepare(`
-        INSERT INTO app_sessions (user_id, session_token, expires_at)
-        VALUES (?, ?, ?)
-      `).run(user.id, sessionToken, expiresAt);
+    if (!user) return res.status(401).json({ error: 'E-Mail oder Passwort falsch' });
+    if (!user.password_hash) return res.status(401).json({ error: 'Konto hat kein Passwort. Bitte einen Administrator kontaktieren.' });
+    if (!verifyPassword(password, user.password_hash)) return res.status(401).json({ error: 'E-Mail oder Passwort falsch' });
+    if (user.status === 'inactive') return res.status(403).json({ error: 'Dieses Konto wurde deaktiviert. Wende dich an einen Administrator.' });
 
-      setSessionCookie(res, sessionToken);
-    }
+    // Update last_login
+    db.prepare("UPDATE app_users SET last_login = datetime('now') WHERE id = ?").run(user.id);
 
-    // Redirect to frontend
-    res.redirect('/');
-  } catch (err) {
-    console.error('User OAuth callback error:', err);
-    return res.send(`
-      <!DOCTYPE html><html><head><meta charset="utf-8"><title>Login fehlgeschlagen</title>
-      <style>body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#0f1117;color:#fff}
-      .box{background:#1a1d2e;padding:40px;border-radius:12px;text-align:center;max-width:400px;border:1px solid #2a2d3e}
-      h2{color:#ef4444;margin-bottom:16px}p{color:#94a3b8}</style></head>
-      <body><div class="box"><h2>Login fehlgeschlagen</h2><p>${err.message}</p></div></body></html>
-    `);
+    createSession(user.id, res);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Interner Serverfehler' });
   }
 });
 
-// POST /api/auth/user/logout
+// ─── POST /api/auth/user/logout ────────────────────────────────────────────────
 router.post('/logout', (req, res) => {
   const cookies = parseCookies(req);
   const token = cookies['fm_session'];
-
   if (token) {
-    try {
-      db.prepare('DELETE FROM app_sessions WHERE session_token = ?').run(token);
-    } catch { /* ignore */ }
+    try { db.prepare('DELETE FROM app_sessions WHERE session_token = ?').run(token); } catch { /* ignore */ }
   }
-
   clearSessionCookie(res);
   res.json({ success: true });
 });

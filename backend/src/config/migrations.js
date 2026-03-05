@@ -695,6 +695,48 @@ const migrations = [
     }
   },
   {
+    id: 29,
+    name: 'update_app_users_for_local_auth',
+    up: () => {
+      console.log('Running migration: update_app_users_for_local_auth');
+
+      // Recreate app_users: make google_id nullable, add password_hash, default status active
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS app_users_v2 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          google_id TEXT UNIQUE,
+          email TEXT NOT NULL UNIQUE,
+          name TEXT,
+          picture TEXT,
+          password_hash TEXT,
+          role_id INTEGER REFERENCES app_roles(id),
+          status TEXT DEFAULT 'active',
+          created_at TEXT DEFAULT (datetime('now')),
+          last_login TEXT
+        )
+      `);
+
+      // Copy existing data if old table has the expected structure
+      try {
+        const cols = db.pragma('table_info(app_users)').map(c => c.name);
+        if (cols.length > 0) {
+          const commonCols = ['id', 'google_id', 'email', 'name', 'picture', 'role_id', 'status', 'created_at', 'last_login']
+            .filter(c => cols.includes(c)).join(', ');
+          db.exec(`INSERT OR IGNORE INTO app_users_v2 (${commonCols}) SELECT ${commonCols} FROM app_users`);
+          db.exec('DROP TABLE app_users');
+        }
+      } catch (e) {
+        console.log('Note: could not copy old app_users data:', e.message);
+      }
+
+      db.exec('ALTER TABLE app_users_v2 RENAME TO app_users');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_app_users_email ON app_users(email)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_app_users_status ON app_users(status)');
+
+      console.log('✓ Migration update_app_users_for_local_auth completed');
+    }
+  },
+  {
     id: 24,
     name: 'create_mobile_users_table',
     up: () => {
