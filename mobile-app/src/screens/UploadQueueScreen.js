@@ -7,6 +7,7 @@ import { getQueueDisplayItems, cleanupOldQueueItems, getDeleteQueueDisplayItems,
 import { forceProcessQueue, addUploadListener, getCurrentUploadState } from '../services/uploadQueue';
 import { addDeleteListener, processDeleteQueue } from '../services/deleteQueue';
 import { useApp } from '../contexts/AppContext';
+import { getNotificationPermissionStatus, requestNotificationPermission } from '../services/backgroundSync';
 
 export default function UploadQueueScreen() {
   const { refreshQueueCount } = useApp();
@@ -17,16 +18,18 @@ export default function UploadQueueScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [uploadState, setUploadState] = useState(getCurrentUploadState());
   const [currentPhase, setCurrentPhase] = useState(null); // 'compressing' or 'uploading'
+  const [notifPermission, setNotifPermission] = useState(null); // null=checking, 'granted', 'denied', 'undetermined'
 
   // Animated progress for uploading items
   const progressAnims = useRef({});
 
-  // Load queue on focus
+  // Load queue on focus + check notification permission
   useFocusEffect(
     useCallback(() => {
       loadQueue();
       loadDeleteQueue();
       setUploadState(getCurrentUploadState());
+      getNotificationPermissionStatus().then(setNotifPermission).catch(() => {});
     }, [])
   );
 
@@ -101,6 +104,11 @@ export default function UploadQueueScreen() {
     } catch (error) {
       console.error('Error loading queue:', error);
     }
+  };
+
+  const handleRequestNotifPermission = async () => {
+    const granted = await requestNotificationPermission();
+    setNotifPermission(granted ? 'granted' : 'denied');
   };
 
   const handleForceSync = async () => {
@@ -254,6 +262,23 @@ export default function UploadQueueScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Notification permission banner — shown until granted or explicitly dismissed */}
+      {notifPermission !== null && notifPermission !== 'granted' && (
+        <View style={styles.notifBanner}>
+          <Ionicons name="notifications-outline" size={18} color="#f59e0b" />
+          <Text style={styles.notifBannerText}>
+            {notifPermission === 'denied'
+              ? 'Benachrichtigungen sind deaktiviert. Bitte in den Systemeinstellungen aktivieren.'
+              : 'Benachrichtigungen erlauben, damit du informiert wirst wenn alle Fotos hochgeladen sind.'}
+          </Text>
+          {notifPermission !== 'denied' && (
+            <TouchableOpacity style={styles.notifBannerBtn} onPress={handleRequestNotifPermission}>
+              <Text style={styles.notifBannerBtnText}>Erlauben</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
       {/* Summary card */}
       <View style={styles.summary}>
         <View style={styles.summaryItem}>
@@ -354,6 +379,35 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bgPrimary,
+  },
+  notifBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    margin: 12,
+    marginBottom: 0,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: 'rgba(245,158,11,0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.3)',
+  },
+  notifBannerText: {
+    flex: 1,
+    fontSize: 12,
+    color: colors.textSecondary,
+    lineHeight: 17,
+  },
+  notifBannerBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: '#f59e0b',
+  },
+  notifBannerBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'white',
   },
   summary: {
     flexDirection: 'row',

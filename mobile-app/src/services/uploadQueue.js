@@ -2,6 +2,7 @@ import * as Network from 'expo-network';
 import { getSetting, getQueuedUploads, updateUploadStatus } from './database';
 import { uploadImage } from './api';
 import { processImageForUpload } from './imageProcessor';
+import { sendUploadCompleteNotification } from './backgroundSync';
 
 /**
  * Report image metadata (GPS, title, notes) to the desktop server
@@ -80,7 +81,7 @@ export const processUploadQueue = async () => {
     if (!networkState.isConnected || !networkState.isInternetReachable) {
       notifyListeners({ type: 'offline' });
       // Switch to slow interval (5 min) when offline
-      switchInterval(300000);
+      switchInterval(60000);
       return;
     }
 
@@ -88,7 +89,7 @@ export const processUploadQueue = async () => {
     const wifiOnly = await getSetting('wifiOnly', 'false');
     if (wifiOnly === 'true' && networkState.type !== Network.NetworkStateType.WIFI) {
       notifyListeners({ type: 'wifi_only', message: 'Upload wartet auf WLAN' });
-      switchInterval(300000);
+      switchInterval(60000);
       return;
     }
 
@@ -105,6 +106,7 @@ export const processUploadQueue = async () => {
     uploadProgress = { current: 0, total: queue.length };
     notifyListeners({ type: 'processing', count: queue.length });
 
+    let uploadedCount = 0;
     for (const item of queue) {
       try {
         // Max 3 retries
@@ -159,6 +161,7 @@ export const processUploadQueue = async () => {
         }
 
         await updateUploadStatus(item.id, 'uploaded');
+        uploadedCount++;
         notifyListeners({ type: 'uploaded', item, progress: { ...uploadProgress } });
       } catch (error) {
         await updateUploadStatus(item.id, 'failed', error.message);
@@ -168,6 +171,11 @@ export const processUploadQueue = async () => {
 
     currentlyUploadingId = null;
     notifyListeners({ type: 'done' });
+
+    // Send push notification after batch completes
+    if (uploadedCount > 0) {
+      sendUploadCompleteNotification(uploadedCount);
+    }
   } catch (error) {
     console.error('Upload queue processing error:', error);
   } finally {

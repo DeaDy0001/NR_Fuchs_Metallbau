@@ -27,12 +27,24 @@
         "INTERNET",
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
-        "REQUEST_INSTALL_PACKAGES"
+        "REQUEST_INSTALL_PACKAGES",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_DATA_SYNC",
+        "RECEIVE_BOOT_COMPLETED",
+        "POST_NOTIFICATIONS"
       ]
     },
     "scheme": "com.fuchsmetallbau.app",
     "plugins": [
       "./plugins/withCleartextTraffic",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#1e293b",
+          "defaultChannel": "default"
+        }
+      ],
       [
         "expo-camera",
         {

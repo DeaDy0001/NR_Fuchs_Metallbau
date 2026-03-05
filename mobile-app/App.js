@@ -1,3 +1,5 @@
+// Must be imported first so the background task is defined before any rendering
+import './src/services/backgroundSync';
 import React, { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import * as NavigationBar from 'expo-navigation-bar';

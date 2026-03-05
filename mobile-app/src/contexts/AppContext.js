@@ -1,10 +1,12 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { AppState } from 'react-native';
 import { getSetting, setSetting, getUploadQueueCount, getDeleteQueueCount, getActiveDriveConnection, updateDriveConnectionFolders } from '../services/database';
 import { isAuthenticated, clearAuth, getAccessToken } from '../services/googleAuth';
 import { checkFolderAccess, findOrCreateFolder, readJsonFileByName } from '../services/driveService';
 import { startQueueProcessing, stopQueueProcessing, addUploadListener, forceProcessQueue } from '../services/uploadQueue';
 import { startHeartbeat, stopHeartbeat } from '../services/heartbeat';
 import { checkAppUpdate } from '../services/api';
+import { registerBackgroundSync } from '../services/backgroundSync';
 import Constants from 'expo-constants';
 
 const isVersionNewer = (serverVersion, localVersion) => {
@@ -62,9 +64,11 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   // Start upload queue processing and heartbeat when connected to Drive
-  // Also check for app updates in the background
+  // Also check for app updates and register background sync
+  const appStateRef = useRef(AppState.currentState);
   useEffect(() => {
     let updateInterval = null;
+    let appStateSub = null;
 
     const runUpdateCheck = () => {
       checkAppUpdate()
@@ -82,10 +86,21 @@ export const AppProvider = ({ children }) => {
     if (isConnected && activeConnection) {
       startQueueProcessing();
       startHeartbeat();
-      // Initial check on connect
+      // Initial update check on connect
       runUpdateCheck();
       // Periodic re-check every 6 hours
       updateInterval = setInterval(runUpdateCheck, 6 * 60 * 60 * 1000);
+
+      // Register background sync task so uploads run even when app is suspended
+      registerBackgroundSync().catch(() => {});
+
+      // When app comes back to foreground, immediately try to sync the queue
+      appStateSub = AppState.addEventListener('change', (nextState) => {
+        if (appStateRef.current !== 'active' && nextState === 'active') {
+          forceProcessQueue().catch(() => {});
+        }
+        appStateRef.current = nextState;
+      });
     } else {
       stopQueueProcessing();
       stopHeartbeat();
@@ -94,6 +109,7 @@ export const AppProvider = ({ children }) => {
       stopQueueProcessing();
       stopHeartbeat();
       if (updateInterval) clearInterval(updateInterval);
+      if (appStateSub) appStateSub.remove();
     };
   }, [isConnected]);
 
