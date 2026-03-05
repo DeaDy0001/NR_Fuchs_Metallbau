@@ -27,6 +27,20 @@
   margin-left: auto;
 }
 .inbox-refresh-btn:hover { color: var(--text-primary, #fff); background: var(--bg-hover, rgba(255,255,255,0.06)); }
+.inbox-refresh-btn--syncing { color: var(--accent, #6366f1) !important; }
+.inbox-refresh-btn--syncing svg { animation: inbox-spin 1s linear infinite; }
+
+@keyframes inbox-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.inbox-syncing-hint {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--accent, #6366f1);
+  opacity: 0.8;
+}
 
 /* Section headers */
 .inbox-section {

@@ -243,8 +243,11 @@ export default function UploadQueueScreen() {
   }
   if (totalCompleted > 0 || totalDeleteCompleted > 0) {
     allItems.push({ _type: 'section', label: 'Erledigt', icon: 'checkmark-done-outline', color: colors.success });
-    deleteCompleted.forEach(i => allItems.push({ ...i, _type: 'delete' }));
-    completed.forEach(i => allItems.push({ ...i, _type: 'upload' }));
+    const allDone = [
+      ...deleteCompleted.map(i => ({ ...i, _type: 'delete', _sortDate: i.processed_at || '' })),
+      ...completed.map(i => ({ ...i, _type: 'upload', _sortDate: i.uploaded_at || '' })),
+    ].sort((a, b) => b._sortDate.localeCompare(a._sortDate));
+    allDone.forEach(i => allItems.push(i));
   }
 
   const { isProcessing, uploadProgress } = uploadState;

@@ -560,6 +560,64 @@ function ProjectChangeRow({ change, canManage, onRemove, onActivity }) {
   );
 }
 
+// ─── Delete Requests ──────────────────────────────────────────────────────────
+function DeleteRequestRow({ req, canManage, onRemove, onActivity }) {
+  const [busy, setBusy] = useState(false);
+
+  const now = () => new Date().toISOString();
+
+  const handleProcess = async () => {
+    if (!confirm(`Datei „${req.file_name}" wirklich löschen?`)) return;
+    setBusy(true);
+    onRemove(req.id);
+    onActivity({ id: `local_${Date.now()}`, type: 'delete_request', title: 'Löschanfrage ausgeführt', description: `„${req.file_name}"${req.project_name ? ` aus „${req.project_name}"` : ''} gelöscht`, device_name: req.requested_by || null, created_at: now() });
+    fetch('/api/mobile/inbox/process-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestIds: [req.id] })
+    }).catch(() => {});
+  };
+
+  const handleDismiss = async () => {
+    setBusy(true);
+    onRemove(req.id);
+    fetch('/api/mobile/inbox/dismiss-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestIds: [req.id] })
+    }).catch(() => {});
+  };
+
+  return (
+    <div className="inbox-entry-card">
+      <div className="inbox-entry-header" style={{ cursor: 'default' }}>
+        <div className="inbox-entry-header-left">
+          <EntryIconGroup icons={[{ Icon: Trash2, color: '#ef4444' }]} />
+          <div>
+            <div className="inbox-entry-title">{req.file_name}</div>
+            <div className="inbox-entry-meta">
+              <span>Löschanfrage</span>
+              {req.project_name && <span>· {req.project_name}</span>}
+              {req.requested_by && <span>· von {req.requested_by}</span>}
+              {req.requested_at && <span>· {formatDateTime(req.requested_at)}</span>}
+            </div>
+          </div>
+        </div>
+        {canManage && (
+          <div className="inbox-entry-header-right" style={{ display: 'flex', gap: 8 }}>
+            <button className="inbox-action-btn inbox-action-delete" onClick={handleProcess} disabled={busy} style={{ padding: '4px 10px', fontSize: '0.8rem' }}>
+              <Trash2 size={13} />Löschen
+            </button>
+            <button className="inbox-action-btn inbox-action-cancel" onClick={handleDismiss} disabled={busy} style={{ padding: '4px 10px', fontSize: '0.8rem' }}>
+              <X size={13} />Abweisen
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Module-level dismissed set: survives tab switches without sessionStorage complexity ─
 const dismissedInboxIds = new Set();
 const dismissedChangeKeys = new Set();
@@ -594,8 +652,10 @@ export default function InboxPage() {
   );
   const [projects, setProjects] = useState(cached?.projects || []);
   const [activities, setActivities] = useState(cached?.activities || []);
+  const [deleteRequests, setDeleteRequests] = useState(cached?.deleteRequests || []);
   const [loading, setLoading] = useState(!cached);
   const [loadingInbox, setLoadingInbox] = useState(!cached);
+  const [syncingInbox, setSyncingInbox] = useState(false);
 
   const loadActivities = useCallback(async () => {
     try {
@@ -610,8 +670,8 @@ export default function InboxPage() {
   }, []);
 
   const loadInbox = useCallback(async () => {
-    // Only show spinner when there's nothing cached to display
     if (!readCache()) setLoadingInbox(true);
+    setSyncingInbox(true);
     try {
       const [inboxRes, changesRes, projRes] = await Promise.all([
         fetch('/api/mobile/inbox'),
@@ -622,6 +682,8 @@ export default function InboxPage() {
         const d = await inboxRes.json();
         const fresh = (d.projects || d || []).filter(i => !dismissedInboxIds.has(i.drive_folder_id));
         setInboxItems(fresh);
+        const reqs = (d.deleteRequests || []);
+        setDeleteRequests(reqs);
       }
       if (changesRes.ok) {
         const d = await changesRes.json();
@@ -634,12 +696,13 @@ export default function InboxPage() {
       }
     } catch { /* ignore */ }
     setLoadingInbox(false);
+    setSyncingInbox(false);
   }, []);
 
   // Persist state to cache after updates
   useEffect(() => {
-    writeCache({ inboxItems, projectChanges, projects, activities });
-  }, [inboxItems, projectChanges, projects, activities]);
+    writeCache({ inboxItems, projectChanges, projects, activities, deleteRequests });
+  }, [inboxItems, projectChanges, projects, activities, deleteRequests]);
 
   useEffect(() => {
     loadActivities();
@@ -658,6 +721,10 @@ export default function InboxPage() {
     setProjectChanges(prev => prev.filter(c => (c.drive_folder_id || c.project_name) !== key));
   }, []);
 
+  const removeDeleteRequest = useCallback((id) => {
+    setDeleteRequests(prev => prev.filter(r => r.id !== id));
+  }, []);
+
   // Optimistic activity add — deduplicate by title+description to avoid doubles
   const addActivity = useCallback((entry) => {
     setActivities(prev => {
@@ -672,7 +739,7 @@ export default function InboxPage() {
   }, []);
 
   const grouped = groupByDate(activities);
-  const hasPendingItems = inboxItems.length > 0 || projectChanges.length > 0;
+  const hasPendingItems = inboxItems.length > 0 || projectChanges.length > 0 || deleteRequests.length > 0;
 
   return (
     <div className="inbox-page">
@@ -680,9 +747,14 @@ export default function InboxPage() {
         <Inbox size={22} />
         <h1>Inbox</h1>
         <span className="inbox-page-subtitle">Aktivitäten der Handy-App</span>
-        <button className="inbox-refresh-btn" onClick={() => { loadInbox(); loadActivities(); }} title="Aktualisieren">
+        <button
+          className={`inbox-refresh-btn${syncingInbox ? ' inbox-refresh-btn--syncing' : ''}`}
+          onClick={() => { loadInbox(); loadActivities(); }}
+          title="Aktualisieren"
+        >
           <RefreshCw size={15} />
         </button>
+        {syncingInbox && <span className="inbox-syncing-hint">Synchronisiere…</span>}
       </div>
 
       {/* Pending user approvals */}
@@ -695,7 +767,7 @@ export default function InboxPage() {
             <Camera size={16} />
             Ausstehende Uploads
             {!loadingInbox && hasPendingItems && (
-              <span className="inbox-section-count">{inboxItems.length + projectChanges.length}</span>
+              <span className="inbox-section-count">{inboxItems.length + projectChanges.length + deleteRequests.length}</span>
             )}
           </div>
 
@@ -722,6 +794,16 @@ export default function InboxPage() {
               change={change}
               canManage={canManageInbox}
               onRemove={removeProjectChange}
+              onActivity={addActivity}
+            />
+          ))}
+
+          {!loadingInbox && deleteRequests.map(req => (
+            <DeleteRequestRow
+              key={req.id}
+              req={req}
+              canManage={canManageInbox}
+              onRemove={removeDeleteRequest}
               onActivity={addActivity}
             />
           ))}
