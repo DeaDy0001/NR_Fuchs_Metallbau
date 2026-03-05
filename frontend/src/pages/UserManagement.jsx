@@ -3,10 +3,19 @@ import { Users, Shield, Plus, Trash2, Check, X, ChevronDown, ChevronUp, Link } f
 import { useAuth } from '../contexts/AuthContext';
 import './UserManagement.css';
 
+function useAppSettings() {
+  const [settings, setSettings] = useState(null);
+  useEffect(() => {
+    fetch('/api/settings').then(r => r.json()).then(setSettings).catch(() => {});
+  }, []);
+  return settings;
+}
+
 const ALL_TABS = [
   { id: 'inbox', label: 'Inbox' },
   { id: 'images', label: 'Bilder' },
-  { id: 'projects', label: 'Projekte' }
+  { id: 'projects', label: 'Projekte' },
+  { id: 'mitarbeiter', label: 'Mitarbeiter', moduleKey: 'module_mitarbeiter_enabled' }
 ];
 
 function StatusBadge({ status }) {
@@ -19,7 +28,7 @@ function StatusBadge({ status }) {
   return <span className={`um-badge ${cfg.cls}`}>{cfg.label}</span>;
 }
 
-function RoleEditor({ role, onSave, onCancel, isNew }) {
+function RoleEditor({ role, onSave, onCancel, isNew, appSettings }) {
   const [name, setName] = useState(role?.name || '');
   const [perms, setPerms] = useState(role?.permissions || {
     approve_users: false,
@@ -27,6 +36,10 @@ function RoleEditor({ role, onSave, onCancel, isNew }) {
     view_tabs: ['inbox', 'images', 'projects'],
     access_settings: false
   });
+
+  const visibleTabs = ALL_TABS.filter(tab =>
+    !tab.moduleKey || appSettings?.[tab.moduleKey]
+  );
 
   const toggleTab = (tabId) => {
     setPerms(prev => {
@@ -89,7 +102,7 @@ function RoleEditor({ role, onSave, onCancel, isNew }) {
       <div className="um-field">
         <label>Sichtbare Tabs (Sidebar)</label>
         <div className="um-tab-checks">
-          {ALL_TABS.map(tab => (
+          {visibleTabs.map(tab => (
             <label key={tab.id} className="um-perm-row">
               <input
                 type="checkbox"
@@ -121,6 +134,7 @@ const EMPTY_NEW_USER = { name: '', email: '', password: '', password2: '', role_
 export default function UserManagement() {
   const { user: currentUser } = useAuth();
   const isAdmin = currentUser?.is_admin === true;
+  const appSettings = useAppSettings();
 
   const [section, setSection] = useState('users');
   const [users, setUsers] = useState([]);
@@ -457,6 +471,7 @@ export default function UserManagement() {
                 isNew
                 onSave={saveRole}
                 onCancel={() => setEditingRole(null)}
+                appSettings={appSettings}
               />
             </div>
           )}
@@ -493,6 +508,7 @@ export default function UserManagement() {
                     isNew={false}
                     onSave={saveRole}
                     onCancel={() => setEditingRole(null)}
+                    appSettings={appSettings}
                   />
                 ) : (
                   <div className="um-role-details">
@@ -507,6 +523,7 @@ export default function UserManagement() {
                           .join(', ') || '—'}
                         isText
                       />
+
                     </div>
                     <button className="um-btn um-btn-secondary" onClick={() => setEditingRole(role)}>
                       Bearbeiten

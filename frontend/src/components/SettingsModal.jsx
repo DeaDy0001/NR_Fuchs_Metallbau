@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Settings as SettingsIcon, Image, FolderKanban, Download, Smartphone, Code, Users } from 'lucide-react';
+import { X, Settings as SettingsIcon, Image, FolderKanban, Download, Smartphone, Code, Users, Layers } from 'lucide-react';
 import SettingsGeneral from '../pages/Settings';
 import DriveSettings from '../pages/DriveSettings';
 import ProjectsSettings from '../pages/ProjectsSettings';
@@ -7,6 +7,7 @@ import UpdateSettings from '../pages/UpdateSettings';
 import MobileAppSettings from '../pages/MobileAppSettings';
 import DevSettings from '../pages/DevSettings';
 import UserManagement from '../pages/UserManagement';
+import ModuleSettings from '../pages/ModuleSettings';
 import { useAuth } from '../contexts/AuthContext';
 import './SettingsModal.css';
 
@@ -16,6 +17,7 @@ const tabs = [
   { id: 'projects', label: 'Projekte', icon: FolderKanban },
   { id: 'mobile', label: 'Handy App', icon: Smartphone },
   { id: 'users', label: 'Benutzer', icon: Users },
+  { id: 'modules', label: 'Module', icon: Layers },
   { id: 'update', label: 'Update', icon: Download },
 ];
 
@@ -26,7 +28,7 @@ function SettingsModal({ isOpen, onClose, initialTab, initialVersion, settings, 
   const [activeTab, setActiveTab] = useState(initialTab || 'general');
 
   const visibleTabs = tabs.filter(tab => {
-    if (tab.id === 'users') return user?.permissions?.access_settings;
+    if (tab.id === 'users' || tab.id === 'modules') return user?.is_admin;
     return true;
   });
 
@@ -112,6 +114,7 @@ function SettingsModal({ isOpen, onClose, initialTab, initialVersion, settings, 
             )}
             {activeTab === 'dev' && <DevSettings />}
             {activeTab === 'users' && <UserManagement />}
+            {activeTab === 'modules' && <ModuleSettings />}
           </div>
         </div>
       </div>

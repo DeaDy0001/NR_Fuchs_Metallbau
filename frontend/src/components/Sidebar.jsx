@@ -1,10 +1,10 @@
 import { Link, useLocation } from 'react-router-dom';
-import { Image, FolderKanban, Inbox, User, LogOut } from 'lucide-react';
+import { Image, FolderKanban, Inbox, User, LogOut, Users } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import './Sidebar.css';
 
-function Sidebar({ collapsed }) {
+function Sidebar({ collapsed, moduleMitarbeiter }) {
   const location = useLocation();
   const { user, logout } = useAuth();
   const [inboxUnread, setInboxUnread] = useState(0);
@@ -80,6 +80,19 @@ function Sidebar({ collapsed }) {
             <div className="menu-item-content">
               <FolderKanban size={20} />
               {!collapsed && <span className="menu-item-label">Projekte</span>}
+            </div>
+          </Link>
+        )}
+
+        {moduleMitarbeiter && viewTabs.includes('mitarbeiter') && (
+          <Link
+            to="/mitarbeiter"
+            className={`menu-item ${isActive('/mitarbeiter') ? 'active' : ''}`}
+            title={collapsed ? 'Mitarbeiter' : ''}
+          >
+            <div className="menu-item-content">
+              <Users size={20} />
+              {!collapsed && <span className="menu-item-label">Mitarbeiter</span>}
             </div>
           </Link>
         )}

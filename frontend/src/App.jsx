@@ -5,6 +5,7 @@ import SettingsModal from './components/SettingsModal';
 import DriveImages from './pages/DriveImages';
 import ProjectsList from './pages/ProjectsList';
 import InboxPage from './pages/InboxPage';
+import MitarbeiterPage from './pages/MitarbeiterPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LoginPage from './pages/LoginPage';
 
@@ -176,6 +177,9 @@ function MainApp() {
 
           {/* Projekte */}
           <Route path="/projects" element={<ProjectsList />} />
+
+          {/* Mitarbeiter */}
+          <Route path="/mitarbeiter" element={<MitarbeiterPage />} />
 
           {/* Redirect old routes */}
           <Route path="/drive/images" element={<Navigate to="/images" replace />} />

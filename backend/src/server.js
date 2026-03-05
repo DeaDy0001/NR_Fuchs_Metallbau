@@ -41,6 +41,7 @@ app.use('/api/github', require('./routes/github'));
 app.use('/api/tags', require('./routes/tags'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/roles', require('./routes/roles'));
+app.use('/api/employees', require('./routes/employees'));
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -30,6 +30,9 @@ const getSettings = (req, res) => {
     if (result.images_show_only_with_projects !== undefined) {
       result.images_show_only_with_projects = !!result.images_show_only_with_projects;
     }
+    if (result.module_mitarbeiter_enabled !== undefined) {
+      result.module_mitarbeiter_enabled = !!result.module_mitarbeiter_enabled;
+    }
 
     res.json(result);
   } catch (error) {
@@ -52,7 +55,8 @@ const updateSettings = (req, res) => {
       images_show_only_unassigned,
       images_show_all,
       images_show_only_with_projects,
-      mobile_server_url
+      mobile_server_url,
+      module_mitarbeiter_enabled
     } = req.body;
 
     const updates = [];
@@ -114,6 +118,11 @@ const updateSettings = (req, res) => {
       values.push(mobile_server_url);
     }
 
+    if (module_mitarbeiter_enabled !== undefined) {
+      updates.push('module_mitarbeiter_enabled = ?');
+      values.push(module_mitarbeiter_enabled ? 1 : 0);
+    }
+
     if (updates.length > 0) {
       updates.push("updated_at = datetime('now')");
       values.push(1); // WHERE id = 1
@@ -135,6 +144,9 @@ const updateSettings = (req, res) => {
     }
     if (result.images_show_only_with_projects !== undefined && result.images_show_only_with_projects !== null) {
       result.images_show_only_with_projects = !!result.images_show_only_with_projects;
+    }
+    if (result.module_mitarbeiter_enabled !== undefined) {
+      result.module_mitarbeiter_enabled = !!result.module_mitarbeiter_enabled;
     }
 
     res.json(result);
@@ -178,6 +190,9 @@ const uploadLogo = async (req, res) => {
     if (result.images_show_only_with_projects !== undefined && result.images_show_only_with_projects !== null) {
       result.images_show_only_with_projects = !!result.images_show_only_with_projects;
     }
+    if (result.module_mitarbeiter_enabled !== undefined) {
+      result.module_mitarbeiter_enabled = !!result.module_mitarbeiter_enabled;
+    }
 
     res.json(result);
   } catch (error) {
@@ -211,6 +226,9 @@ const deleteLogo = async (req, res) => {
     }
     if (result.images_show_only_with_projects !== undefined && result.images_show_only_with_projects !== null) {
       result.images_show_only_with_projects = !!result.images_show_only_with_projects;
+    }
+    if (result.module_mitarbeiter_enabled !== undefined) {
+      result.module_mitarbeiter_enabled = !!result.module_mitarbeiter_enabled;
     }
 
     res.json(result);
@@ -253,6 +271,9 @@ const uploadFavicon = async (req, res) => {
     if (result.images_show_only_with_projects !== undefined && result.images_show_only_with_projects !== null) {
       result.images_show_only_with_projects = !!result.images_show_only_with_projects;
     }
+    if (result.module_mitarbeiter_enabled !== undefined) {
+      result.module_mitarbeiter_enabled = !!result.module_mitarbeiter_enabled;
+    }
 
     res.json(result);
   } catch (error) {
@@ -286,6 +307,9 @@ const deleteFavicon = async (req, res) => {
     }
     if (result.images_show_only_with_projects !== undefined && result.images_show_only_with_projects !== null) {
       result.images_show_only_with_projects = !!result.images_show_only_with_projects;
+    }
+    if (result.module_mitarbeiter_enabled !== undefined) {
+      result.module_mitarbeiter_enabled = !!result.module_mitarbeiter_enabled;
     }
 
     res.json(result);

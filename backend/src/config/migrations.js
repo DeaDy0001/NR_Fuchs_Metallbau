@@ -775,6 +775,161 @@ const migrations = [
 
       console.log('✓ Migration create_mobile_users_table completed');
     }
+  },
+  {
+    id: 31,
+    name: 'add_module_mitarbeiter_to_settings',
+    up: () => {
+      console.log('Running migration: add_module_mitarbeiter_to_settings');
+      const cols = db.pragma('table_info(settings)').map(c => c.name);
+      if (!cols.includes('module_mitarbeiter_enabled')) {
+        db.exec('ALTER TABLE settings ADD COLUMN module_mitarbeiter_enabled INTEGER DEFAULT 0');
+      }
+      console.log('✓ Migration add_module_mitarbeiter_to_settings completed');
+    }
+  },
+  {
+    id: 32,
+    name: 'create_employees_table',
+    up: () => {
+      console.log('Running migration: create_employees_table');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS employees (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          first_name TEXT NOT NULL,
+          last_name TEXT NOT NULL,
+          email TEXT,
+          phone TEXT,
+          address TEXT,
+          birth_date TEXT,
+          archived INTEGER DEFAULT 0,
+          notes TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+      console.log('✓ Migration create_employees_table completed');
+    }
+  },
+  {
+    id: 33,
+    name: 'create_employee_balances_table',
+    up: () => {
+      console.log('Running migration: create_employee_balances_table');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS employee_balances (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+          year INTEGER NOT NULL,
+          type TEXT NOT NULL,
+          allocated REAL DEFAULT 0,
+          used REAL DEFAULT 0,
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now')),
+          UNIQUE(employee_id, year, type)
+        )
+      `);
+      console.log('✓ Migration create_employee_balances_table completed');
+    }
+  },
+  {
+    id: 34,
+    name: 'create_employee_time_entries_table',
+    up: () => {
+      console.log('Running migration: create_employee_time_entries_table');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS employee_time_entries (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+          type TEXT NOT NULL,
+          start_date TEXT NOT NULL,
+          end_date TEXT NOT NULL,
+          amount REAL NOT NULL,
+          unit TEXT NOT NULL,
+          notes TEXT,
+          is_storno INTEGER DEFAULT 0,
+          storno_reason TEXT,
+          created_by_user_id INTEGER REFERENCES app_users(id),
+          created_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_emp_entries_emp ON employee_time_entries(employee_id)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_emp_entries_dates ON employee_time_entries(start_date, end_date)');
+      console.log('✓ Migration create_employee_time_entries_table completed');
+    }
+  },
+  {
+    id: 35,
+    name: 'create_employee_logs_table',
+    up: () => {
+      console.log('Running migration: create_employee_logs_table');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS employee_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+          action TEXT NOT NULL,
+          details TEXT NOT NULL,
+          performed_by_user_id INTEGER REFERENCES app_users(id),
+          performed_by_name TEXT,
+          created_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_emp_logs_emp ON employee_logs(employee_id)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_emp_logs_created ON employee_logs(created_at)');
+      console.log('✓ Migration create_employee_logs_table completed');
+    }
+  },
+  {
+    id: 36,
+    name: 'create_employee_settings_table',
+    up: () => {
+      console.log('Running migration: create_employee_settings_table');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS employee_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+      // Insert defaults
+      const defaults = [
+        ['unit_vacation', 'days'],
+        ['unit_zeitausgleich', 'days'],
+        ['unit_sonderurlaub', 'days'],
+        ['unit_krankenstand', 'days']
+      ];
+      const ins = db.prepare('INSERT OR IGNORE INTO employee_settings (key, value) VALUES (?, ?)');
+      for (const [k, v] of defaults) ins.run(k, v);
+      console.log('✓ Migration create_employee_settings_table completed');
+    }
+  },
+  {
+    id: 37,
+    name: 'create_employee_yearly_rules_table',
+    up: () => {
+      console.log('Running migration: create_employee_yearly_rules_table');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS employee_yearly_rules (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          type TEXT NOT NULL,
+          amount REAL NOT NULL,
+          month INTEGER NOT NULL DEFAULT 2,
+          day INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS employee_rule_overrides (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          rule_id INTEGER NOT NULL REFERENCES employee_yearly_rules(id) ON DELETE CASCADE,
+          employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+          amount REAL NOT NULL,
+          UNIQUE(rule_id, employee_id)
+        )
+      `);
+      console.log('✓ Migration create_employee_yearly_rules_table completed');
+    }
   }
 ];
 

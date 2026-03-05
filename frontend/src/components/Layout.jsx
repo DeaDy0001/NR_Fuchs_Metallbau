@@ -16,7 +16,7 @@ function Layout({ children, settings, updateSettings, updateInfo, onToggleSideba
         onOpenUpdate={onOpenUpdate}
       />
       <div className="layout-body">
-        <Sidebar collapsed={settings.sidebar_collapsed} />
+        <Sidebar collapsed={settings.sidebar_collapsed} moduleMitarbeiter={settings.module_mitarbeiter_enabled} />
         <main className={`main-content ${settings.sidebar_collapsed ? 'sidebar-collapsed' : ''}`}>
           {children}
         </main>
