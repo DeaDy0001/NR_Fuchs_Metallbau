@@ -15,7 +15,19 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // Static files for uploads
 app.use('/uploads', express.static(path.join(__dirname, '../../uploads')));
 
-// Routes
+// Public routes (no session required)
+app.use('/api/auth/user', require('./routes/userAuth'));
+app.use('/api/mobile', require('./routes/mobile'));
+
+// Session auth middleware for all protected routes
+const sessionAuth = require('./middleware/sessionAuth');
+const publicPrefixes = ['/api/auth/user/', '/api/mobile/', '/api/health', '/uploads/'];
+app.use((req, res, next) => {
+  if (publicPrefixes.some(p => req.path.startsWith(p))) return next();
+  return sessionAuth(req, res, next);
+});
+
+// Protected routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/drive', require('./routes/drive'));
@@ -25,7 +37,8 @@ app.use('/api/color-presets', require('./routes/colorPresets'));
 app.use('/api/system', require('./routes/system'));
 app.use('/api/github', require('./routes/github'));
 app.use('/api/tags', require('./routes/tags'));
-app.use('/api/mobile', require('./routes/mobile'));
+app.use('/api/users', require('./routes/users'));
+app.use('/api/roles', require('./routes/roles'));
 
 // Health check
 app.get('/api/health', (req, res) => {

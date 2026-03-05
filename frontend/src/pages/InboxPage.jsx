@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Inbox, Upload, FolderPlus, Trash2, GitMerge, Camera } from 'lucide-react';
+import { Inbox, Upload, FolderPlus, Trash2, GitMerge, Camera, UserCheck, ChevronDown } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 import './InboxPage.css';
 
 const TYPE_CONFIG = {
@@ -14,6 +15,12 @@ function formatDate(isoStr) {
   if (!isoStr) return '';
   const d = new Date(isoStr.endsWith('Z') ? isoStr : isoStr + 'Z');
   return d.toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function formatDateTime(isoStr) {
+  if (!isoStr) return '';
+  const d = new Date(isoStr.endsWith('Z') ? isoStr : isoStr + 'Z');
+  return d.toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 function formatTime(isoStr) {
@@ -32,7 +39,97 @@ function groupByDate(activities) {
   return groups;
 }
 
+function PendingUsersSection({ onApproved }) {
+  const [pendingUsers, setPendingUsers] = useState([]);
+  const [roles, setRoles] = useState([]);
+  const [selectedRoles, setSelectedRoles] = useState({});
+  const [approving, setApproving] = useState({});
+
+  const load = useCallback(async () => {
+    try {
+      const [uRes, rRes] = await Promise.all([
+        fetch('/api/users/pending'),
+        fetch('/api/roles')
+      ]);
+      if (uRes.ok) setPendingUsers((await uRes.json()).users);
+      if (rRes.ok) setRoles((await rRes.json()).roles);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (pendingUsers.length === 0) return null;
+
+  const handleApprove = async (userId) => {
+    const roleId = selectedRoles[userId];
+    if (!roleId) return;
+    setApproving(prev => ({ ...prev, [userId]: true }));
+    try {
+      const res = await fetch(`/api/users/${userId}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role_id: parseInt(roleId) })
+      });
+      if (res.ok) {
+        setPendingUsers(prev => prev.filter(u => u.id !== userId));
+        if (onApproved) onApproved();
+      }
+    } catch { /* ignore */ }
+    setApproving(prev => ({ ...prev, [userId]: false }));
+  };
+
+  return (
+    <div className="inbox-pending-section">
+      <div className="inbox-pending-header">
+        <UserCheck size={18} className="inbox-pending-icon" />
+        <span>Benutzer warten auf Freischaltung</span>
+        <span className="inbox-pending-count">{pendingUsers.length}</span>
+      </div>
+
+      <div className="inbox-pending-list">
+        {pendingUsers.map(user => (
+          <div key={user.id} className="inbox-pending-user">
+            <div className="inbox-pending-user-info">
+              {user.picture
+                ? <img src={user.picture} alt={user.name} className="inbox-pending-avatar" referrerPolicy="no-referrer" />
+                : <div className="inbox-pending-initials">{(user.name || user.email)[0].toUpperCase()}</div>
+              }
+              <div>
+                <div className="inbox-pending-name">{user.name}</div>
+                <div className="inbox-pending-email">{user.email}</div>
+                <div className="inbox-pending-date">Registriert: {formatDateTime(user.created_at)}</div>
+              </div>
+            </div>
+
+            <div className="inbox-pending-actions">
+              <select
+                className="inbox-pending-select"
+                value={selectedRoles[user.id] || ''}
+                onChange={e => setSelectedRoles(prev => ({ ...prev, [user.id]: e.target.value }))}
+              >
+                <option value="">Rolle wählen...</option>
+                {roles.map(r => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+              <button
+                className="inbox-pending-approve-btn"
+                disabled={!selectedRoles[user.id] || approving[user.id]}
+                onClick={() => handleApprove(user.id)}
+              >
+                <UserCheck size={14} />
+                Freischalten
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function InboxPage() {
+  const { user } = useAuth();
   const [activities, setActivities] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -57,6 +154,7 @@ export default function InboxPage() {
   }, [load]);
 
   const grouped = groupByDate(activities);
+  const canApproveUsers = user?.permissions?.approve_users;
 
   return (
     <div className="inbox-page">
@@ -65,6 +163,8 @@ export default function InboxPage() {
         <h1>Inbox</h1>
         <span className="inbox-page-subtitle">Aktivitäten der Handy-App</span>
       </div>
+
+      {canApproveUsers && <PendingUsersSection />}
 
       {loading && (
         <div className="inbox-page-empty">

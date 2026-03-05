@@ -1,11 +1,14 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Image, FolderKanban, Inbox } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import './Sidebar.css';
 
 function Sidebar({ collapsed }) {
   const location = useLocation();
+  const { user } = useAuth();
   const [inboxUnread, setInboxUnread] = useState(0);
+  const viewTabs = user?.permissions?.view_tabs || ['inbox', 'images', 'projects'];
 
   const checkUnread = useCallback(async () => {
     try {
@@ -38,42 +41,47 @@ function Sidebar({ collapsed }) {
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
       <nav className="sidebar-nav">
 
-        {/* Inbox – fixed entry above Bilder */}
-        <Link
-          to="/inbox"
-          className={`menu-item ${isActive('/inbox') ? 'active' : ''}`}
-          title={collapsed ? 'Inbox' : ''}
-        >
-          <div className="menu-item-content">
-            <div className="menu-item-icon-wrap">
-              <Inbox size={20} />
-              {inboxUnread > 0 && <span className="inbox-badge" />}
+        {viewTabs.includes('inbox') && (
+          <Link
+            to="/inbox"
+            className={`menu-item ${isActive('/inbox') ? 'active' : ''}`}
+            title={collapsed ? 'Inbox' : ''}
+          >
+            <div className="menu-item-content">
+              <div className="menu-item-icon-wrap">
+                <Inbox size={20} />
+                {inboxUnread > 0 && <span className="inbox-badge" />}
+              </div>
+              {!collapsed && <span className="menu-item-label">Inbox</span>}
             </div>
-            {!collapsed && <span className="menu-item-label">Inbox</span>}
-          </div>
-        </Link>
+          </Link>
+        )}
 
-        <Link
-          to="/images"
-          className={`menu-item ${isActive('/images') ? 'active' : ''}`}
-          title={collapsed ? 'Bilder' : ''}
-        >
-          <div className="menu-item-content">
-            <Image size={20} />
-            {!collapsed && <span className="menu-item-label">Bilder</span>}
-          </div>
-        </Link>
+        {viewTabs.includes('images') && (
+          <Link
+            to="/images"
+            className={`menu-item ${isActive('/images') ? 'active' : ''}`}
+            title={collapsed ? 'Bilder' : ''}
+          >
+            <div className="menu-item-content">
+              <Image size={20} />
+              {!collapsed && <span className="menu-item-label">Bilder</span>}
+            </div>
+          </Link>
+        )}
 
-        <Link
-          to="/projects"
-          className={`menu-item ${isActive('/projects') ? 'active' : ''}`}
-          title={collapsed ? 'Projekte' : ''}
-        >
-          <div className="menu-item-content">
-            <FolderKanban size={20} />
-            {!collapsed && <span className="menu-item-label">Projekte</span>}
-          </div>
-        </Link>
+        {viewTabs.includes('projects') && (
+          <Link
+            to="/projects"
+            className={`menu-item ${isActive('/projects') ? 'active' : ''}`}
+            title={collapsed ? 'Projekte' : ''}
+          >
+            <div className="menu-item-content">
+              <FolderKanban size={20} />
+              {!collapsed && <span className="menu-item-label">Projekte</span>}
+            </div>
+          </Link>
+        )}
 
       </nav>
 

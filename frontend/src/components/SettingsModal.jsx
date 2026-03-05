@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
-import { X, Settings as SettingsIcon, Image, FolderKanban, Download, Smartphone, Code } from 'lucide-react';
+import { X, Settings as SettingsIcon, Image, FolderKanban, Download, Smartphone, Code, Users } from 'lucide-react';
 import SettingsGeneral from '../pages/Settings';
 import DriveSettings from '../pages/DriveSettings';
 import ProjectsSettings from '../pages/ProjectsSettings';
 import UpdateSettings from '../pages/UpdateSettings';
 import MobileAppSettings from '../pages/MobileAppSettings';
 import DevSettings from '../pages/DevSettings';
+import UserManagement from '../pages/UserManagement';
+import { useAuth } from '../contexts/AuthContext';
 import './SettingsModal.css';
 
 const tabs = [
@@ -14,12 +16,19 @@ const tabs = [
   { id: 'projects', label: 'Projekte', icon: FolderKanban },
   { id: 'mobile', label: 'Handy App', icon: Smartphone },
   { id: 'update', label: 'Update', icon: Download },
+  { id: 'users', label: 'Benutzer', icon: Users },
 ];
 
 const devTab = { id: 'dev', label: 'Dev', icon: Code };
 
 function SettingsModal({ isOpen, onClose, initialTab, initialVersion, settings, updateSettings, onSettingsChange, onCheckForUpdates }) {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState(initialTab || 'general');
+
+  const visibleTabs = tabs.filter(tab => {
+    if (tab.id === 'users') return user?.permissions?.access_settings;
+    return true;
+  });
 
   // Update active tab when initialTab changes (e.g. opening from update badge)
   useEffect(() => {
@@ -57,7 +66,7 @@ function SettingsModal({ isOpen, onClose, initialTab, initialVersion, settings, 
           <div className="settings-modal-sidebar">
             <h2 className="settings-modal-title">Einstellungen</h2>
             <nav className="settings-modal-nav">
-              {tabs.map(tab => {
+              {visibleTabs.map(tab => {
                 const Icon = tab.icon;
                 return (
                   <button
@@ -102,6 +111,7 @@ function SettingsModal({ isOpen, onClose, initialTab, initialVersion, settings, 
               />
             )}
             {activeTab === 'dev' && <DevSettings />}
+            {activeTab === 'users' && <UserManagement />}
           </div>
         </div>
       </div>

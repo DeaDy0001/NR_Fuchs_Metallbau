@@ -609,6 +609,92 @@ const migrations = [
     }
   },
   {
+    id: 26,
+    name: 'create_app_roles_table',
+    up: () => {
+      console.log('Running migration: create_app_roles_table');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS app_roles (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE,
+          permissions TEXT NOT NULL DEFAULT '{}',
+          is_system INTEGER DEFAULT 0,
+          created_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+
+      // Insert default Admin role (cannot be deleted)
+      db.prepare(`
+        INSERT OR IGNORE INTO app_roles (name, permissions, is_system)
+        VALUES (?, ?, 1)
+      `).run(
+        'Admin',
+        JSON.stringify({
+          approve_users: true,
+          manage_inbox: true,
+          view_tabs: ['inbox', 'images', 'projects'],
+          access_settings: true
+        })
+      );
+
+      console.log('✓ Migration create_app_roles_table completed');
+    }
+  },
+  {
+    id: 27,
+    name: 'create_app_users_table',
+    up: () => {
+      console.log('Running migration: create_app_users_table');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS app_users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          google_id TEXT NOT NULL UNIQUE,
+          email TEXT NOT NULL UNIQUE,
+          name TEXT,
+          picture TEXT,
+          role_id INTEGER REFERENCES app_roles(id),
+          status TEXT DEFAULT 'pending',
+          created_at TEXT DEFAULT (datetime('now')),
+          last_login TEXT
+        )
+      `);
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_app_users_google_id ON app_users(google_id)
+      `);
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_app_users_status ON app_users(status)
+      `);
+
+      console.log('✓ Migration create_app_users_table completed');
+    }
+  },
+  {
+    id: 28,
+    name: 'create_app_sessions_table',
+    up: () => {
+      console.log('Running migration: create_app_sessions_table');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS app_sessions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+          session_token TEXT NOT NULL UNIQUE,
+          expires_at TEXT NOT NULL,
+          created_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_app_sessions_token ON app_sessions(session_token)
+      `);
+
+      console.log('✓ Migration create_app_sessions_table completed');
+    }
+  },
+  {
     id: 24,
     name: 'create_mobile_users_table',
     up: () => {

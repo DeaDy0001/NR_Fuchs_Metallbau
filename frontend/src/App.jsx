@@ -5,8 +5,33 @@ import SettingsModal from './components/SettingsModal';
 import DriveImages from './pages/DriveImages';
 import ProjectsList from './pages/ProjectsList';
 import InboxPage from './pages/InboxPage';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import LoginPage from './pages/LoginPage';
+import WaitingPage from './pages/WaitingPage';
 
-function App() {
+function AppInner() {
+  const { loading, setupRequired, authenticated, user } = useAuth();
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary, #0f1117)' }}>
+        <div style={{ color: '#94a3b8', fontSize: '0.9rem' }}>Lade...</div>
+      </div>
+    );
+  }
+
+  if (setupRequired || !authenticated) {
+    return <LoginPage isSetup={setupRequired} />;
+  }
+
+  if (user?.status === 'pending') {
+    return <WaitingPage />;
+  }
+
+  return <MainApp />;
+}
+
+function MainApp() {
   const [settings, setSettings] = useState({
     logo_path: null,
     theme: 'dark',
@@ -175,6 +200,14 @@ function App() {
         onCheckForUpdates={checkForUpdates}
       />
     </Router>
+  );
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppInner />
+    </AuthProvider>
   );
 }
 
