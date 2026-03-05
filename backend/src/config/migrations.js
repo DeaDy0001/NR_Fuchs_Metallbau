@@ -737,6 +737,25 @@ const migrations = [
     }
   },
   {
+    id: 30,
+    name: 'add_login_link_token_columns',
+    up: () => {
+      console.log('Running migration: add_login_link_token_columns');
+
+      const tableInfo = db.pragma('table_info(app_users)');
+      const existingColumns = tableInfo.map(col => col.name);
+
+      if (!existingColumns.includes('login_link_token')) {
+        db.exec('ALTER TABLE app_users ADD COLUMN login_link_token TEXT');
+      }
+      if (!existingColumns.includes('login_link_expires_at')) {
+        db.exec('ALTER TABLE app_users ADD COLUMN login_link_expires_at TEXT');
+      }
+
+      console.log('✓ Migration add_login_link_token_columns completed');
+    }
+  },
+  {
     id: 24,
     name: 'create_mobile_users_table',
     up: () => {

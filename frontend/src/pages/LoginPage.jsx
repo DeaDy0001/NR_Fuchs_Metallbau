@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import './LoginPage.css';
 
@@ -9,6 +9,33 @@ export default function LoginPage({ isSetup }) {
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Magic link auto-login: check ?magic=<token> in URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('magic');
+    if (!token) return;
+
+    // Remove token from URL immediately
+    window.history.replaceState({}, '', window.location.pathname);
+
+    setLoading(true);
+    setError('');
+    fetch(`/api/auth/user/magic?token=${encodeURIComponent(token)}`)
+      .then(res => res.json().then(d => ({ ok: res.ok, d })))
+      .then(({ ok, d }) => {
+        if (ok) {
+          refetch();
+        } else {
+          setError(d.error || 'Login-Link ungültig oder abgelaufen.');
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        setError('Verbindungsfehler beim Verarbeiten des Login-Links.');
+        setLoading(false);
+      });
+  }, [refetch]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();

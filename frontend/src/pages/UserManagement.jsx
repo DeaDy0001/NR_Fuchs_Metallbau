@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Shield, Plus, Trash2, Check, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { Users, Shield, Plus, Trash2, Check, X, ChevronDown, ChevronUp, Link } from 'lucide-react';
 import './UserManagement.css';
 
 const ALL_TABS = [
@@ -130,6 +130,7 @@ export default function UserManagement() {
   const [newUser, setNewUser] = useState(EMPTY_NEW_USER);
   const [newUserError, setNewUserError] = useState('');
   const [newUserSaving, setNewUserSaving] = useState(false);
+  const [copiedLinkId, setCopiedLinkId] = useState(null); // userId whose link was just copied
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -256,6 +257,19 @@ export default function UserManagement() {
       }
     } catch { setError('Netzwerkfehler'); }
     setSaving(false);
+  };
+
+  const copyLoginLink = async (userId) => {
+    try {
+      const res = await fetch(`/api/users/${userId}/login-link`, { method: 'POST' });
+      const d = await res.json();
+      if (!res.ok) return setError(d.error || 'Fehler beim Generieren des Links');
+      await navigator.clipboard.writeText(d.url);
+      setCopiedLinkId(userId);
+      setTimeout(() => setCopiedLinkId(null), 2500);
+    } catch {
+      setError('Link konnte nicht kopiert werden');
+    }
   };
 
   function formatDate(iso) {
@@ -399,6 +413,16 @@ export default function UserManagement() {
                   ))}
                 </select>
                 <StatusBadge status={user.status} />
+                {user.status === 'active' && (
+                  <button
+                    className={`um-btn ${copiedLinkId === user.id ? 'um-btn-success' : 'um-btn-secondary'}`}
+                    onClick={() => copyLoginLink(user.id)}
+                    title="Login-Link in Zwischenablage kopieren"
+                  >
+                    {copiedLinkId === user.id ? <Check size={14} /> : <Link size={14} />}
+                    {copiedLinkId === user.id ? 'Kopiert!' : 'Link kopieren'}
+                  </button>
+                )}
                 <button
                   className={`um-btn ${user.status === 'active' ? 'um-btn-danger' : 'um-btn-success'}`}
                   onClick={() => toggleUserStatus(user)}

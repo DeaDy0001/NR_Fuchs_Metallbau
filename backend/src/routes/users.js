@@ -161,4 +161,34 @@ router.patch('/:id', (req, res) => {
   }
 });
 
+// POST /api/users/:id/login-link — Generate a one-time magic login link
+router.post('/:id/login-link', (req, res) => {
+  if (!req.appUser.permissions.access_settings) {
+    return res.status(403).json({ error: 'Keine Berechtigung' });
+  }
+
+  const userId = parseInt(req.params.id);
+
+  try {
+    const user = db.prepare('SELECT id, email, status FROM app_users WHERE id = ?').get(userId);
+    if (!user) return res.status(404).json({ error: 'Benutzer nicht gefunden' });
+    if (user.status !== 'active') return res.status(400).json({ error: 'Benutzer ist nicht aktiv' });
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      .toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+
+    db.prepare('UPDATE app_users SET login_link_token = ?, login_link_expires_at = ? WHERE id = ?')
+      .run(token, expiresAt, userId);
+
+    console.log(`[Auth] Login link generated for user ${user.email} (expires ${expiresAt})`);
+
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    res.json({ url: `${baseUrl}/?magic=${token}` });
+  } catch (error) {
+    console.error('Error generating login link:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

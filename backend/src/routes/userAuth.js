@@ -159,6 +159,40 @@ router.post('/login', (req, res) => {
   }
 });
 
+// ─── GET /api/auth/user/magic ──────────────────────────────────────────────────
+// One-time magic login link: validates token, creates session, clears token
+router.get('/magic', (req, res) => {
+  const { token } = req.query;
+  if (!token) return res.status(400).json({ error: 'Kein Token angegeben' });
+
+  try {
+    const user = db.prepare(`
+      SELECT id, email, status FROM app_users
+      WHERE login_link_token = ? AND login_link_expires_at > datetime('now')
+    `).get(token);
+
+    if (!user) {
+      console.log(`[Auth/magic] 401 invalid/expired token ${token.slice(0, 8)}...`);
+      return res.status(401).json({ error: 'Link ungültig oder abgelaufen' });
+    }
+
+    if (user.status !== 'active') {
+      return res.status(403).json({ error: 'Account nicht aktiv' });
+    }
+
+    // Invalidate the token immediately (one-time use)
+    db.prepare('UPDATE app_users SET login_link_token = NULL, login_link_expires_at = NULL WHERE id = ?')
+      .run(user.id);
+
+    createSession(user.id, res);
+    console.log(`[Auth/magic] Login via magic link for ${user.email}`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[Auth/magic] Error:', error);
+    res.status(500).json({ error: 'Interner Serverfehler' });
+  }
+});
+
 // ─── POST /api/auth/user/logout ────────────────────────────────────────────────
 router.post('/logout', (req, res) => {
   const cookies = parseCookies(req);
