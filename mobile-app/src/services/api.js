@@ -30,7 +30,7 @@ import {
   findOrCreateFolder,
   findFolder,
 } from './driveService';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { getAccessToken } from './googleAuth';
 
 // ============================================================

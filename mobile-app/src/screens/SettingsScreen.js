@@ -8,7 +8,7 @@ import { getSetting, setSetting, getCachedProjects } from '../services/database'
 import { getCacheSize, clearCache, cleanupCache, downloadProjectImages } from '../services/syncService';
 import { fetchProjectImages, downloadAppUpdateApk } from '../services/api';
 import Slider from '../components/Slider';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import Constants from 'expo-constants';
 
 export default function SettingsScreen({ navigation }) {

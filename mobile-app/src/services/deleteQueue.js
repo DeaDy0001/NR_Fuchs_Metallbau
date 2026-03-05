@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { getQueuedDeletes, updateDeleteQueueStatus, deleteRecentPhoto, deleteRecentPhotos } from './database';
 import { requestDeleteFromSoftware } from './api';
 
