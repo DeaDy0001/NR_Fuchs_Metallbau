@@ -22,7 +22,10 @@ const sessionAuth = (req, res, next) => {
   const cookies = parseCookies(req);
   const token = cookies['fm_session'];
 
+  console.log(`[Auth] ${req.method} ${req.path} | cookie=${token ? token.slice(0, 8) + '...' : 'NONE'}`);
+
   if (!token) {
+    console.log(`[Auth] 401 No token for ${req.path}`);
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
@@ -37,12 +40,16 @@ const sessionAuth = (req, res, next) => {
     `).get(token);
 
     if (!session) {
+      console.log(`[Auth] 401 Session not found / expired for token ${token.slice(0, 8)}...`);
       return res.status(401).json({ error: 'Session abgelaufen oder ungültig' });
     }
 
     if (session.status !== 'active') {
+      console.log(`[Auth] 403 User ${session.email} is not active (status=${session.status})`);
       return res.status(403).json({ error: 'Account nicht aktiv', status: session.status });
     }
+
+    console.log(`[Auth] OK user=${session.email} role=${session.role_name || 'none'}`);
 
     req.appUser = {
       id: session.id,
@@ -57,7 +64,7 @@ const sessionAuth = (req, res, next) => {
 
     next();
   } catch (error) {
-    console.error('Session auth error:', error);
+    console.error('[Auth] Session auth error:', error);
     return res.status(500).json({ error: 'Interner Serverfehler' });
   }
 };

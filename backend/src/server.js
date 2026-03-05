@@ -19,11 +19,13 @@ app.use('/uploads', express.static(path.join(__dirname, '../../uploads')));
 app.use('/api/auth/user', require('./routes/userAuth'));
 app.use('/api/mobile', require('./routes/mobile'));
 
-// Session auth middleware for all protected routes
+// Session auth middleware for all protected API routes
 const sessionAuth = require('./middleware/sessionAuth');
-const publicPrefixes = ['/api/auth/user/', '/api/mobile/', '/api/health', '/uploads/'];
+const publicApiPrefixes = ['/api/auth/user', '/api/mobile', '/api/health'];
 app.use((req, res, next) => {
-  if (publicPrefixes.some(p => req.path.startsWith(p))) return next();
+  // Only API routes need auth — static files & SPA routes are always public
+  if (!req.path.startsWith('/api/')) return next();
+  if (publicApiPrefixes.some(p => req.path.startsWith(p))) return next();
   return sessionAuth(req, res, next);
 });
 

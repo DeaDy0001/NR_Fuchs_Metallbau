@@ -58,13 +58,18 @@ function createSession(userId, res) {
 router.get('/me', (req, res) => {
   // Setup mode: no users at all
   const userCount = db.prepare('SELECT COUNT(*) as count FROM app_users').get();
+  console.log(`[Auth/me] userCount=${userCount.count}`);
   if (userCount.count === 0) {
+    console.log('[Auth/me] → setupRequired');
     return res.json({ setupRequired: true });
   }
 
   const cookies = parseCookies(req);
   const token = cookies['fm_session'];
-  if (!token) return res.json({ authenticated: false });
+  if (!token) {
+    console.log('[Auth/me] → no cookie, authenticated=false');
+    return res.json({ authenticated: false });
+  }
 
   try {
     const session = db.prepare(`
@@ -77,10 +82,12 @@ router.get('/me', (req, res) => {
     `).get(token);
 
     if (!session) {
+      console.log(`[Auth/me] → session expired/not found for token ${token.slice(0,8)}...`);
       clearSessionCookie(res);
       return res.json({ authenticated: false });
     }
 
+    console.log(`[Auth/me] → authenticated user=${session.email}`);
     res.json({
       authenticated: true,
       user: {
@@ -118,21 +125,27 @@ router.post('/login', (req, res) => {
       // First user: create admin
       const adminRole = db.prepare("SELECT id FROM app_roles WHERE is_system = 1 LIMIT 1").get();
       const displayName = (name && name.trim()) ? name.trim() : normalizedEmail.split('@')[0];
+      console.log(`[Auth/login] Setup: creating admin user ${normalizedEmail} with role_id=${adminRole?.id}`);
       const result = db.prepare(`
         INSERT INTO app_users (email, name, password_hash, role_id, status)
         VALUES (?, ?, ?, ?, 'active')
       `).run(normalizedEmail, displayName, hashPassword(password), adminRole?.id || null);
 
       createSession(result.lastInsertRowid, res);
+      console.log(`[Auth/login] Admin created with id=${result.lastInsertRowid}`);
       return res.json({ success: true });
     }
 
     // Normal login
     const user = db.prepare('SELECT * FROM app_users WHERE email = ?').get(normalizedEmail);
+    console.log(`[Auth/login] Login attempt for ${normalizedEmail}: found=${!!user}`);
 
     if (!user) return res.status(401).json({ error: 'E-Mail oder Passwort falsch' });
     if (!user.password_hash) return res.status(401).json({ error: 'Konto hat kein Passwort. Bitte einen Administrator kontaktieren.' });
-    if (!verifyPassword(password, user.password_hash)) return res.status(401).json({ error: 'E-Mail oder Passwort falsch' });
+    if (!verifyPassword(password, user.password_hash)) {
+      console.log(`[Auth/login] Wrong password for ${normalizedEmail}`);
+      return res.status(401).json({ error: 'E-Mail oder Passwort falsch' });
+    }
     if (user.status === 'inactive') return res.status(403).json({ error: 'Dieses Konto wurde deaktiviert. Wende dich an einen Administrator.' });
 
     // Update last_login
