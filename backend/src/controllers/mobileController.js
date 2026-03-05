@@ -2987,14 +2987,18 @@ const getProjectChanges = async (req, res) => {
         return !existing;
       });
       if (unlogged.length > 0) {
-        const uploader = change.uploaders.join(', ') || 'Handy-App';
-        logActivity(
-          'project_change',
-          `${unlogged.length} neue${unlogged.length === 1 ? 's Bild' : ' Bilder'} in Projekt „${change.project_name}"`,
-          `hochgeladen von ${uploader}`,
-          uploader
-        );
-        // Mark each image so it won't trigger again
+        // Only log if at least one image was explicitly uploaded via the mobile app
+        // (detected by [FUCHS_META] tag). Desktop Drive operations must not appear in Inbox.
+        if (change.uploaders.length > 0) {
+          const uploader = change.uploaders.join(', ');
+          logActivity(
+            'project_change',
+            `${unlogged.length} neue${unlogged.length === 1 ? 's Bild' : ' Bilder'} in Projekt „${change.project_name}"`,
+            `hochgeladen von ${uploader}`,
+            uploader
+          );
+        }
+        // Mark all images as seen regardless, so they don't retrigger on the next scan
         for (const img of unlogged) markSourceIdSeen(`drive_img_${img.id}`);
       }
     }
