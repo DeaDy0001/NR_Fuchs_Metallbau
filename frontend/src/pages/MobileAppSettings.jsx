@@ -228,7 +228,7 @@ function MobileAppSettings() {
 
           {qrData ? (
             <div className="qr-display">
-              <QRCodeSVG data={qrData.qrData} size={220} />
+              <QRCodeSVG data={qrData.qrData} size={300} />
               <div className="qr-info">
                 <p className="qr-server">Drive-Ordner: <strong>{qrData.name}</strong></p>
                 <p className="qr-server">Server: <strong>{qrData.serverUrl}</strong></p>

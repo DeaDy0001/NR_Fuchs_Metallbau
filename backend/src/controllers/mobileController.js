@@ -308,10 +308,10 @@ function buildLandingPageHtml({ isValid, serverUrl, apkExists, apkSize, apkTimes
       padding:32px 24px;max-width:420px;width:100%;text-align:center;
     }
     .logo{
-      width:88px;height:88px;
+      width:40px;height:40px;
       margin:0 auto 20px;
     }
-    .logo img{width:88px;height:88px;border-radius:16px;object-fit:contain;display:block}
+    .logo img{width:40px;height:40px;border-radius:8px;object-fit:contain;display:block}
     h1{font-size:22px;font-weight:700;margin-bottom:6px}
     .subtitle{font-size:14px;color:#94a3b8;margin-bottom:28px}
     .status{
