@@ -64,10 +64,9 @@ export const AppProvider = ({ children }) => {
   // Start upload queue processing and heartbeat when connected to Drive
   // Also check for app updates in the background
   useEffect(() => {
-    if (isConnected && activeConnection) {
-      startQueueProcessing();
-      startHeartbeat();
-      // Check for app update on Drive (silently in background)
+    let updateInterval = null;
+
+    const runUpdateCheck = () => {
       checkAppUpdate()
         .then((update) => {
           if (!update?.version || !update?.apkFileId) return;
@@ -78,6 +77,15 @@ export const AppProvider = ({ children }) => {
           }
         })
         .catch(() => {}); // silently ignore network errors
+    };
+
+    if (isConnected && activeConnection) {
+      startQueueProcessing();
+      startHeartbeat();
+      // Initial check on connect
+      runUpdateCheck();
+      // Periodic re-check every 6 hours
+      updateInterval = setInterval(runUpdateCheck, 6 * 60 * 60 * 1000);
     } else {
       stopQueueProcessing();
       stopHeartbeat();
@@ -85,6 +93,7 @@ export const AppProvider = ({ children }) => {
     return () => {
       stopQueueProcessing();
       stopHeartbeat();
+      if (updateInterval) clearInterval(updateInterval);
     };
   }, [isConnected]);
 
