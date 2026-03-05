@@ -43,6 +43,31 @@ function groupByDate(activities) {
   return groups;
 }
 
+/**
+ * Icon group for inbox entries.
+ * Single icon → centered. Two icons → stacked/overlapping micro badges.
+ */
+function EntryIconGroup({ icons }) {
+  // icons = [{ Icon, color }] or [{ Icon, color }, { Icon, color }]
+  if (icons.length === 1) {
+    const { Icon, color } = icons[0];
+    return (
+      <div className="inbox-entry-icon" style={{ background: color + '22', color }}>
+        <Icon size={16} />
+      </div>
+    );
+  }
+  return (
+    <div className="inbox-entry-icon-group">
+      {icons.map(({ Icon, color }, i) => (
+        <div key={i} className="inbox-entry-icon-badge" style={{ background: color + '33', color }}>
+          <Icon size={12} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Parse [FUCHS_META]{...} from Google Drive file description */
 function parseFuchsMeta(description) {
   if (!description || !description.startsWith('[FUCHS_META]')) return null;
@@ -326,9 +351,11 @@ function InboxItemRow({ item, projects, canManage, onRemove, onActivity }) {
     <div className="inbox-entry-card">
       <div className="inbox-entry-header" onClick={handleExpand}>
         <div className="inbox-entry-header-left">
-          <div className="inbox-entry-icon" style={{ background: '#f59e0b22', color: '#f59e0b' }}>
-            <Camera size={16} />
-          </div>
+          <EntryIconGroup icons={
+            item.is_user_inbox
+              ? [{ Icon: Camera, color: '#f59e0b' }]
+              : [{ Icon: Camera, color: '#f59e0b' }, { Icon: FolderPlus, color: '#10b981' }]
+          } />
           <div>
             <div className="inbox-entry-title">{item.project_name}</div>
             <div className="inbox-entry-meta">
@@ -487,9 +514,10 @@ function ProjectChangeRow({ change, canManage, onRemove, onActivity }) {
     <div className="inbox-entry-card">
       <div className="inbox-entry-header" onClick={() => setExpanded(e => !e)}>
         <div className="inbox-entry-header-left">
-          <div className="inbox-entry-icon" style={{ background: '#8b5cf622', color: '#8b5cf6' }}>
-            <GitMerge size={16} />
-          </div>
+          <EntryIconGroup icons={[
+            { Icon: Camera, color: '#f59e0b' },
+            { Icon: GitMerge, color: '#8b5cf6' }
+          ]} />
           <div>
             <div className="inbox-entry-title">{change.project_name}</div>
             <div className="inbox-entry-meta">

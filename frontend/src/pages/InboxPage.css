@@ -102,6 +102,25 @@
   flex-shrink: 0;
 }
 
+/* Two-icon group: badges stacked with slight overlap */
+.inbox-entry-icon-group {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 3px;
+}
+
+.inbox-entry-icon-badge {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
 .inbox-entry-title {
   font-size: 0.9rem;
   font-weight: 600;
