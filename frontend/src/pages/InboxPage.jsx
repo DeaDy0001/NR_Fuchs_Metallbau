@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Inbox, Upload, FolderPlus, Trash2, GitMerge, Camera,
   UserCheck, ChevronDown, ChevronUp, Check, X, Eye,
-  FolderOpen, RefreshCw, Image
+  FolderOpen, RefreshCw, Image, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import './InboxPage.css';
@@ -43,6 +43,84 @@ function groupByDate(activities) {
   return groups;
 }
 
+// ─── Image Lightbox ───────────────────────────────────────────────────────────
+function InboxLightbox({ images, startIndex, onClose }) {
+  const [index, setIndex] = useState(startIndex);
+  const img = images[index];
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'ArrowLeft' && index > 0) setIndex(i => i - 1);
+      if (e.key === 'ArrowRight' && index < images.length - 1) setIndex(i => i + 1);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [index, images.length, onClose]);
+
+  return (
+    <div className="inbox-lightbox-overlay" onClick={onClose}>
+      <button className="inbox-lightbox-close" onClick={onClose} title="Schließen (Esc)">
+        <X size={20} />
+      </button>
+
+      {index > 0 && (
+        <button
+          className="inbox-lightbox-nav inbox-lightbox-prev"
+          onClick={e => { e.stopPropagation(); setIndex(i => i - 1); }}
+          title="Vorheriges Bild (←)"
+        >
+          <ChevronLeft size={24} />
+        </button>
+      )}
+      {index < images.length - 1 && (
+        <button
+          className="inbox-lightbox-nav inbox-lightbox-next"
+          onClick={e => { e.stopPropagation(); setIndex(i => i + 1); }}
+          title="Nächstes Bild (→)"
+        >
+          <ChevronRight size={24} />
+        </button>
+      )}
+
+      <div className="inbox-lightbox-content" onClick={e => e.stopPropagation()}>
+        <div className="inbox-lightbox-image-area">
+          <img
+            src={`/api/mobile/inbox/image-proxy/${img.id}`}
+            alt={img.name}
+            className="inbox-lightbox-img"
+          />
+        </div>
+        <div className="inbox-lightbox-sidebar">
+          <div className="inbox-lightbox-counter">{index + 1} / {images.length}</div>
+          <div className="inbox-lightbox-section">
+            <div className="inbox-lightbox-label">Dateiname</div>
+            <div className="inbox-lightbox-value">{img.name}</div>
+          </div>
+          {img.size && (
+            <div className="inbox-lightbox-section">
+              <div className="inbox-lightbox-label">Größe</div>
+              <div className="inbox-lightbox-value">{(img.size / 1024 / 1024).toFixed(1)} MB</div>
+            </div>
+          )}
+          {img.createdTime && (
+            <div className="inbox-lightbox-section">
+              <div className="inbox-lightbox-label">Datum</div>
+              <div className="inbox-lightbox-value">{formatDateTime(img.createdTime)}</div>
+            </div>
+          )}
+          {img.mimeType && (
+            <div className="inbox-lightbox-section">
+              <div className="inbox-lightbox-label">Typ</div>
+              <div className="inbox-lightbox-value">{img.mimeType.split('/')[1]?.toUpperCase() || img.mimeType}</div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Pending Users ────────────────────────────────────────────────────────────
 function PendingUsersSection() {
   const [pendingUsers, setPendingUsers] = useState([]);
@@ -65,14 +143,15 @@ function PendingUsersSection() {
   const handleApprove = async (userId) => {
     const roleId = selectedRoles[userId];
     if (!roleId) return;
+    // Optimistic: remove immediately
+    setPendingUsers(p => p.filter(u => u.id !== userId));
     setApproving(p => ({ ...p, [userId]: true }));
     try {
-      const res = await fetch(`/api/users/${userId}/approve`, {
+      await fetch(`/api/users/${userId}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ role_id: parseInt(roleId) })
       });
-      if (res.ok) setPendingUsers(p => p.filter(u => u.id !== userId));
     } catch { /* ignore */ }
     setApproving(p => ({ ...p, [userId]: false }));
   };
@@ -119,7 +198,7 @@ function PendingUsersSection() {
 }
 
 // ─── Inbox Items (new uploads without project) ────────────────────────────────
-function InboxItemRow({ item, projects, canManage, onDone }) {
+function InboxItemRow({ item, projects, canManage, onRemove }) {
   const [expanded, setExpanded] = useState(false);
   const [images, setImages] = useState(null);
   const [loadingImages, setLoadingImages] = useState(false);
@@ -129,6 +208,7 @@ function InboxItemRow({ item, projects, canManage, onDone }) {
   const [showMergeForm, setShowMergeForm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [lightboxIndex, setLightboxIndex] = useState(null);
 
   const loadImages = async () => {
     if (images !== null) return;
@@ -148,46 +228,34 @@ function InboxItemRow({ item, projects, canManage, onDone }) {
 
   const handleConfirm = async () => {
     if (!newProjectName.trim()) return;
-    setBusy(true); setError('');
-    try {
-      const res = await fetch('/api/mobile/inbox/confirm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderId: item.drive_folder_id, inboxFolderId: item.inbox_folder_id, projectName: newProjectName.trim() })
-      });
-      if (res.ok) { onDone(); return; }
-      const d = await res.json();
-      setError(d.error || 'Fehler');
-    } catch { setError('Netzwerkfehler'); }
-    setBusy(false);
+    // Optimistic: remove from list immediately
+    onRemove(item.drive_folder_id);
+    // Fire backend in background
+    fetch('/api/mobile/inbox/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderId: item.drive_folder_id, inboxFolderId: item.inbox_folder_id, projectName: newProjectName.trim() })
+    }).catch(() => {});
   };
 
   const handleMerge = async () => {
     if (!mergeProjectId) return;
-    setBusy(true); setError('');
-    try {
-      const res = await fetch('/api/mobile/inbox/merge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceFolderId: item.drive_folder_id, targetProjectId: parseInt(mergeProjectId), inboxFolderId: item.inbox_folder_id, projectName: item.project_name })
-      });
-      if (res.ok) { onDone(); return; }
-      const d = await res.json();
-      setError(d.error || 'Fehler');
-    } catch { setError('Netzwerkfehler'); }
-    setBusy(false);
+    // Optimistic: remove from list immediately
+    onRemove(item.drive_folder_id);
+    // Fire backend in background
+    fetch('/api/mobile/inbox/merge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceFolderId: item.drive_folder_id, targetProjectId: parseInt(mergeProjectId), inboxFolderId: item.inbox_folder_id, projectName: item.project_name })
+    }).catch(() => {});
   };
 
   const handleDelete = async () => {
     if (!confirm(`Inbox-Eintrag „${item.project_name}" wirklich löschen?`)) return;
-    setBusy(true); setError('');
-    try {
-      const res = await fetch(`/api/mobile/inbox/${item.drive_folder_id}`, { method: 'DELETE' });
-      if (res.ok) { onDone(); return; }
-      const d = await res.json();
-      setError(d.error || 'Fehler');
-    } catch { setError('Netzwerkfehler'); }
-    setBusy(false);
+    // Optimistic: remove from list immediately
+    onRemove(item.drive_folder_id);
+    // Fire backend in background
+    fetch(`/api/mobile/inbox/${item.drive_folder_id}`, { method: 'DELETE' }).catch(() => {});
   };
 
   const imgFilter = images ? images.filter(f => f.mimeType && f.mimeType.startsWith('image/')) : [];
@@ -218,8 +286,13 @@ function InboxItemRow({ item, projects, canManage, onDone }) {
           {loadingImages && <div className="inbox-entry-loading">Lade Bilder…</div>}
           {!loadingImages && imgFilter.length > 0 && (
             <div className="inbox-image-grid">
-              {imgFilter.map(img => (
-                <div key={img.id} className="inbox-image-thumb">
+              {imgFilter.map((img, idx) => (
+                <div
+                  key={img.id}
+                  className="inbox-image-thumb inbox-image-thumb-clickable"
+                  onClick={() => setLightboxIndex(idx)}
+                  title="Bild anzeigen"
+                >
                   <img
                     src={`/api/mobile/inbox/image-proxy/${img.id}`}
                     alt={img.name}
@@ -255,7 +328,7 @@ function InboxItemRow({ item, projects, canManage, onDone }) {
                         onChange={e => setNewProjectName(e.target.value)}
                         placeholder="Projektname"
                       />
-                      <button className="inbox-action-btn inbox-action-confirm" onClick={handleConfirm} disabled={busy || !newProjectName.trim()}>
+                      <button className="inbox-action-btn inbox-action-confirm" onClick={handleConfirm} disabled={!newProjectName.trim()}>
                         <Check size={14} />Anlegen
                       </button>
                       <button className="inbox-action-btn inbox-action-cancel" onClick={() => setShowConfirmForm(false)}>
@@ -282,7 +355,7 @@ function InboxItemRow({ item, projects, canManage, onDone }) {
                         <option value="">Projekt wählen…</option>
                         {projects.map(p => <option key={p.id} value={p.id}>{p.folder_name}</option>)}
                       </select>
-                      <button className="inbox-action-btn inbox-action-merge" onClick={handleMerge} disabled={busy || !mergeProjectId}>
+                      <button className="inbox-action-btn inbox-action-merge" onClick={handleMerge} disabled={!mergeProjectId}>
                         <Check size={14} />Zusammenführen
                       </button>
                       <button className="inbox-action-btn inbox-action-cancel" onClick={() => setShowMergeForm(false)}>
@@ -295,7 +368,7 @@ function InboxItemRow({ item, projects, canManage, onDone }) {
 
               {/* Delete */}
               {!showConfirmForm && !showMergeForm && (
-                <button className="inbox-action-btn inbox-action-delete" onClick={handleDelete} disabled={busy}>
+                <button className="inbox-action-btn inbox-action-delete" onClick={handleDelete}>
                   <Trash2 size={14} />
                   Löschen
                 </button>
@@ -304,47 +377,47 @@ function InboxItemRow({ item, projects, canManage, onDone }) {
           )}
         </div>
       )}
+
+      {/* Lightbox */}
+      {lightboxIndex !== null && (
+        <InboxLightbox
+          images={imgFilter}
+          startIndex={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+        />
+      )}
     </div>
   );
 }
 
 // ─── Project Changes ──────────────────────────────────────────────────────────
-function ProjectChangeRow({ change, canManage, onDone }) {
+function ProjectChangeRow({ change, canManage, onRemove }) {
   const [expanded, setExpanded] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
+  const changeKey = change.drive_folder_id || change.project_name;
+
   const handleConfirm = async () => {
-    setBusy(true); setError('');
-    try {
-      const fileIds = change.new_images.map(i => i.id);
-      const res = await fetch('/api/mobile/project-changes/confirm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectName: change.project_name, fileIds })
-      });
-      if (res.ok) { onDone(); return; }
-      const d = await res.json();
-      setError(d.error || 'Fehler');
-    } catch { setError('Netzwerkfehler'); }
-    setBusy(false);
+    // Optimistic: remove immediately
+    onRemove(changeKey);
+    const fileIds = change.new_images.map(i => i.id);
+    fetch('/api/mobile/project-changes/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectName: change.project_name, fileIds })
+    }).catch(() => {});
   };
 
   const handleReject = async () => {
     if (!confirm(`Neue Bilder in „${change.project_name}" wirklich ablehnen und löschen?`)) return;
-    setBusy(true); setError('');
-    try {
-      const fileIds = change.new_images.map(i => i.id);
-      const res = await fetch('/api/mobile/project-changes/reject', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectName: change.project_name, fileIds })
-      });
-      if (res.ok) { onDone(); return; }
-      const d = await res.json();
-      setError(d.error || 'Fehler');
-    } catch { setError('Netzwerkfehler'); }
-    setBusy(false);
+    // Optimistic: remove immediately
+    onRemove(changeKey);
+    const fileIds = change.new_images.map(i => i.id);
+    fetch('/api/mobile/project-changes/reject', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectName: change.project_name, fileIds })
+    }).catch(() => {});
   };
 
   return (
@@ -384,10 +457,10 @@ function ProjectChangeRow({ change, canManage, onDone }) {
 
           {canManage && (
             <div className="inbox-entry-actions">
-              <button className="inbox-action-btn inbox-action-confirm" onClick={handleConfirm} disabled={busy}>
+              <button className="inbox-action-btn inbox-action-confirm" onClick={handleConfirm}>
                 <Check size={14} />Hinzufügen
               </button>
-              <button className="inbox-action-btn inbox-action-delete" onClick={handleReject} disabled={busy}>
+              <button className="inbox-action-btn inbox-action-delete" onClick={handleReject}>
                 <X size={14} />Ablehnen
               </button>
             </div>
@@ -452,6 +525,15 @@ export default function InboxPage() {
     fetch('/api/mobile/activities/read', { method: 'POST' }).catch(() => {});
   }, [loadActivities, loadInbox]);
 
+  // Optimistic remove handlers — no reload needed
+  const removeInboxItem = useCallback((folderId) => {
+    setInboxItems(prev => prev.filter(i => i.drive_folder_id !== folderId));
+  }, []);
+
+  const removeProjectChange = useCallback((key) => {
+    setProjectChanges(prev => prev.filter(c => (c.drive_folder_id || c.project_name) !== key));
+  }, []);
+
   const grouped = groupByDate(activities);
   const hasPendingItems = inboxItems.length > 0 || projectChanges.length > 0;
 
@@ -492,7 +574,7 @@ export default function InboxPage() {
               item={item}
               projects={projects}
               canManage={canManageInbox}
-              onDone={loadInbox}
+              onRemove={removeInboxItem}
             />
           ))}
 
@@ -501,7 +583,7 @@ export default function InboxPage() {
               key={change.drive_folder_id || change.project_name}
               change={change}
               canManage={canManageInbox}
-              onDone={loadInbox}
+              onRemove={removeProjectChange}
             />
           ))}
         </div>
