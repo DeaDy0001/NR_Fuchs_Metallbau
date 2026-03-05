@@ -151,7 +151,7 @@ export default function UploadQueueScreen() {
           <Ionicons name={config.icon} size={24} color={config.color} />
         </View>
         <View style={styles.itemInfo}>
-          <Text style={styles.itemName} numberOfLines={1}>{item.file_name}</Text>
+          <Text style={styles.itemName} numberOfLines={1}>{item.custom_title || item.file_name}</Text>
           <View style={styles.itemMeta}>
             <Text style={[styles.itemStatus, { color: config.color }]}>{config.label}</Text>
             {item.project_name && (
@@ -205,7 +205,7 @@ export default function UploadQueueScreen() {
           <Ionicons name="trash-outline" size={24} color={config.color} />
         </View>
         <View style={styles.itemInfo}>
-          <Text style={styles.itemName} numberOfLines={1}>{item.file_name}</Text>
+          <Text style={styles.itemName} numberOfLines={1}>{item.custom_title || item.file_name}</Text>
           <View style={styles.itemMeta}>
             <Text style={[styles.itemStatus, { color: config.color }]}>{config.label}</Text>
             {item.project_name && (

@@ -461,8 +461,9 @@ function buildSetupPageHtml({ serverUrl, driveName, apkExists, apkSize, apkTimes
       width:72px;height:72px;
       background:linear-gradient(135deg,#3b82f6,#2563eb);
       border-radius:18px;display:flex;align-items:center;justify-content:center;
-      margin:0 auto 20px;font-size:32px;
+      margin:0 auto 20px;font-size:32px;overflow:hidden;
     }
+    .logo img{width:44px;height:44px;object-fit:contain;display:block;border-radius:8px;}
     h1{font-size:22px;font-weight:700;margin-bottom:6px}
     .subtitle{font-size:14px;color:#94a3b8;margin-bottom:28px}
     .status{
