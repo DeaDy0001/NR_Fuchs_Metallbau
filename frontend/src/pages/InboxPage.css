@@ -671,3 +671,72 @@
   word-break: break-all;
   line-height: 1.4;
 }
+
+.inbox-lightbox-value-muted {
+  font-size: 0.82rem;
+  color: var(--text-muted, #64748b);
+  font-style: italic;
+}
+
+.inbox-lightbox-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-color, #2a2d3e);
+  border-bottom: 1px solid var(--border-color, #2a2d3e);
+}
+
+.inbox-lightbox-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.inbox-lightbox-meta-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted, #64748b);
+}
+
+.inbox-lightbox-meta-value {
+  font-size: 0.82rem;
+  color: var(--text-primary, #fff);
+}
+
+.inbox-lightbox-gps-btn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: rgba(99,102,241,0.1);
+  border: 1px solid rgba(99,102,241,0.25);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--text-primary, #fff);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+  font-size: 0.82rem;
+  width: 100%;
+}
+.inbox-lightbox-gps-btn:hover { background: rgba(99,102,241,0.2); }
+.inbox-lightbox-gps-btn span:first-child { font-size: 1rem; }
+
+.inbox-lightbox-gps-coords {
+  font-size: 0.72rem;
+  color: var(--text-muted, #64748b);
+}
+
+.inbox-lightbox-notes {
+  font-size: 0.85rem;
+  color: var(--text-primary, #fff);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg-tertiary, #0f1117);
+  border-radius: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color, #2a2d3e);
+}

@@ -43,10 +43,23 @@ function groupByDate(activities) {
   return groups;
 }
 
+/** Parse [FUCHS_META]{...} from Google Drive file description */
+function parseFuchsMeta(description) {
+  if (!description || !description.startsWith('[FUCHS_META]')) return null;
+  try { return JSON.parse(description.substring('[FUCHS_META]'.length)); } catch { return null; }
+}
+
 // ─── Image Lightbox ───────────────────────────────────────────────────────────
 function InboxLightbox({ images, startIndex, onClose }) {
   const [index, setIndex] = useState(startIndex);
   const img = images[index];
+  const meta = parseFuchsMeta(img.description);
+
+  const gpsLat = meta?.gps?.latitude ?? null;
+  const gpsLon = meta?.gps?.longitude ?? null;
+  const uploadedBy = meta?.uploaded_by || null;
+  const notes = meta?.notes || null;
+  const customTitle = meta?.title || null;
 
   useEffect(() => {
     const handler = (e) => {
@@ -93,28 +106,76 @@ function InboxLightbox({ images, startIndex, onClose }) {
         </div>
         <div className="inbox-lightbox-sidebar">
           <div className="inbox-lightbox-counter">{index + 1} / {images.length}</div>
+
           <div className="inbox-lightbox-section">
             <div className="inbox-lightbox-label">Dateiname</div>
-            <div className="inbox-lightbox-value">{img.name}</div>
+            <div className="inbox-lightbox-value">{customTitle || img.name}</div>
           </div>
-          {img.size && (
+
+          {customTitle && customTitle !== img.name && (
             <div className="inbox-lightbox-section">
-              <div className="inbox-lightbox-label">Größe</div>
-              <div className="inbox-lightbox-value">{(img.size / 1024 / 1024).toFixed(1)} MB</div>
+              <div className="inbox-lightbox-label">Originalname</div>
+              <div className="inbox-lightbox-value inbox-lightbox-value-muted">{img.name}</div>
             </div>
           )}
-          {img.createdTime && (
+
+          {uploadedBy && (
             <div className="inbox-lightbox-section">
-              <div className="inbox-lightbox-label">Datum</div>
-              <div className="inbox-lightbox-value">{formatDateTime(img.createdTime)}</div>
+              <div className="inbox-lightbox-label">Hochgeladen von</div>
+              <div className="inbox-lightbox-value">{uploadedBy}</div>
             </div>
           )}
-          {img.mimeType && (
-            <div className="inbox-lightbox-section">
-              <div className="inbox-lightbox-label">Typ</div>
-              <div className="inbox-lightbox-value">{img.mimeType.split('/')[1]?.toUpperCase() || img.mimeType}</div>
-            </div>
-          )}
+
+          <div className="inbox-lightbox-meta-grid">
+            {img.size > 0 && (
+              <div className="inbox-lightbox-meta-item">
+                <span className="inbox-lightbox-meta-label">Größe</span>
+                <span className="inbox-lightbox-meta-value">{(img.size / 1024 / 1024).toFixed(2)} MB</span>
+              </div>
+            )}
+            {img.width && img.height && (
+              <div className="inbox-lightbox-meta-item">
+                <span className="inbox-lightbox-meta-label">Auflösung</span>
+                <span className="inbox-lightbox-meta-value">{img.width} × {img.height}</span>
+              </div>
+            )}
+            {img.mimeType && (
+              <div className="inbox-lightbox-meta-item">
+                <span className="inbox-lightbox-meta-label">Format</span>
+                <span className="inbox-lightbox-meta-value">{img.mimeType.split('/')[1]?.toUpperCase() || img.mimeType}</span>
+              </div>
+            )}
+            {img.createdTime && (
+              <div className="inbox-lightbox-meta-item">
+                <span className="inbox-lightbox-meta-label">Aufgenommen</span>
+                <span className="inbox-lightbox-meta-value">{formatDateTime(img.createdTime)}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="inbox-lightbox-section">
+            <div className="inbox-lightbox-label">GPS-Standort</div>
+            {gpsLat != null && gpsLon != null ? (
+              <button
+                className="inbox-lightbox-gps-btn"
+                onClick={() => window.open(`https://www.google.com/maps?q=${gpsLat},${gpsLon}`, '_blank')}
+              >
+                <span>📍</span>
+                <span>Auf Google Maps öffnen</span>
+                <span className="inbox-lightbox-gps-coords">{gpsLat.toFixed(5)}, {gpsLon.toFixed(5)}</span>
+              </button>
+            ) : (
+              <div className="inbox-lightbox-value-muted">Keine GPS-Daten</div>
+            )}
+          </div>
+
+          <div className="inbox-lightbox-section">
+            <div className="inbox-lightbox-label">Notizen</div>
+            {notes
+              ? <div className="inbox-lightbox-notes">{notes}</div>
+              : <div className="inbox-lightbox-value-muted">Keine Notizen</div>
+            }
+          </div>
         </div>
       </div>
     </div>
@@ -198,7 +259,7 @@ function PendingUsersSection() {
 }
 
 // ─── Inbox Items (new uploads without project) ────────────────────────────────
-function InboxItemRow({ item, projects, canManage, onRemove }) {
+function InboxItemRow({ item, projects, canManage, onRemove, onActivity }) {
   const [expanded, setExpanded] = useState(false);
   const [images, setImages] = useState(null);
   const [loadingImages, setLoadingImages] = useState(false);
@@ -226,23 +287,25 @@ function InboxItemRow({ item, projects, canManage, onRemove }) {
     if (next) loadImages();
   };
 
+  const now = () => new Date().toISOString();
+
   const handleConfirm = async () => {
     if (!newProjectName.trim()) return;
-    // Optimistic: remove from list immediately
+    const name = newProjectName.trim();
     onRemove(item.drive_folder_id);
-    // Fire backend in background
+    onActivity({ id: `local_${Date.now()}`, type: 'project_create', title: `Projekt angelegt`, description: `„${name}" aus Inbox bestätigt`, device_name: item.device_user || null, created_at: now() });
     fetch('/api/mobile/inbox/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folderId: item.drive_folder_id, inboxFolderId: item.inbox_folder_id, projectName: newProjectName.trim() })
+      body: JSON.stringify({ folderId: item.drive_folder_id, inboxFolderId: item.inbox_folder_id, projectName: name })
     }).catch(() => {});
   };
 
   const handleMerge = async () => {
     if (!mergeProjectId) return;
-    // Optimistic: remove from list immediately
+    const targetProject = projects.find(p => p.id === parseInt(mergeProjectId));
     onRemove(item.drive_folder_id);
-    // Fire backend in background
+    onActivity({ id: `local_${Date.now()}`, type: 'project_change', title: `Inbox zusammengeführt`, description: `„${item.project_name}" → „${targetProject?.folder_name || mergeProjectId}"`, device_name: item.device_user || null, created_at: now() });
     fetch('/api/mobile/inbox/merge', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -252,9 +315,8 @@ function InboxItemRow({ item, projects, canManage, onRemove }) {
 
   const handleDelete = async () => {
     if (!confirm(`Inbox-Eintrag „${item.project_name}" wirklich löschen?`)) return;
-    // Optimistic: remove from list immediately
     onRemove(item.drive_folder_id);
-    // Fire backend in background
+    onActivity({ id: `local_${Date.now()}`, type: 'delete_request', title: `Inbox-Eintrag gelöscht`, description: `„${item.project_name}" wurde entfernt`, device_name: item.device_user || null, created_at: now() });
     fetch(`/api/mobile/inbox/${item.drive_folder_id}`, { method: 'DELETE' }).catch(() => {});
   };
 
@@ -271,7 +333,7 @@ function InboxItemRow({ item, projects, canManage, onRemove }) {
             <div className="inbox-entry-title">{item.project_name}</div>
             <div className="inbox-entry-meta">
               {item.image_count > 0 && <span>{item.image_count} Bild{item.image_count !== 1 ? 'er' : ''}</span>}
-              {item.device_user && item.device_user !== 'Handy-App' && <span>· von {item.device_user}</span>}
+              {item.device_user && <span>· von {item.device_user}</span>}
             </div>
           </div>
         </div>
@@ -391,15 +453,16 @@ function InboxItemRow({ item, projects, canManage, onRemove }) {
 }
 
 // ─── Project Changes ──────────────────────────────────────────────────────────
-function ProjectChangeRow({ change, canManage, onRemove }) {
+function ProjectChangeRow({ change, canManage, onRemove, onActivity }) {
   const [expanded, setExpanded] = useState(false);
-  const [error, setError] = useState('');
 
   const changeKey = change.drive_folder_id || change.project_name;
+  const now = () => new Date().toISOString();
+  const uploaderStr = change.uploaders?.length > 0 ? change.uploaders.join(', ') : null;
 
   const handleConfirm = async () => {
-    // Optimistic: remove immediately
     onRemove(changeKey);
+    onActivity({ id: `local_${Date.now()}`, type: 'project_change', title: `Bilder hinzugefügt`, description: `${change.new_images.length} Bild${change.new_images.length !== 1 ? 'er' : ''} zu „${change.project_name}"${uploaderStr ? ` von ${uploaderStr}` : ''}`, device_name: uploaderStr || null, created_at: now() });
     const fileIds = change.new_images.map(i => i.id);
     fetch('/api/mobile/project-changes/confirm', {
       method: 'POST',
@@ -410,8 +473,8 @@ function ProjectChangeRow({ change, canManage, onRemove }) {
 
   const handleReject = async () => {
     if (!confirm(`Neue Bilder in „${change.project_name}" wirklich ablehnen und löschen?`)) return;
-    // Optimistic: remove immediately
     onRemove(changeKey);
+    onActivity({ id: `local_${Date.now()}`, type: 'delete_request', title: `Bilder abgelehnt`, description: `${change.new_images.length} Bild${change.new_images.length !== 1 ? 'er' : ''} in „${change.project_name}" abgelehnt`, device_name: uploaderStr || null, created_at: now() });
     const fileIds = change.new_images.map(i => i.id);
     fetch('/api/mobile/project-changes/reject', {
       method: 'POST',
@@ -534,6 +597,11 @@ export default function InboxPage() {
     setProjectChanges(prev => prev.filter(c => (c.drive_folder_id || c.project_name) !== key));
   }, []);
 
+  // Optimistic activity add — prepend to list immediately
+  const addActivity = useCallback((entry) => {
+    setActivities(prev => [entry, ...prev]);
+  }, []);
+
   const grouped = groupByDate(activities);
   const hasPendingItems = inboxItems.length > 0 || projectChanges.length > 0;
 
@@ -575,6 +643,7 @@ export default function InboxPage() {
               projects={projects}
               canManage={canManageInbox}
               onRemove={removeInboxItem}
+              onActivity={addActivity}
             />
           ))}
 
@@ -584,6 +653,7 @@ export default function InboxPage() {
               change={change}
               canManage={canManageInbox}
               onRemove={removeProjectChange}
+              onActivity={addActivity}
             />
           ))}
         </div>
