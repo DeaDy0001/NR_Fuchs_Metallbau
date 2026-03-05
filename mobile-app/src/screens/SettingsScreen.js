@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator, Linking } from 'react-native';
+import * as IntentLauncher from 'expo-intent-launcher';
 import { useDialog } from '../components/CustomDialog';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -88,7 +89,11 @@ export default function SettingsScreen({ navigation }) {
         setUpdateDownloadProgress(pct);
       });
       const contentUri = await FileSystem.getContentUriAsync(uri);
-      await Linking.openURL(contentUri);
+      await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+        data: contentUri,
+        flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+        type: 'application/vnd.android.package-archive',
+      });
     } catch (e) {
       alert('Update-Fehler', 'Download fehlgeschlagen: ' + (e.message || 'Unbekannter Fehler'));
     } finally {

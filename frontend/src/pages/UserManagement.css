@@ -141,9 +141,20 @@
 
 .um-user-controls {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
   flex-shrink: 0;
+  min-width: 160px;
+}
+
+.um-user-controls .um-select {
+  width: 100%;
+}
+
+.um-user-controls .um-btn {
+  width: 100%;
+  justify-content: center;
 }
 
 /* Select */
