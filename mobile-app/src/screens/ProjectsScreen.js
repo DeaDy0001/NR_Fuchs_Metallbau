@@ -39,14 +39,17 @@ export default function ProjectsScreen({ navigation }) {
   const [filterStarred, setFilterStarred] = useState(false);
   const [filterHasImages, setFilterHasImages] = useState(false);
   const [selectedYear, setSelectedYear] = useState(null);
-  const initialSyncDone = useRef(false);
+  const lastSyncTime = useRef(0);
+  const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
   useFocusEffect(
     useCallback(() => {
+      // Always load instantly from local cache (no network call)
       loadData();
-      // Auto-sync project list on first visit
-      if (!initialSyncDone.current) {
-        initialSyncDone.current = true;
+      // Auto-sync from Drive only if more than 5 min have passed since last sync
+      const now = Date.now();
+      if (now - lastSyncTime.current > SYNC_INTERVAL_MS) {
+        lastSyncTime.current = now;
         handleRefresh();
       }
     }, [])

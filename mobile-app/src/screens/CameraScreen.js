@@ -139,23 +139,6 @@ export default function CameraScreen({ navigation, route }) {
             </TouchableOpacity>
           </View>
 
-          {/* Search */}
-          <View style={styles.pickerSearchContainer}>
-            <Ionicons name="search" size={16} color={colors.textTertiary} />
-            <TextInput
-              style={styles.pickerSearchInput}
-              placeholder="Projekt suchen..."
-              placeholderTextColor={colors.textTertiary}
-              value={projectSearchText}
-              onChangeText={setProjectSearchText}
-            />
-            {projectSearchText ? (
-              <TouchableOpacity onPress={() => setProjectSearchText('')}>
-                <Ionicons name="close-circle" size={18} color={colors.textTertiary} />
-              </TouchableOpacity>
-            ) : null}
-          </View>
-
           {/* Create new project */}
           <View style={styles.newProjectRow}>
             <TextInput
@@ -178,6 +161,23 @@ export default function CameraScreen({ navigation, route }) {
                 ) : (
                   <Ionicons name="add" size={22} color="white" />
                 )}
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          {/* Search */}
+          <View style={styles.pickerSearchContainer}>
+            <Ionicons name="search" size={16} color={colors.textTertiary} />
+            <TextInput
+              style={styles.pickerSearchInput}
+              placeholder="Projekt suchen..."
+              placeholderTextColor={colors.textTertiary}
+              value={projectSearchText}
+              onChangeText={setProjectSearchText}
+            />
+            {projectSearchText ? (
+              <TouchableOpacity onPress={() => setProjectSearchText('')}>
+                <Ionicons name="close-circle" size={18} color={colors.textTertiary} />
               </TouchableOpacity>
             ) : null}
           </View>

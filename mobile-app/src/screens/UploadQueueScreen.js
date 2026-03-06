@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Animated } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Animated, Linking } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -262,21 +262,21 @@ export default function UploadQueueScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Notification permission banner — shown until granted or explicitly dismissed */}
+      {/* Notification permission banner — shown until granted. Tappable: opens settings when denied. */}
       {notifPermission !== null && notifPermission !== 'granted' && (
-        <View style={styles.notifBanner}>
+        <TouchableOpacity
+          style={styles.notifBanner}
+          activeOpacity={0.75}
+          onPress={notifPermission === 'denied' ? () => Linking.openSettings() : handleRequestNotifPermission}
+        >
           <Ionicons name="notifications-outline" size={18} color="#f59e0b" />
           <Text style={styles.notifBannerText}>
             {notifPermission === 'denied'
-              ? 'Benachrichtigungen sind deaktiviert. Bitte in den Systemeinstellungen aktivieren.'
+              ? 'Benachrichtigungen deaktiviert – Tippen um Einstellungen zu öffnen.'
               : 'Benachrichtigungen erlauben, damit du informiert wirst wenn alle Fotos hochgeladen sind.'}
           </Text>
-          {notifPermission !== 'denied' && (
-            <TouchableOpacity style={styles.notifBannerBtn} onPress={handleRequestNotifPermission}>
-              <Text style={styles.notifBannerBtnText}>Erlauben</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+          <Ionicons name="chevron-forward" size={16} color="#f59e0b" style={{ flexShrink: 0 }} />
+        </TouchableOpacity>
       )}
 
       {/* Summary card */}
