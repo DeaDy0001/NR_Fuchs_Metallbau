@@ -2,7 +2,7 @@ const db = require('../config/database');
 const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
-const { compressImage, generateThumbnail, findSubfolder, findOrCreateSubfolder, moveFileOnDrive, listFoldersInFolder, listFilesInFolder, extractFolderId, deleteFileFromDrive, downloadFile, getFileMetadata, listAllFilesInFolder, readDriveFileAsJson, updateDriveFileContent, upsertJsonFileToDrive, shareFolderWithUser, removeFolderPermission } = require('../services/googleDriveService');
+const { compressImage, generateThumbnail, findSubfolder, findOrCreateSubfolder, moveFileOnDrive, listFoldersInFolder, listFilesInFolder, extractFolderId, deleteFileFromDrive, downloadFile, getFileMetadata, listAllFilesInFolder, readDriveFileAsJson, updateDriveFileContent, upsertJsonFileToDrive, findFileByName, shareFolderWithUser, removeFolderPermission } = require('../services/googleDriveService');
 const { readExifData, writeExifData } = require('../services/exifService');
 const { google } = require('googleapis');
 const os = require('os');
@@ -3547,12 +3547,13 @@ const _getInboxSetup = async () => {
  */
 const _readInboxJson = async (inboxFolderId, fileName) => {
   try {
-    const files = await listFilesInFolder(inboxFolderId);
-    const file = files.find(f => f.name === fileName);
+    // Use findFileByName instead of listFilesInFolder (which only returns images)
+    const file = await findFileByName(inboxFolderId, fileName);
     if (!file) return { fileId: null, data: [] };
     const data = await readDriveFileAsJson(file.id);
     return { fileId: file.id, data: Array.isArray(data) ? data : [] };
-  } catch {
+  } catch (e) {
+    console.error(`[Postfach] _readInboxJson(${fileName}) error:`, e.message);
     return { fileId: null, data: [] };
   }
 };

@@ -477,6 +477,25 @@ const findOrCreateSubfolder = async (parentFolderId, folderName) => {
 };
 
 /**
+ * Find a file by name in a folder (any MIME type, including JSON).
+ * Returns { id, name, mimeType } or null if not found.
+ */
+const findFileByName = async (parentFolderId, fileName) => {
+  try {
+    const drive = await getDriveClient();
+    const res = await drive.files.list({
+      q: `'${parentFolderId}' in parents and name = '${fileName}' and trashed = false`,
+      fields: 'files(id,name,mimeType)',
+      pageSize: 1,
+    });
+    return res.data.files.length > 0 ? res.data.files[0] : null;
+  } catch (error) {
+    console.error('Error finding file by name:', error.message);
+    return null;
+  }
+};
+
+/**
  * Upload a local file to Google Drive
  * @param {string} localFilePath - Full path to the local file
  * @param {string} parentFolderId - Drive folder to upload into
@@ -682,6 +701,7 @@ module.exports = {
   readDriveFileAsJson,
   updateDriveFileContent,
   upsertJsonFileToDrive,
+  findFileByName,
   shareFolderWithUser,
   removeFolderPermission,
 };
