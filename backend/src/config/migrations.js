@@ -943,6 +943,19 @@ const migrations = [
       }
       console.log('✓ Migration add_employee_color_column completed');
     }
+  },
+  {
+    id: 39,
+    name: 'add_employee_work_schedule',
+    up: () => {
+      console.log('Running migration: add_employee_work_schedule');
+      const tableInfo = db.pragma('table_info(employees)');
+      const existingColumns = tableInfo.map(col => col.name);
+      if (!existingColumns.includes('work_schedule')) {
+        db.exec(`ALTER TABLE employees ADD COLUMN work_schedule TEXT DEFAULT '{"mon":8,"tue":8,"wed":8,"thu":8,"fri":8,"sat":0,"sun":0}'`);
+      }
+      console.log('✓ Migration add_employee_work_schedule completed');
+    }
   }
 ];
 

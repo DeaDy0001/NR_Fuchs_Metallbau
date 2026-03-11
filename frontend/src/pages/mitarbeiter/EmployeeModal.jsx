@@ -5,6 +5,17 @@ import '../MitarbeiterPage.css';
 const TYPES = ['vacation', 'zeitausgleich', 'sonderurlaub', 'krankenstand'];
 const TYPE_LABELS = { vacation: 'Urlaub', zeitausgleich: 'Zeitausgleich', sonderurlaub: 'Sonderurlaub', krankenstand: 'Krankenstand' };
 
+const WORK_DAYS = [
+  { key: 'mon', label: 'Mo' }, { key: 'tue', label: 'Di' }, { key: 'wed', label: 'Mi' },
+  { key: 'thu', label: 'Do' }, { key: 'fri', label: 'Fr' }, { key: 'sat', label: 'Sa' }, { key: 'sun', label: 'So' },
+];
+const DEFAULT_SCHEDULE = { mon: 8, tue: 8, wed: 8, thu: 8, fri: 8, sat: 0, sun: 0 };
+function parseWorkSchedule(ws) {
+  if (!ws) return { ...DEFAULT_SCHEDULE };
+  if (typeof ws === 'object') return ws;
+  try { return JSON.parse(ws); } catch { return { ...DEFAULT_SCHEDULE }; }
+}
+
 const COLOR_SWATCHES = [
   '#6366f1', '#8b5cf6', '#a855f7', '#ec4899', '#ef4444',
   '#f97316', '#f59e0b', '#eab308', '#84cc16', '#22c55e',
@@ -24,6 +35,7 @@ export default function EmployeeModal({ employee, onClose, onSaved }) {
     notes: employee?.notes || '',
     color: employee?.color || '#6366f1',
   });
+  const [workSchedule, setWorkSchedule] = useState(parseWorkSchedule(employee?.work_schedule));
   const [balances, setBalances] = useState({ vacation: '', zeitausgleich: '', sonderurlaub: '', krankenstand: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -37,7 +49,7 @@ export default function EmployeeModal({ employee, onClose, onSaved }) {
     }
     setSaving(true);
     try {
-      const body = { ...form };
+      const body = { ...form, work_schedule: workSchedule };
       if (!isEdit) {
         body.initial_balances = {};
         for (const t of TYPES) body.initial_balances[t] = parseFloat(balances[t]) || 0;
@@ -117,6 +129,31 @@ export default function EmployeeModal({ employee, onClose, onSaved }) {
                 ))}
               </div>
             </div>
+          </div>
+
+          {/* Work schedule */}
+          <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)', marginBottom: 8, marginTop: 4 }}>
+            Arbeitszeiten (Stunden/Tag)
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 8, marginBottom: 16 }}>
+            {WORK_DAYS.map(({ key, label }) => (
+              <div key={key} style={{ textAlign: 'center' }}>
+                <div style={{
+                  fontSize: '0.72rem', fontWeight: 600, marginBottom: 4,
+                  color: key === 'sat' || key === 'sun' ? '#ef4444' : 'var(--text-secondary)',
+                }}>{label}</div>
+                <input
+                  className="ma-input"
+                  type="number"
+                  min="0"
+                  max="24"
+                  step="0.5"
+                  value={workSchedule[key]}
+                  onChange={e => setWorkSchedule(p => ({ ...p, [key]: parseFloat(e.target.value) || 0 }))}
+                  style={{ textAlign: 'center', padding: '6px 4px' }}
+                />
+              </div>
+            ))}
           </div>
 
           {/* Initial balances only on create */}

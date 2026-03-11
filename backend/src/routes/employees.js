@@ -43,10 +43,18 @@ function calcAge(birthDate) {
 router.get('/', (req, res) => {
   try {
     const showArchived = req.query.archived === 'true';
-    const employees = db.prepare(
+    const DEFAULT_WS = { mon: 8, tue: 8, wed: 8, thu: 8, fri: 8, sat: 0, sun: 0 };
+    const rows = db.prepare(
       `SELECT * FROM employees WHERE archived = ? ORDER BY last_name ASC, first_name ASC`
     ).all(showArchived ? 1 : 0);
-    res.json({ employees: employees.map(e => ({ ...e, age: calcAge(e.birth_date) })) });
+    const employees = rows.map(e => ({
+      ...e,
+      age: calcAge(e.birth_date),
+      work_schedule: e.work_schedule
+        ? (typeof e.work_schedule === 'string' ? JSON.parse(e.work_schedule) : e.work_schedule)
+        : DEFAULT_WS,
+    }));
+    res.json({ employees });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -56,19 +64,22 @@ router.get('/', (req, res) => {
 router.post('/', (req, res) => {
   if (!req.appUser.is_admin) return res.status(403).json({ error: 'Nur Administratoren' });
 
-  const { first_name, last_name, email, phone, address, birth_date, notes, color, initial_balances } = req.body;
+  const { first_name, last_name, email, phone, address, birth_date, notes, color, work_schedule, initial_balances } = req.body;
   if (!first_name?.trim() || !last_name?.trim()) {
     return res.status(400).json({ error: 'Vor- und Nachname sind erforderlich' });
   }
 
   try {
+    const wsStr = work_schedule
+      ? (typeof work_schedule === 'object' ? JSON.stringify(work_schedule) : work_schedule)
+      : '{"mon":8,"tue":8,"wed":8,"thu":8,"fri":8,"sat":0,"sun":0}';
     const result = db.prepare(`
-      INSERT INTO employees (first_name, last_name, email, phone, address, birth_date, notes, color)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO employees (first_name, last_name, email, phone, address, birth_date, notes, color, work_schedule)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       first_name.trim(), last_name.trim(),
       email || null, phone || null, address || null, birth_date || null, notes || null,
-      color || '#6366f1'
+      color || '#6366f1', wsStr
     );
     const empId = result.lastInsertRowid;
     const year = new Date().getFullYear();
@@ -118,6 +129,14 @@ router.patch('/:id', (req, res) => {
     }
   }
 
+  if (req.body.work_schedule !== undefined) {
+    const wsVal = req.body.work_schedule
+      ? (typeof req.body.work_schedule === 'object' ? JSON.stringify(req.body.work_schedule) : req.body.work_schedule)
+      : null;
+    updates.push('work_schedule = ?');
+    vals.push(wsVal);
+  }
+
   if (updates.length === 0) return res.status(400).json({ error: 'Keine Änderungen' });
 
   updates.push("updated_at = datetime('now')");
@@ -127,7 +146,14 @@ router.patch('/:id', (req, res) => {
   writeLog(id, 'update', { employee: `${emp.first_name} ${emp.last_name}`, changes: changed }, req.appUser);
 
   const updated = db.prepare('SELECT * FROM employees WHERE id = ?').get(id);
-  res.json({ ...updated, age: calcAge(updated.birth_date) });
+  const DEFAULT_WS = { mon: 8, tue: 8, wed: 8, thu: 8, fri: 8, sat: 0, sun: 0 };
+  res.json({
+    ...updated,
+    age: calcAge(updated.birth_date),
+    work_schedule: updated.work_schedule
+      ? (typeof updated.work_schedule === 'string' ? JSON.parse(updated.work_schedule) : updated.work_schedule)
+      : DEFAULT_WS,
+  });
 });
 
 // POST /api/employees/:id/archive
