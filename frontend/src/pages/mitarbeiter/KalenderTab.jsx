@@ -56,11 +56,13 @@ export default function KalenderTab() {
   const [loading, setLoading] = useState(true);
   const [tooltip, setTooltip] = useState(null);
   const scrollRef = useRef(null);
+  const headerScrollRef = useRef(null);
 
   const holidays = useMemo(() => getAustrianHolidays(year), [year]);
 
   useEffect(() => { load(); }, [year]);
 
+  // Scroll to current month after load
   useEffect(() => {
     if (!loading && scrollRef.current) {
       const today = new Date();
@@ -70,6 +72,17 @@ export default function KalenderTab() {
       }
     }
   }, [loading, year, employees.length]);
+
+  // Sync header with body scroll — attach once after loading is done
+  useEffect(() => {
+    if (loading) return;
+    const body = scrollRef.current;
+    const header = headerScrollRef.current;
+    if (!body || !header) return;
+    const onScroll = () => { header.scrollLeft = body.scrollLeft; };
+    body.addEventListener('scroll', onScroll, { passive: true });
+    return () => body.removeEventListener('scroll', onScroll);
+  }, [loading]);
 
   async function load() {
     setLoading(true);
@@ -164,11 +177,7 @@ export default function KalenderTab() {
           {/* Sticky month header */}
           <div style={{ display: 'flex', flexShrink: 0, borderBottom: '2px solid var(--border-color)', background: 'var(--bg-secondary)', zIndex: 10 }}>
             <div style={{ width: DAY_COL_W, flexShrink: 0, borderRight: '1px solid var(--border-color)' }} />
-            <div style={{ flex: 1, overflow: 'hidden' }} ref={el => {
-              if (el && scrollRef.current) {
-                scrollRef.current.addEventListener('scroll', () => { el.scrollLeft = scrollRef.current.scrollLeft; });
-              }
-            }}>
+            <div style={{ flex: 1, overflow: 'hidden' }} ref={headerScrollRef}>
               <div style={{ width: totalW, display: 'flex' }}>
                 {MONTH_SHORT.map((name, m) => (
                   <div key={m} style={{
@@ -203,15 +212,19 @@ export default function KalenderTab() {
               ))}
             </div>
 
-            {/* Month columns */}
-            <div style={{ width: totalW, flexShrink: 0, display: 'flex' }}>
+            {/* Month columns — background-image draws vertical dividers so they reach full scroll height */}
+            <div style={{
+              width: totalW, flexShrink: 0, display: 'flex', alignSelf: 'stretch',
+              backgroundImage: `repeating-linear-gradient(to right, transparent ${colW - 1}px, var(--border-color) ${colW - 1}px, var(--border-color) ${colW}px)`,
+              backgroundSize: `${colW}px 100%`,
+            }}>
               {Array.from({ length: 12 }, (_, m) => {
                 const daysInM = daysInMonth(year, m);
                 const monthStart = new Date(year, m, 1);
                 const monthEnd = new Date(year, m, daysInM);
 
                 return (
-                  <div key={m} style={{ width: colW, flexShrink: 0, borderRight: '1px solid var(--border-color)', position: 'relative' }}>
+                  <div key={m} style={{ width: colW, flexShrink: 0, position: 'relative' }}>
                     {/* Day row backgrounds */}
                     {Array.from({ length: 31 }, (_, i) => i + 1).map(day => {
                       const { bg, opacity } = getDayBg(m, day, daysInM);

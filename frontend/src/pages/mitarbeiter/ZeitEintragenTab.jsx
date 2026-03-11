@@ -484,8 +484,8 @@ export default function ZeitEintragenTab() {
         )}
       </div>
 
-      {/* Einträge */}
-      <div className="ma-card" style={{ marginBottom: 16 }}>
+      {/* Einträge — only when employee selected */}
+      {selectedEmp && <div className="ma-card" style={{ marginBottom: 16 }}>
         <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)', marginBottom: 12 }}>Einträge</div>
         {entries.map((entry, idx) => {
           const unit = config[`unit_${entry.type}`] || 'days';
@@ -560,7 +560,7 @@ export default function ZeitEintragenTab() {
           <Plus size={15} />
           Weiteren Eintrag hinzufügen
         </button>
-      </div>
+      </div>}
 
       {/* Mini-Calendar */}
       {calendarStart && calendarEnd && (
@@ -584,15 +584,17 @@ export default function ZeitEintragenTab() {
       )}
 
       {/* Submit */}
-      <button
-        className="ma-btn ma-btn-primary"
-        onClick={handleSubmit}
-        disabled={saving || !selectedEmp}
-        style={{ padding: '10px 24px', fontSize: '0.9rem' }}
-      >
-        <Check size={16} />
-        {saving ? 'Eintragen...' : 'Eintragen'}
-      </button>
+      {selectedEmp && (
+        <button
+          className="ma-btn ma-btn-primary"
+          onClick={handleSubmit}
+          disabled={saving}
+          style={{ padding: '10px 24px', fontSize: '0.9rem' }}
+        >
+          <Check size={16} />
+          {saving ? 'Eintragen...' : 'Eintragen'}
+        </button>
+      )}
     </div>
   );
 }

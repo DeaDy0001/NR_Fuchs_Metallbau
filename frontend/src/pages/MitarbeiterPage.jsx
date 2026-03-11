@@ -16,7 +16,7 @@ const TABS = [
 
 export default function MitarbeiterPage() {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState('mitarbeiter');
+  const [activeTab, setActiveTab] = useState('kalender');
 
   const visibleTabs = TABS.filter(t => {
     if (t.id === 'settings') return user?.is_admin;
