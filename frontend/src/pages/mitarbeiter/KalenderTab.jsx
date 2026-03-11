@@ -143,7 +143,7 @@ export default function KalenderTab() {
   const handleMouseLeave = useCallback(() => setTooltip(null), []);
 
   function getDayBg(m, day, daysInM) {
-    if (day > daysInM) return { bg: 'rgba(0,0,0,0.02)', opacity: 0.4 };
+    if (day > daysInM) return { bg: 'rgba(0,0,0,0.03)', opacity: 1 };
     const isToday = m === todayMonth && day === todayDay;
     const dateStr = `${year}-${String(m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const dow = new Date(year, m, day).getDay();

@@ -107,7 +107,7 @@ export default function MitarbeiterListTab() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                       <span style={{ width: 9, height: 9, borderRadius: '50%', background: emp.color || '#6366f1', flexShrink: 0 }} />
                       {emp.first_name} {emp.last_name}
-                      {emp.archived && <span style={{ marginLeft: 4, fontSize: '0.7rem', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 4, padding: '1px 5px' }}>Archiviert</span>}
+                      {!!emp.archived && <span style={{ marginLeft: 4, fontSize: '0.7rem', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 4, padding: '1px 5px' }}>Archiviert</span>}
                     </div>
                   </td>
                   <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>{emp.email || '—'}</td>

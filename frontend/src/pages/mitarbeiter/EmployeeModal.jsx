@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import '../MitarbeiterPage.css';
 
@@ -37,8 +37,13 @@ export default function EmployeeModal({ employee, onClose, onSaved }) {
   });
   const [workSchedule, setWorkSchedule] = useState(parseWorkSchedule(employee?.work_schedule));
   const [balances, setBalances] = useState({ vacation: '', zeitausgleich: '', sonderurlaub: '', krankenstand: '' });
+  const [config, setConfig] = useState({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    fetch('/api/employees/config').then(r => r.ok ? r.json() : {}).then(d => setConfig(d)).catch(() => {});
+  }, []);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -168,9 +173,12 @@ export default function EmployeeModal({ employee, onClose, onSaved }) {
                 Anfangsstände (aktuelles Jahr)
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>
-                {TYPES.map(t => (
+                {TYPES.map(t => {
+                  const unitRaw = config[`unit_${t}`] || 'days';
+                  const unitDisplay = unitRaw === 'hours' ? 'Std' : 'Tage';
+                  return (
                   <div key={t} className="ma-field">
-                    <label className="ma-label">{TYPE_LABELS[t]}</label>
+                    <label className="ma-label">{TYPE_LABELS[t]} <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>({unitDisplay})</span></label>
                     <input
                       className="ma-input"
                       type="number"
@@ -181,7 +189,8 @@ export default function EmployeeModal({ employee, onClose, onSaved }) {
                       placeholder="0"
                     />
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </>
           )}

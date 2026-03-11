@@ -231,6 +231,12 @@ function unitLabel(unit) {
   return 'Tage';
 }
 
+function unitSingular(unit) {
+  if (unit === 'hours') return 'Stunde';
+  if (unit === 'halfdays') return 'Halbtag';
+  return 'Tag';
+}
+
 function addDays(dateStr, n) {
   const d = new Date(dateStr + 'T00:00:00');
   d.setDate(d.getDate() + n);
@@ -475,7 +481,7 @@ export default function ZeitEintragenTab() {
                   <div className="ma-balance-chip-label">{TYPE_LABELS[t]}</div>
                   <div className="ma-balance-chip-values">
                     <span className="ma-balance-chip-remaining">{b.remaining} {unit}</span>
-                    <span className="ma-balance-chip-used">verfügbar ({b.used} verbraucht)</span>
+                    <span className="ma-balance-chip-used">verfügbar ({b.used} {b.used === 1 ? unitSingular(config[`unit_${t}`] || 'days') : unit} {new Date().getFullYear()} verbraucht)</span>
                   </div>
                 </div>
               );
