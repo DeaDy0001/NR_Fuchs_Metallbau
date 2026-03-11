@@ -956,6 +956,42 @@ const migrations = [
       }
       console.log('✓ Migration add_employee_work_schedule completed');
     }
+  },
+  {
+    id: 40,
+    name: 'create_employee_time_types_table',
+    up: () => {
+      console.log('Running migration: create_employee_time_types_table');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS employee_time_types (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          key TEXT UNIQUE NOT NULL,
+          name TEXT NOT NULL,
+          unit TEXT NOT NULL DEFAULT 'days',
+          halfday_threshold REAL DEFAULT 4.5,
+          has_quota INTEGER NOT NULL DEFAULT 1,
+          color TEXT DEFAULT '#6366f1',
+          sort_order INTEGER DEFAULT 0,
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now'))
+        )
+      `);
+      // Seed with legacy types, reading unit from existing employee_settings
+      const getUnit = (key) => {
+        try {
+          const row = db.prepare("SELECT value FROM employee_settings WHERE key = ?").get(`unit_${key}`);
+          return row?.value || 'days';
+        } catch { return 'days'; }
+      };
+      const ins = db.prepare(
+        "INSERT OR IGNORE INTO employee_time_types (key, name, unit, has_quota, color, sort_order) VALUES (?, ?, ?, ?, ?, ?)"
+      );
+      ins.run('vacation',      'Urlaub',        getUnit('vacation'),      1, '#6366f1', 1);
+      ins.run('zeitausgleich', 'Zeitausgleich', getUnit('zeitausgleich'), 1, '#22c55e', 2);
+      ins.run('sonderurlaub',  'Sonderurlaub',  getUnit('sonderurlaub'),  1, '#f59e0b', 3);
+      ins.run('krankenstand',  'Krankenstand',  getUnit('krankenstand'),  0, '#ef4444', 4);
+      console.log('✓ Migration create_employee_time_types_table completed');
+    }
   }
 ];
 

@@ -84,11 +84,10 @@ router.post('/', (req, res) => {
     const empId = result.lastInsertRowid;
     const year = new Date().getFullYear();
 
-    // Set initial balances if provided
+    // Set initial balances for quota types
     if (initial_balances && typeof initial_balances === 'object') {
-      const types = ['vacation', 'zeitausgleich', 'sonderurlaub', 'krankenstand'];
-      for (const type of types) {
-        const allocated = parseFloat(initial_balances[type]) || 0;
+      for (const [type, val] of Object.entries(initial_balances)) {
+        const allocated = parseFloat(val) || 0;
         db.prepare(`
           INSERT OR REPLACE INTO employee_balances (employee_id, year, type, allocated, used)
           VALUES (?, ?, ?, ?, 0)
@@ -181,17 +180,42 @@ router.get('/:id/balances', (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const year = parseInt(req.query.year) || new Date().getFullYear();
-    const rows = db.prepare(
+    const balanceRows = db.prepare(
       'SELECT * FROM employee_balances WHERE employee_id = ? AND year = ?'
     ).all(id, year);
 
-    const types = ['vacation', 'zeitausgleich', 'sonderurlaub', 'krankenstand'];
-    const result = {};
-    for (const t of types) {
-      const row = rows.find(r => r.type === t) || { allocated: 0, used: 0 };
-      result[t] = { allocated: row.allocated, used: row.used, remaining: row.allocated - row.used };
+    // Use dynamic time types if table exists, fall back to legacy
+    let timeTypes = [];
+    try {
+      timeTypes = db.prepare('SELECT * FROM employee_time_types ORDER BY sort_order ASC, name ASC').all();
+    } catch {
+      timeTypes = [
+        { key: 'vacation', name: 'Urlaub', unit: 'days', has_quota: 1, color: '#6366f1' },
+        { key: 'zeitausgleich', name: 'Zeitausgleich', unit: 'days', has_quota: 1, color: '#22c55e' },
+        { key: 'sonderurlaub', name: 'Sonderurlaub', unit: 'days', has_quota: 1, color: '#f59e0b' },
+        { key: 'krankenstand', name: 'Krankenstand', unit: 'days', has_quota: 0, color: '#ef4444' },
+      ];
     }
-    res.json({ year, balances: result });
+
+    const result = {};
+    for (const t of timeTypes) {
+      const row = balanceRows.find(r => r.type === t.key) || { allocated: 0, used: 0 };
+      const entry = {
+        allocated: row.allocated || 0,
+        used: row.used || 0,
+        remaining: (row.allocated || 0) - (row.used || 0),
+        type_info: t,
+      };
+      if (!t.has_quota) {
+        const stats = db.prepare(
+          "SELECT COUNT(*) as cnt, COALESCE(SUM(amount),0) as total FROM employee_time_entries WHERE employee_id = ? AND type = ? AND is_storno = 0 AND strftime('%Y', start_date) = ?"
+        ).get(id, t.key, String(year));
+        entry.count = stats.cnt;
+        entry.total_amount = stats.total;
+      }
+      result[t.key] = entry;
+    }
+    res.json({ year, balances: result, types: timeTypes });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -222,8 +246,14 @@ router.post('/:id/storno', (req, res) => {
   if (!type || !field || amount === undefined || !reason?.trim()) {
     return res.status(400).json({ error: 'Typ, Feld, Betrag und Begründung erforderlich' });
   }
-  if (!['vacation', 'zeitausgleich', 'sonderurlaub', 'krankenstand'].includes(type)) {
-    return res.status(400).json({ error: 'Ungültiger Typ' });
+  // Validate type against dynamic time types
+  try {
+    const typeRow = db.prepare('SELECT id FROM employee_time_types WHERE key = ?').get(type);
+    if (!typeRow) return res.status(400).json({ error: 'Ungültiger Typ' });
+  } catch {
+    if (!['vacation', 'zeitausgleich', 'sonderurlaub', 'krankenstand'].includes(type)) {
+      return res.status(400).json({ error: 'Ungültiger Typ' });
+    }
   }
   if (!['allocated', 'used'].includes(field)) {
     return res.status(400).json({ error: 'Feld muss "allocated" oder "used" sein' });
@@ -316,7 +346,14 @@ router.post('/entries', (req, res) => {
       const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(parseInt(employee_id));
       if (!emp) return res.status(404).json({ error: `Mitarbeiter ${employee_id} nicht gefunden` });
 
-      const unit = cfg[`unit_${type}`] || 'days';
+      // Look up unit from dynamic time types, fall back to legacy config
+      let unit = 'days';
+      try {
+        const typeRow = db.prepare('SELECT unit FROM employee_time_types WHERE key = ?').get(type);
+        unit = typeRow?.unit || cfg[`unit_${type}`] || 'days';
+      } catch {
+        unit = cfg[`unit_${type}`] || 'days';
+      }
 
       const result = db.prepare(`
         INSERT INTO employee_time_entries (employee_id, type, start_date, end_date, amount, unit, notes, created_by_user_id)
@@ -550,6 +587,76 @@ router.delete('/rules/:id/overrides/:empId', (req, res) => {
   if (!req.appUser.is_admin) return res.status(403).json({ error: 'Nur Administratoren' });
   db.prepare('DELETE FROM employee_rule_overrides WHERE rule_id = ? AND employee_id = ?')
     .run(parseInt(req.params.id), parseInt(req.params.empId));
+  res.json({ success: true });
+});
+
+// ─── time types ──────────────────────────────────────────────────────────────
+
+// GET /api/employees/time-types
+router.get('/time-types', (req, res) => {
+  try {
+    const types = db.prepare('SELECT * FROM employee_time_types ORDER BY sort_order ASC, name ASC').all();
+    res.json({ types });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/employees/time-types
+router.post('/time-types', (req, res) => {
+  if (!req.appUser.is_admin) return res.status(403).json({ error: 'Nur Administratoren' });
+  const { name, unit, halfday_threshold, has_quota, color } = req.body;
+  if (!name?.trim()) return res.status(400).json({ error: 'Bezeichnung erforderlich' });
+  if (!['days', 'halfdays', 'hours'].includes(unit)) return res.status(400).json({ error: 'Ungültige Einheit' });
+  try {
+    // Generate unique key from name
+    const baseKey = name.trim().toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+    let key = baseKey || 'type';
+    let counter = 1;
+    while (db.prepare('SELECT id FROM employee_time_types WHERE key = ?').get(key)) {
+      key = `${baseKey}_${counter++}`;
+    }
+    const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM employee_time_types').get().m || 0;
+    const result = db.prepare(
+      'INSERT INTO employee_time_types (key, name, unit, halfday_threshold, has_quota, color, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(key, name.trim(), unit || 'days', parseFloat(halfday_threshold) || 4.5, has_quota ? 1 : 0, color || '#6366f1', maxOrder + 1);
+    res.json(db.prepare('SELECT * FROM employee_time_types WHERE id = ?').get(result.lastInsertRowid));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/employees/time-types/:id
+router.put('/time-types/:id', (req, res) => {
+  if (!req.appUser.is_admin) return res.status(403).json({ error: 'Nur Administratoren' });
+  const id = parseInt(req.params.id);
+  const tt = db.prepare('SELECT * FROM employee_time_types WHERE id = ?').get(id);
+  if (!tt) return res.status(404).json({ error: 'Zeitart nicht gefunden' });
+  const { name, unit, halfday_threshold, has_quota, color } = req.body;
+  const updates = ["updated_at = datetime('now')"];
+  const vals = [];
+  if (name !== undefined) { updates.push('name = ?'); vals.push(name.trim()); }
+  if (unit !== undefined) {
+    if (!['days', 'halfdays', 'hours'].includes(unit)) return res.status(400).json({ error: 'Ungültige Einheit' });
+    updates.push('unit = ?'); vals.push(unit);
+  }
+  if (halfday_threshold !== undefined) { updates.push('halfday_threshold = ?'); vals.push(parseFloat(halfday_threshold) || 4.5); }
+  if (has_quota !== undefined) { updates.push('has_quota = ?'); vals.push(has_quota ? 1 : 0); }
+  if (color !== undefined) { updates.push('color = ?'); vals.push(color); }
+  vals.push(id);
+  db.prepare(`UPDATE employee_time_types SET ${updates.join(', ')} WHERE id = ?`).run(...vals);
+  res.json(db.prepare('SELECT * FROM employee_time_types WHERE id = ?').get(id));
+});
+
+// DELETE /api/employees/time-types/:id
+router.delete('/time-types/:id', (req, res) => {
+  if (!req.appUser.is_admin) return res.status(403).json({ error: 'Nur Administratoren' });
+  const id = parseInt(req.params.id);
+  const tt = db.prepare('SELECT * FROM employee_time_types WHERE id = ?').get(id);
+  if (!tt) return res.status(404).json({ error: 'Zeitart nicht gefunden' });
+  const inUse = db.prepare('SELECT COUNT(*) as n FROM employee_time_entries WHERE type = ? AND is_storno = 0').get(tt.key).n;
+  if (inUse > 0) return res.status(400).json({ error: `Zeitart wird in ${inUse} Einträgen verwendet und kann nicht gelöscht werden.` });
+  db.prepare('DELETE FROM employee_time_types WHERE id = ?').run(id);
   res.json({ success: true });
 });
 

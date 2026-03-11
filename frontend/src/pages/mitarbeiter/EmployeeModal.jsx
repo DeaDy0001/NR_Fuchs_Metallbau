@@ -2,8 +2,6 @@ import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import '../MitarbeiterPage.css';
 
-const TYPES = ['vacation', 'zeitausgleich', 'sonderurlaub', 'krankenstand'];
-const TYPE_LABELS = { vacation: 'Urlaub', zeitausgleich: 'Zeitausgleich', sonderurlaub: 'Sonderurlaub', krankenstand: 'Krankenstand' };
 
 const WORK_DAYS = [
   { key: 'mon', label: 'Mo' }, { key: 'tue', label: 'Di' }, { key: 'wed', label: 'Mi' },
@@ -36,13 +34,16 @@ export default function EmployeeModal({ employee, onClose, onSaved }) {
     color: employee?.color || '#6366f1',
   });
   const [workSchedule, setWorkSchedule] = useState(parseWorkSchedule(employee?.work_schedule));
-  const [balances, setBalances] = useState({ vacation: '', zeitausgleich: '', sonderurlaub: '', krankenstand: '' });
-  const [config, setConfig] = useState({});
+  const [balances, setBalances] = useState({});
+  const [timeTypes, setTimeTypes] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    fetch('/api/employees/config').then(r => r.ok ? r.json() : {}).then(d => setConfig(d)).catch(() => {});
+    fetch('/api/employees/time-types')
+      .then(r => r.ok ? r.json() : { types: [] })
+      .then(d => setTimeTypes(d.types || []))
+      .catch(() => {});
   }, []);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -57,7 +58,9 @@ export default function EmployeeModal({ employee, onClose, onSaved }) {
       const body = { ...form, work_schedule: workSchedule };
       if (!isEdit) {
         body.initial_balances = {};
-        for (const t of TYPES) body.initial_balances[t] = parseFloat(balances[t]) || 0;
+        for (const t of timeTypes.filter(t => t.has_quota)) {
+          body.initial_balances[t.key] = parseFloat(balances[t.key]) || 0;
+        }
       }
 
       const url = isEdit ? `/api/employees/${employee.id}` : '/api/employees';
@@ -166,29 +169,30 @@ export default function EmployeeModal({ employee, onClose, onSaved }) {
             ))}
           </div>
 
-          {/* Initial balances only on create */}
-          {!isEdit && (
+          {/* Initial balances only on create, only for quota types */}
+          {!isEdit && timeTypes.filter(t => t.has_quota).length > 0 && (
             <>
               <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)', marginBottom: 10, marginTop: 4 }}>
                 Anfangsstände (aktuelles Jahr)
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>
-                {TYPES.map(t => {
-                  const unitRaw = config[`unit_${t}`] || 'days';
-                  const unitDisplay = unitRaw === 'hours' ? 'Std' : 'Tage';
+                {timeTypes.filter(t => t.has_quota).map(t => {
+                  const unitDisplay = t.unit === 'hours' ? 'Std' : t.unit === 'halfdays' ? 'Halbtage' : 'Tage';
                   return (
-                  <div key={t} className="ma-field">
-                    <label className="ma-label">{TYPE_LABELS[t]} <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>({unitDisplay})</span></label>
-                    <input
-                      className="ma-input"
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={balances[t]}
-                      onChange={e => setBalances(p => ({ ...p, [t]: e.target.value }))}
-                      placeholder="0"
-                    />
-                  </div>
+                    <div key={t.key} className="ma-field">
+                      <label className="ma-label">
+                        {t.name} <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>({unitDisplay})</span>
+                      </label>
+                      <input
+                        className="ma-input"
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        value={balances[t.key] || ''}
+                        onChange={e => setBalances(p => ({ ...p, [t.key]: e.target.value }))}
+                        placeholder="0"
+                      />
+                    </div>
                   );
                 })}
               </div>

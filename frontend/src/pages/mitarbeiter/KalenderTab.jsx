@@ -2,18 +2,9 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import '../MitarbeiterPage.css';
 
-const TYPE_LABELS = {
-  vacation: 'Urlaub',
-  zeitausgleich: 'Zeitausgleich',
-  sonderurlaub: 'Sonderurlaub',
-  krankenstand: 'Krankenstand',
-};
-const TYPE_COLORS = {
-  vacation: '#6366f1',
-  zeitausgleich: '#22c55e',
-  sonderurlaub: '#f59e0b',
-  krankenstand: '#ef4444',
-};
+// Fallback for type display when timeTypes not yet loaded
+const TYPE_LABEL_FALLBACK = { vacation: 'Urlaub', zeitausgleich: 'Zeitausgleich', sonderurlaub: 'Sonderurlaub', krankenstand: 'Krankenstand' };
+const TYPE_COLOR_FALLBACK = { vacation: '#6366f1', zeitausgleich: '#22c55e', sonderurlaub: '#f59e0b', krankenstand: '#ef4444' };
 
 const MONTH_SHORT = ['Jän', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
 
@@ -60,6 +51,7 @@ function daysInMonth(year, month) {
 export default function KalenderTab() {
   const [year, setYear] = useState(new Date().getFullYear());
   const [employees, setEmployees] = useState([]);
+  const [timeTypes, setTimeTypes] = useState([]);
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tooltip, setTooltip] = useState(null);
@@ -101,12 +93,14 @@ export default function KalenderTab() {
   async function load() {
     setLoading(true);
     try {
-      const [empRes, entryRes] = await Promise.all([
+      const [empRes, entryRes, ttRes] = await Promise.all([
         fetch('/api/employees'),
-        fetch(`/api/employees/entries?start=${year}-01-01&end=${year}-12-31`)
+        fetch(`/api/employees/entries?start=${year}-01-01&end=${year}-12-31`),
+        fetch('/api/employees/time-types'),
       ]);
       if (empRes.ok) setEmployees((await empRes.json()).employees.filter(e => !e.archived));
       if (entryRes.ok) setEntries((await entryRes.json()).entries);
+      if (ttRes.ok) setTimeTypes((await ttRes.json()).types);
     } catch { /* ignore */ }
     setLoading(false);
   }
@@ -130,7 +124,7 @@ export default function KalenderTab() {
       y: e.clientY - 10,
       content: {
         name: `${emp.first_name} ${emp.last_name}`,
-        type: TYPE_LABELS[entry.type] || entry.type,
+        type: getTypeLabel(entry.type),
         start: entry.start_date,
         end: entry.end_date,
         days: diffDays,
@@ -190,6 +184,9 @@ export default function KalenderTab() {
 
     return result;
   }, [entries, search, typeFilter, sortKey, sortDir]);
+
+  const getTypeLabel = (key) => timeTypes.find(t => t.key === key)?.name || TYPE_LABEL_FALLBACK[key] || key;
+  const getTypeColor = (key) => timeTypes.find(t => t.key === key)?.color || TYPE_COLOR_FALLBACK[key] || '#888';
 
   function handleSort(field) {
     if (sortKey === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -276,6 +273,7 @@ export default function KalenderTab() {
               {/* Month columns — background-image for full-height vertical dividers */}
               <div style={{
                 width: totalW, flexShrink: 0, display: 'flex', alignSelf: 'stretch',
+                backgroundColor: 'var(--bg-primary, #fff)',
                 backgroundImage: `repeating-linear-gradient(to right, transparent ${colW - 1}px, var(--border-color) ${colW - 1}px, var(--border-color) ${colW}px)`,
                 backgroundSize: `${colW}px 100%`,
               }}>
@@ -374,8 +372,8 @@ export default function KalenderTab() {
                 onChange={e => setTypeFilter(e.target.value)}
               >
                 <option value="">Alle Typen</option>
-                {Object.entries(TYPE_LABELS).map(([k, v]) => (
-                  <option key={k} value={k}>{v}</option>
+                {timeTypes.map(t => (
+                  <option key={t.key} value={t.key}>{t.name}</option>
                 ))}
               </select>
             </div>
@@ -416,10 +414,10 @@ export default function KalenderTab() {
                             <span style={{
                               display: 'inline-block', padding: '2px 8px', borderRadius: 4,
                               fontSize: '0.75rem', fontWeight: 500,
-                              background: (TYPE_COLORS[entry.type] || '#888') + '22',
-                              color: TYPE_COLORS[entry.type] || '#888',
+                              background: getTypeColor(entry.type) + '22',
+                              color: getTypeColor(entry.type),
                             }}>
-                              {TYPE_LABELS[entry.type] || entry.type}
+                              {getTypeLabel(entry.type)}
                             </span>
                           </td>
                           <td style={{ padding: '8px 12px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{entry.start_date}</td>

@@ -3,10 +3,6 @@ import { X, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import '../MitarbeiterPage.css';
 
-const TYPES = ['vacation', 'zeitausgleich', 'sonderurlaub', 'krankenstand'];
-const TYPE_LABELS = { vacation: 'Urlaub', zeitausgleich: 'Zeitausgleich', sonderurlaub: 'Sonderurlaub', krankenstand: 'Krankenstand' };
-const TYPE_COLORS = { vacation: '#6366f1', zeitausgleich: '#22c55e', sonderurlaub: '#f59e0b', krankenstand: '#ef4444' };
-
 function fmt(dt) {
   if (!dt) return '—';
   const d = new Date(dt.endsWith('Z') ? dt : dt + 'Z');
@@ -39,22 +35,35 @@ export default function BalanceModal({ employee, onClose, onChanged }) {
   const [logMeta, setLogMeta] = useState({ total: 0, pages: 1 });
   const [loading, setLoading] = useState(true);
   const [stornoOpen, setStornoOpen] = useState(false);
-  const [storno, setStorno] = useState({ type: 'vacation', field: 'allocated', amount: '', reason: '', year: new Date().getFullYear() });
-  const [krankenForm, setKrankenForm] = useState({ start_date: '', end_date: '', amount: '', notes: '' });
+  const [storno, setStorno] = useState({ type: '', field: 'allocated', amount: '', reason: '', year: new Date().getFullYear() });
+  const [noQuotaForm, setNoQuotaForm] = useState({ type: '', start_date: '', end_date: '', amount: '', notes: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
-  const [config, setConfig] = useState({});
+  const [timeTypes, setTimeTypes] = useState([]);
+
+  const quotaTypes = timeTypes.filter(t => t.has_quota);
+  const noQuotaTypes = timeTypes.filter(t => !t.has_quota);
+  const getTypeName = (key) => timeTypes.find(t => t.key === key)?.name || key;
+  const getTypeColor = (key) => timeTypes.find(t => t.key === key)?.color || '#888';
+  const getTypeUnit = (key) => timeTypes.find(t => t.key === key)?.unit || 'days';
 
   const loadBalances = useCallback(async () => {
-    const [bRes, allRes, cfgRes] = await Promise.all([
+    const [bRes, allRes, ttRes] = await Promise.all([
       fetch(`/api/employees/${employee.id}/balances?year=${year}`),
       fetch(`/api/employees/${employee.id}/balances/all`),
-      fetch('/api/employees/config'),
+      fetch('/api/employees/time-types'),
     ]);
     if (bRes.ok) setBalances((await bRes.json()).balances);
     if (allRes.ok) setAllBalances((await allRes.json()).balances);
-    if (cfgRes.ok) setConfig(await cfgRes.json());
+    if (ttRes.ok) {
+      const types = (await ttRes.json()).types;
+      setTimeTypes(types);
+      // Set default storno type to first quota type
+      setStorno(prev => !prev.type && types.find(t => t.has_quota) ? { ...prev, type: types.find(t => t.has_quota).key } : prev);
+      // Set default no-quota form type
+      setNoQuotaForm(prev => !prev.type && types.find(t => !t.has_quota) ? { ...prev, type: types.find(t => !t.has_quota).key } : prev);
+    }
   }, [employee.id, year]);
 
   const loadEntries = useCallback(async () => {
@@ -102,10 +111,10 @@ export default function BalanceModal({ employee, onClose, onChanged }) {
     setSaving(false);
   };
 
-  const submitKrankenstand = async () => {
+  const submitNoQuotaEntry = async () => {
     setError(''); setMsg('');
-    if (!krankenForm.start_date || !krankenForm.end_date || !krankenForm.amount) {
-      return setError('Start, Ende und Betrag erforderlich.');
+    if (!noQuotaForm.type || !noQuotaForm.start_date || !noQuotaForm.end_date || !noQuotaForm.amount) {
+      return setError('Typ, Start, Ende und Betrag erforderlich.');
     }
     setSaving(true);
     try {
@@ -115,18 +124,18 @@ export default function BalanceModal({ employee, onClose, onChanged }) {
         body: JSON.stringify({
           entries: [{
             employee_id: employee.id,
-            type: 'krankenstand',
-            start_date: krankenForm.start_date,
-            end_date: krankenForm.end_date,
-            amount: parseFloat(krankenForm.amount),
-            notes: krankenForm.notes,
+            type: noQuotaForm.type,
+            start_date: noQuotaForm.start_date,
+            end_date: noQuotaForm.end_date,
+            amount: parseFloat(noQuotaForm.amount),
+            notes: noQuotaForm.notes,
           }]
         }),
       });
       const d = await res.json();
       if (!res.ok) return setError(d.error || 'Fehler');
-      setMsg('Krankenstand eingetragen.');
-      setKrankenForm({ start_date: '', end_date: '', amount: '', notes: '' });
+      setMsg('Eintrag gespeichert.');
+      setNoQuotaForm(p => ({ ...p, start_date: '', end_date: '', amount: '', notes: '' }));
       await loadBalances();
       await loadEntries();
       await loadLogs();
@@ -153,6 +162,9 @@ export default function BalanceModal({ employee, onClose, onChanged }) {
     } catch { /* ignore */ }
   };
 
+  const tabs = ['aktuell', 'verlauf', 'eintraege', ...(noQuotaTypes.length > 0 ? ['eintragen'] : []), 'logs'];
+  const tabLabels = { aktuell: 'Aktuelle Stände', verlauf: 'Verlauf', eintraege: 'Einträge', eintragen: 'Eintragen', logs: 'Logs' };
+
   return (
     <div className="ma-modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="ma-modal ma-modal-lg">
@@ -162,9 +174,9 @@ export default function BalanceModal({ employee, onClose, onChanged }) {
         </div>
 
         <div className="ma-subtabs" style={{ padding: '0 20px' }}>
-          {['aktuell', 'verlauf', 'eintraege', 'krankenstand', 'logs'].map(t => (
+          {tabs.map(t => (
             <button key={t} className={`ma-subtab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-              {{ aktuell: 'Aktuelle Stände', verlauf: 'Verlauf', eintraege: 'Einträge', krankenstand: 'Krankenstand', logs: 'Logs' }[t]}
+              {tabLabels[t]}
             </button>
           ))}
         </div>
@@ -185,15 +197,24 @@ export default function BalanceModal({ employee, onClose, onChanged }) {
 
               {loading ? <div className="ma-loading">Lade...</div> : balances && (
                 <div className="ma-balance-grid">
-                  {TYPES.map(t => {
-                    const b = balances[t] || { allocated: 0, used: 0, remaining: 0 };
-                    const unit = unitLabel(config[`unit_${t}`] || 'days');
+                  {timeTypes.map(t => {
+                    const b = balances[t.key] || { allocated: 0, used: 0, remaining: 0, count: 0, total_amount: 0 };
+                    const unit = unitLabel(t.unit);
                     return (
-                      <div key={t} className="ma-balance-chip" style={{ borderLeft: `3px solid ${TYPE_COLORS[t]}` }}>
-                        <div className="ma-balance-chip-label">{TYPE_LABELS[t]}</div>
+                      <div key={t.key} className="ma-balance-chip" style={{ borderLeft: `3px solid ${t.color || '#888'}` }}>
+                        <div className="ma-balance-chip-label">{t.name}</div>
                         <div className="ma-balance-chip-values">
-                          <span className="ma-balance-chip-remaining">{b.remaining} {unit}</span>
-                          <span className="ma-balance-chip-used">({b.used} verbraucht / {b.allocated} gesamt)</span>
+                          {t.has_quota ? (
+                            <>
+                              <span className="ma-balance-chip-remaining">{b.remaining} {unit}</span>
+                              <span className="ma-balance-chip-used">({b.used} verbraucht / {b.allocated} gesamt)</span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="ma-balance-chip-remaining">{b.total_amount} {unit}</span>
+                              <span className="ma-balance-chip-used">{b.count} Eintrag/Einträge in {year}</span>
+                            </>
+                          )}
                         </div>
                       </div>
                     );
@@ -201,7 +222,7 @@ export default function BalanceModal({ employee, onClose, onChanged }) {
                 </div>
               )}
 
-              {isAdmin && (
+              {isAdmin && quotaTypes.length > 0 && (
                 <>
                   <button
                     className="ma-btn ma-btn-warning"
@@ -216,9 +237,9 @@ export default function BalanceModal({ employee, onClose, onChanged }) {
                     <div style={{ marginTop: 14, padding: 14, background: 'var(--bg-tertiary)', borderRadius: 8, border: '1px solid var(--border-color)' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>
                         <div className="ma-field">
-                          <label className="ma-label">Typ</label>
+                          <label className="ma-label">Zeitart</label>
                           <select className="ma-select" value={storno.type} onChange={e => setStorno(p => ({ ...p, type: e.target.value }))}>
-                            {TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
+                            {quotaTypes.map(t => <option key={t.key} value={t.key}>{t.name}</option>)}
                           </select>
                         </div>
                         <div className="ma-field">
@@ -273,8 +294,8 @@ export default function BalanceModal({ employee, onClose, onChanged }) {
                       <tr key={b.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
                         <td style={{ padding: '7px 10px', color: 'var(--text-primary)', fontWeight: 500 }}>{b.year}</td>
                         <td style={{ padding: '7px 10px', color: 'var(--text-secondary)' }}>
-                          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: TYPE_COLORS[b.type], marginRight: 6 }} />
-                          {TYPE_LABELS[b.type] || b.type}
+                          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: getTypeColor(b.type), marginRight: 6 }} />
+                          {getTypeName(b.type)}
                         </td>
                         <td style={{ padding: '7px 10px', textAlign: 'right', color: 'var(--text-secondary)' }}>{b.allocated}</td>
                         <td style={{ padding: '7px 10px', textAlign: 'right', color: 'var(--text-secondary)' }}>{b.used}</td>
@@ -309,8 +330,8 @@ export default function BalanceModal({ employee, onClose, onChanged }) {
                       {entries.map(e => (
                         <tr key={e.id} style={{ borderBottom: '1px solid var(--border-color)', opacity: e.is_storno ? 0.5 : 1 }}>
                           <td style={{ padding: '7px 10px' }}>
-                            <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: TYPE_COLORS[e.type], marginRight: 6 }} />
-                            {TYPE_LABELS[e.type] || e.type}
+                            <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: getTypeColor(e.type), marginRight: 6 }} />
+                            {getTypeName(e.type)}
                           </td>
                           <td style={{ padding: '7px 10px', color: 'var(--text-secondary)' }}>{fmtDate(e.start_date)}</td>
                           <td style={{ padding: '7px 10px', color: 'var(--text-secondary)' }}>{fmtDate(e.end_date)}</td>
@@ -345,32 +366,40 @@ export default function BalanceModal({ employee, onClose, onChanged }) {
             </div>
           )}
 
-          {/* ── Krankenstand eintragen ── */}
-          {tab === 'krankenstand' && (
+          {/* ── Eintragen (kein Kontingent) ── */}
+          {tab === 'eintragen' && noQuotaTypes.length > 0 && (
             <div>
-              <div style={{ marginBottom: 16, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                Hier kann ein Krankenstand für diesen Mitarbeiter eingetragen werden.
+              <div style={{ marginBottom: 14, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                Einträge für Zeitarten ohne Kontingent erfassen.
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 14px' }}>
+                <div className="ma-field" style={{ gridColumn: '1 / -1' }}>
+                  <label className="ma-label">Zeitart *</label>
+                  <select className="ma-select" value={noQuotaForm.type} onChange={e => setNoQuotaForm(p => ({ ...p, type: e.target.value }))}>
+                    {noQuotaTypes.map(t => <option key={t.key} value={t.key}>{t.name}</option>)}
+                  </select>
+                </div>
                 <div className="ma-field">
                   <label className="ma-label">Von *</label>
-                  <input className="ma-input" type="date" value={krankenForm.start_date} onChange={e => setKrankenForm(p => ({ ...p, start_date: e.target.value }))} />
+                  <input className="ma-input" type="date" value={noQuotaForm.start_date} onChange={e => setNoQuotaForm(p => ({ ...p, start_date: e.target.value }))} />
                 </div>
                 <div className="ma-field">
                   <label className="ma-label">Bis *</label>
-                  <input className="ma-input" type="date" value={krankenForm.end_date} onChange={e => setKrankenForm(p => ({ ...p, end_date: e.target.value }))} />
+                  <input className="ma-input" type="date" value={noQuotaForm.end_date} onChange={e => setNoQuotaForm(p => ({ ...p, end_date: e.target.value }))} />
                 </div>
                 <div className="ma-field">
                   <label className="ma-label">Menge *</label>
-                  <input className="ma-input" type="number" min="0" step="0.5" value={krankenForm.amount} onChange={e => setKrankenForm(p => ({ ...p, amount: e.target.value }))} placeholder="0" />
+                  <input className="ma-input" type="number" min="0" step="0.5" value={noQuotaForm.amount}
+                    onChange={e => setNoQuotaForm(p => ({ ...p, amount: e.target.value }))} placeholder="0" />
                 </div>
-                <div className="ma-field" style={{ gridColumn: '1 / -1' }}>
+                <div className="ma-field">
                   <label className="ma-label">Notizen</label>
-                  <input className="ma-input" value={krankenForm.notes} onChange={e => setKrankenForm(p => ({ ...p, notes: e.target.value }))} placeholder="Optional..." />
+                  <input className="ma-input" value={noQuotaForm.notes}
+                    onChange={e => setNoQuotaForm(p => ({ ...p, notes: e.target.value }))} placeholder="Optional..." />
                 </div>
               </div>
-              <button className="ma-btn ma-btn-primary" onClick={submitKrankenstand} disabled={saving}>
-                {saving ? 'Eintragen...' : 'Krankenstand eintragen'}
+              <button className="ma-btn ma-btn-primary" onClick={submitNoQuotaEntry} disabled={saving}>
+                {saving ? 'Eintragen...' : 'Eintragen'}
               </button>
             </div>
           )}
@@ -381,11 +410,7 @@ export default function BalanceModal({ employee, onClose, onChanged }) {
               {logs.length === 0 ? <div className="ma-empty">Keine Logs.</div> : (
                 <>
                   {logs.map(log => (
-                    <div key={log.id} style={{
-                      padding: '10px 12px',
-                      borderBottom: '1px solid var(--border-color)',
-                      fontSize: '0.8rem',
-                    }}>
+                    <div key={log.id} style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-color)', fontSize: '0.8rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                         <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{log.action}</span>
                         <span style={{ color: 'var(--text-secondary)' }}>{fmt(log.created_at)}</span>

@@ -2,12 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Plus, Trash2, Check, ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
 import '../MitarbeiterPage.css';
 
-const TYPES = ['vacation', 'zeitausgleich', 'sonderurlaub', 'krankenstand'];
-const TYPE_LABELS = { vacation: 'Urlaub', zeitausgleich: 'Zeitausgleich', sonderurlaub: 'Sonderurlaub', krankenstand: 'Krankenstand' };
-const TYPE_COLORS = { vacation: '#6366f1', zeitausgleich: '#22c55e', sonderurlaub: '#f59e0b', krankenstand: '#ef4444' };
-
 const MONTH_NAMES = ['Jänner', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
-const EMPTY_ENTRY = { type: 'vacation', start_date: '', end_date: '', amount: '', notes: '' };
+const EMPTY_ENTRY = { type: '', start_date: '', end_date: '', amount: '', notes: '' };
 const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
 // ── Holiday helpers ──────────────────────────────────────────────────────────
@@ -253,7 +249,7 @@ function fmt(dt) {
 }
 
 // ── Mini Calendar ─────────────────────────────────────────────────────────────
-function MiniCalendar({ rangeStart, rangeEnd, allEntries, employees }) {
+function MiniCalendar({ rangeStart, rangeEnd, allEntries, employees, timeTypes = [] }) {
   if (!rangeStart || !rangeEnd) return null;
 
   const displayStart = addDays(rangeStart, -4);
@@ -326,15 +322,15 @@ function MiniCalendar({ rangeStart, rangeEnd, allEntries, employees }) {
                   if (startIdx < 0 || endIdx < 0) return null;
                   const barW = (endIdx - startIdx + 1) * DAY_W - 2;
                   return (
-                    <div key={entry.id} title={`${emp.first_name} ${emp.last_name}: ${TYPE_LABELS[entry.type]} ${entry.start_date} – ${entry.end_date}`} style={{
+                    <div key={entry.id} title={`${emp.first_name} ${emp.last_name}: ${timeTypes.find(t => t.key === entry.type)?.name || entry.type} ${entry.start_date} – ${entry.end_date}`} style={{
                       position: 'absolute', left: startIdx * DAY_W + 1, top: 4,
                       height: ROW_H - 8, width: barW,
-                      background: TYPE_COLORS[entry.type] || '#888', borderRadius: 4,
+                      background: timeTypes.find(t => t.key === entry.type)?.color || emp.color || '#888', borderRadius: 4,
                       display: 'flex', alignItems: 'center', paddingLeft: 5,
                       fontSize: '0.65rem', color: '#fff', overflow: 'hidden', whiteSpace: 'nowrap',
                       opacity: 0.85, zIndex: 2,
                     }}>
-                      {barW > 60 && `${emp.first_name} (${TYPE_LABELS[entry.type]})`}
+                      {barW > 60 && `${emp.first_name} (${timeTypes.find(t => t.key === entry.type)?.name || entry.type})`}
                     </div>
                   );
                 })}
@@ -350,8 +346,10 @@ function MiniCalendar({ rangeStart, rangeEnd, allEntries, employees }) {
 // ── Main Component ─────────────────────────────────────────────────────────────
 export default function ZeitEintragenTab() {
   const [employees, setEmployees] = useState([]);
+  const [timeTypes, setTimeTypes] = useState([]);
   const [selectedEmp, setSelectedEmp] = useState('');
   const [empBalances, setEmpBalances] = useState(null);
+  const [statsYear, setStatsYear] = useState(new Date().getFullYear());
   const [config, setConfig] = useState({});
   const [entries, setEntries] = useState([{ ...EMPTY_ENTRY }]);
   const [allEntries, setAllEntries] = useState([]);
@@ -365,22 +363,30 @@ export default function ZeitEintragenTab() {
   const selEmpObj = employees.find(e => e.id === parseInt(selectedEmp));
 
   const load = useCallback(async () => {
-    const [empRes, cfgRes] = await Promise.all([
+    const [empRes, cfgRes, ttRes] = await Promise.all([
       fetch('/api/employees'),
       fetch('/api/employees/config'),
+      fetch('/api/employees/time-types'),
     ]);
     if (empRes.ok) setEmployees((await empRes.json()).employees.filter(e => !e.archived));
     if (cfgRes.ok) setConfig(await cfgRes.json());
+    if (ttRes.ok) {
+      const types = (await ttRes.json()).types;
+      setTimeTypes(types);
+      // Set default entry type to first available
+      if (types.length > 0) {
+        setEntries(prev => prev.map(e => !e.type ? { ...e, type: types[0].key } : e));
+      }
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
     if (!selectedEmp) { setEmpBalances(null); return; }
-    const year = new Date().getFullYear();
-    fetch(`/api/employees/${selectedEmp}/balances?year=${year}`)
+    fetch(`/api/employees/${selectedEmp}/balances?year=${statsYear}`)
       .then(r => r.json()).then(d => setEmpBalances(d.balances)).catch(() => {});
-  }, [selectedEmp]);
+  }, [selectedEmp, statsYear]);
 
   // Re-calculate amounts when employee changes
   useEffect(() => {
@@ -389,7 +395,8 @@ export default function ZeitEintragenTab() {
     if (!emp?.work_schedule) return;
     setEntries(prev => prev.map(e => {
       if (!e.start_date || !e.end_date) return e;
-      const unit = config[`unit_${e.type}`] || 'days';
+      const tt = timeTypes.find(t => t.key === e.type);
+      const unit = tt?.unit || config[`unit_${e.type}`] || 'days';
       const amount = calcWorkAmount(e.start_date, e.end_date, emp.work_schedule, unit);
       return amount !== null ? { ...e, amount: String(amount) } : e;
     }));
@@ -412,7 +419,8 @@ export default function ZeitEintragenTab() {
       const updated = { ...e, [key]: val };
       // Auto-recalculate amount when dates or type change
       if (['start_date', 'end_date', 'type'].includes(key) && selEmpObj?.work_schedule) {
-        const unit = config[`unit_${updated.type}`] || 'days';
+        const tt = timeTypes.find(t => t.key === updated.type);
+        const unit = tt?.unit || config[`unit_${updated.type}`] || 'days';
         const amount = calcWorkAmount(updated.start_date, updated.end_date, selEmpObj.work_schedule, unit);
         if (amount !== null) updated.amount = String(amount);
       }
@@ -446,9 +454,8 @@ export default function ZeitEintragenTab() {
       const d = await res.json();
       if (!res.ok) return setError(d.error || 'Fehler');
       setMsg(`${entries.length} Eintrag/Einträge erfolgreich gespeichert.`);
-      setEntries([{ ...EMPTY_ENTRY }]);
-      const year = new Date().getFullYear();
-      const bRes = await fetch(`/api/employees/${selectedEmp}/balances?year=${year}`);
+      setEntries(timeTypes.length > 0 ? [{ ...EMPTY_ENTRY, type: timeTypes[0].key }] : [{ ...EMPTY_ENTRY }]);
+      const bRes = await fetch(`/api/employees/${selectedEmp}/balances?year=${statsYear}`);
       if (bRes.ok) setEmpBalances((await bRes.json()).balances);
     } catch { setError('Netzwerkfehler'); }
     setSaving(false);
@@ -472,20 +479,38 @@ export default function ZeitEintragenTab() {
         </div>
 
         {empBalances && (
-          <div className="ma-balance-grid" style={{ marginTop: 14 }}>
-            {TYPES.map(t => {
-              const b = empBalances[t] || { allocated: 0, used: 0, remaining: 0 };
-              const unit = unitLabel(config[`unit_${t}`] || 'days');
-              return (
-                <div key={t} className="ma-balance-chip" style={{ borderLeft: `3px solid ${TYPE_COLORS[t]}` }}>
-                  <div className="ma-balance-chip-label">{TYPE_LABELS[t]}</div>
-                  <div className="ma-balance-chip-values">
-                    <span className="ma-balance-chip-remaining">{b.remaining} {unit}</span>
-                    <span className="ma-balance-chip-used">verfügbar ({b.used} {b.used === 1 ? unitSingular(config[`unit_${t}`] || 'days') : unit} {new Date().getFullYear()} verbraucht)</span>
+          <div style={{ marginTop: 14 }}>
+            {/* Year selector for stats */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Statistik:</span>
+              <button className="ma-btn-icon" onClick={() => setStatsYear(y => y - 1)}><ChevronLeft size={14} /></button>
+              <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.85rem', minWidth: 36, textAlign: 'center' }}>{statsYear}</span>
+              <button className="ma-btn-icon" onClick={() => setStatsYear(y => y + 1)}><ChevronRight size={14} /></button>
+            </div>
+            <div className="ma-balance-grid">
+              {timeTypes.map(t => {
+                const b = empBalances[t.key] || { allocated: 0, used: 0, remaining: 0, count: 0, total_amount: 0 };
+                const unit = unitLabel(t.unit || 'days');
+                return (
+                  <div key={t.key} className="ma-balance-chip" style={{ borderLeft: `3px solid ${t.color || '#6366f1'}` }}>
+                    <div className="ma-balance-chip-label">{t.name}</div>
+                    <div className="ma-balance-chip-values">
+                      {t.has_quota ? (
+                        <>
+                          <span className="ma-balance-chip-remaining">{b.remaining} {unit}</span>
+                          <span className="ma-balance-chip-used">verfügbar ({b.used} {b.used === 1 ? unitSingular(t.unit || 'days') : unit} {statsYear} verbraucht)</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="ma-balance-chip-remaining">{b.total_amount} {unit}</span>
+                          <span className="ma-balance-chip-used">{b.count} Eintrag/Einträge in {statsYear}</span>
+                        </>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
@@ -494,7 +519,8 @@ export default function ZeitEintragenTab() {
       {selectedEmp && <div className="ma-card" style={{ marginBottom: 16 }}>
         <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)', marginBottom: 12 }}>Einträge</div>
         {entries.map((entry, idx) => {
-          const unit = config[`unit_${entry.type}`] || 'days';
+          const tt = timeTypes.find(t => t.key === entry.type);
+          const unit = tt?.unit || config[`unit_${entry.type}`] || 'days';
           const computedAmount = selEmpObj?.work_schedule
             ? calcWorkAmount(entry.start_date, entry.end_date, selEmpObj.work_schedule, unit)
             : null;
@@ -512,7 +538,7 @@ export default function ZeitEintragenTab() {
                 <div className="ma-field" style={{ marginBottom: 0 }}>
                   <label className="ma-label">Typ</label>
                   <select className="ma-select" value={entry.type} onChange={e => updateEntry(idx, 'type', e.target.value)}>
-                    {TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
+                    {timeTypes.map(t => <option key={t.key} value={t.key}>{t.name}</option>)}
                   </select>
                 </div>
                 <div className="ma-field" style={{ marginBottom: 0 }}>
@@ -577,12 +603,12 @@ export default function ZeitEintragenTab() {
               {fmt(addDays(calendarStart, -4))} – {fmt(addDays(calendarEnd, 4))}
             </span>
           </div>
-          <MiniCalendar rangeStart={calendarStart} rangeEnd={calendarEnd} allEntries={allEntries} employees={employees} />
-          <div style={{ display: 'flex', gap: 14, marginTop: 10 }}>
-            {Object.entries(TYPE_LABELS).map(([k, v]) => (
-              <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                <span style={{ width: 8, height: 8, borderRadius: 2, background: TYPE_COLORS[k], display: 'inline-block' }} />
-                {v}
+          <MiniCalendar rangeStart={calendarStart} rangeEnd={calendarEnd} allEntries={allEntries} employees={employees} timeTypes={timeTypes} />
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 10 }}>
+            {timeTypes.map(t => (
+              <div key={t.key} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: t.color || '#888', display: 'inline-block' }} />
+                {t.name}
               </div>
             ))}
           </div>
