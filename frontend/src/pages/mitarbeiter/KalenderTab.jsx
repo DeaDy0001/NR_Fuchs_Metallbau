@@ -7,6 +7,7 @@ const TYPE_LABEL_FALLBACK = { vacation: 'Urlaub', zeitausgleich: 'Zeitausgleich'
 const TYPE_COLOR_FALLBACK = { vacation: '#6366f1', zeitausgleich: '#22c55e', sonderurlaub: '#f59e0b', krankenstand: '#ef4444' };
 
 const MONTH_SHORT = ['Jän', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
 const ROW_H = 26;
 const DAY_COL_W = 36;
@@ -48,6 +49,39 @@ function daysInMonth(year, month) {
   return new Date(year, month + 1, 0).getDate();
 }
 
+// ── Work day calculation ─────────────────────────────────────────────────────
+function calcWorkAmount(startDate, endDate, workSchedule, unit) {
+  if (!startDate || !endDate || !workSchedule) return null;
+  const start = new Date(startDate + 'T00:00:00');
+  const end = new Date(endDate + 'T00:00:00');
+  if (start > end) return null;
+  const y1 = start.getFullYear(), y2 = end.getFullYear();
+  const hols = new Set([...getAustrianHolidays(y1), ...(y2 !== y1 ? [...getAustrianHolidays(y2)] : [])]);
+  let workDays = 0, workHours = 0;
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const dateStr = d.toISOString().slice(0, 10);
+    if (hols.has(dateStr)) continue;
+    const key = DAY_KEYS[d.getDay()];
+    const h = workSchedule[key] || 0;
+    if (h > 0) { workDays++; workHours += h; }
+  }
+  if (unit === 'hours') return workHours;
+  if (unit === 'halfdays') return workDays * 2;
+  return workDays;
+}
+
+function unitLabel(unit) {
+  if (unit === 'hours') return 'Std';
+  if (unit === 'halfdays') return 'Halbtage';
+  return 'Tage';
+}
+
+function parseWorkSchedule(ws) {
+  if (!ws) return {};
+  if (typeof ws === 'object') return ws;
+  try { return JSON.parse(ws); } catch { return {}; }
+}
+
 export default function KalenderTab() {
   const [year, setYear] = useState(new Date().getFullYear());
   const [employees, setEmployees] = useState([]);
@@ -55,8 +89,10 @@ export default function KalenderTab() {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tooltip, setTooltip] = useState(null);
+  const [highlightedEntryId, setHighlightedEntryId] = useState(null);
   const scrollRef = useRef(null);
   const headerScrollRef = useRef(null);
+  const listRef = useRef(null);
 
   // Entries list state
   const [search, setSearch] = useState('');
@@ -115,10 +151,20 @@ export default function KalenderTab() {
   const todayMonth = today.getFullYear() === year ? today.getMonth() : -1;
   const todayDay = today.getDate();
 
+  // ── Type helpers (defined before handleMouseMove) ────────────────────────
+  const getTypeLabel = useCallback((key) =>
+    timeTypes.find(t => t.key === key)?.name || TYPE_LABEL_FALLBACK[key] || key,
+  [timeTypes]);
+
+  const getTypeColor = useCallback((key) =>
+    timeTypes.find(t => t.key === key)?.color || TYPE_COLOR_FALLBACK[key] || '#888',
+  [timeTypes]);
+
   const handleMouseMove = useCallback((e, entry, emp) => {
-    const startD = new Date(entry.start_date);
-    const endD = new Date(entry.end_date);
-    const diffDays = Math.round((endD - startD) / 86400000) + 1;
+    const tt = timeTypes.find(t => t.key === entry.type);
+    const unit = tt?.unit || 'days';
+    const ws = parseWorkSchedule(emp.work_schedule);
+    const workAmount = calcWorkAmount(entry.start_date, entry.end_date, ws, unit);
     setTooltip({
       x: e.clientX + 14,
       y: e.clientY - 10,
@@ -127,17 +173,25 @@ export default function KalenderTab() {
         type: getTypeLabel(entry.type),
         start: entry.start_date,
         end: entry.end_date,
-        days: diffDays,
+        workAmount,
+        unit,
         notes: entry.notes,
         color: emp.color || '#6366f1',
       }
     });
-  }, []);
+  }, [timeTypes, getTypeLabel]);
 
   const handleMouseLeave = useCallback(() => setTooltip(null), []);
 
+  const handleBarClick = useCallback((entry) => {
+    setHighlightedEntryId(entry.id);
+    setTimeout(() => {
+      listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+  }, []);
+
   function getDayBg(m, day, daysInM) {
-    if (day > daysInM) return { bg: 'rgba(0,0,0,0.03)', opacity: 1 };
+    if (day > daysInM) return { bg: 'rgba(0,0,0,0.75)', opacity: 1, noBorder: true };
     const isToday = m === todayMonth && day === todayDay;
     const dateStr = `${year}-${String(m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const dow = new Date(year, m, day).getDay();
@@ -153,7 +207,7 @@ export default function KalenderTab() {
           : isToday
             ? 'rgba(239,68,68,0.1)'
             : 'transparent';
-    return { bg, opacity: 1 };
+    return { bg, opacity: 1, noBorder: false };
   }
 
   // ── Entries list ────────────────────────────────────────────────────────────
@@ -171,8 +225,12 @@ export default function KalenderTab() {
         va = `${a.first_name} ${a.last_name}`.toLowerCase();
         vb = `${b.first_name} ${b.last_name}`.toLowerCase();
       } else if (sortKey === 'days') {
-        va = Math.round((new Date(a.end_date) - new Date(a.start_date)) / 86400000);
-        vb = Math.round((new Date(b.end_date) - new Date(b.start_date)) / 86400000);
+        const empA = employees.find(e => e.id === a.employee_id);
+        const empB = employees.find(e => e.id === b.employee_id);
+        const ttA = timeTypes.find(t => t.key === a.type);
+        const ttB = timeTypes.find(t => t.key === b.type);
+        va = calcWorkAmount(a.start_date, a.end_date, parseWorkSchedule(empA?.work_schedule), ttA?.unit || 'days') ?? 0;
+        vb = calcWorkAmount(b.start_date, b.end_date, parseWorkSchedule(empB?.work_schedule), ttB?.unit || 'days') ?? 0;
       } else {
         va = a[sortKey] || '';
         vb = b[sortKey] || '';
@@ -183,10 +241,7 @@ export default function KalenderTab() {
     });
 
     return result;
-  }, [entries, search, typeFilter, sortKey, sortDir]);
-
-  const getTypeLabel = (key) => timeTypes.find(t => t.key === key)?.name || TYPE_LABEL_FALLBACK[key] || key;
-  const getTypeColor = (key) => timeTypes.find(t => t.key === key)?.color || TYPE_COLOR_FALLBACK[key] || '#888';
+  }, [entries, search, typeFilter, sortKey, sortDir, employees, timeTypes]);
 
   function handleSort(field) {
     if (sortKey === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -270,12 +325,10 @@ export default function KalenderTab() {
                 ))}
               </div>
 
-              {/* Month columns — background-image for full-height vertical dividers */}
+              {/* Month columns */}
               <div style={{
                 width: totalW, flexShrink: 0, display: 'flex', alignSelf: 'stretch',
                 backgroundColor: 'var(--bg-primary, #fff)',
-                backgroundImage: `repeating-linear-gradient(to right, transparent ${colW - 1}px, var(--border-color) ${colW - 1}px, var(--border-color) ${colW}px)`,
-                backgroundSize: `${colW}px 100%`,
               }}>
                 {Array.from({ length: 12 }, (_, m) => {
                   const daysInM = daysInMonth(year, m);
@@ -283,14 +336,14 @@ export default function KalenderTab() {
                   const monthEnd = new Date(year, m, daysInM);
 
                   return (
-                    <div key={m} style={{ width: colW, flexShrink: 0, position: 'relative' }}>
+                    <div key={m} style={{ width: colW, flexShrink: 0, position: 'relative', borderRight: '1px solid var(--border-color)' }}>
                       {/* Day row backgrounds */}
                       {Array.from({ length: 31 }, (_, i) => i + 1).map(day => {
-                        const { bg, opacity } = getDayBg(m, day, daysInM);
+                        const { bg, opacity, noBorder } = getDayBg(m, day, daysInM);
                         return (
                           <div key={day} style={{
                             height: ROW_H,
-                            borderBottom: '1px solid var(--border-color)',
+                            borderBottom: noBorder ? 'none' : '1px solid var(--border-color)',
                             background: bg, opacity,
                           }} />
                         );
@@ -317,12 +370,13 @@ export default function KalenderTab() {
                               key={`${emp.id}-${entry.id}`}
                               onMouseMove={e => handleMouseMove(e, entry, emp)}
                               onMouseLeave={handleMouseLeave}
+                              onClick={() => handleBarClick(entry)}
                               style={{
                                 position: 'absolute',
-                                left: barX, top: (startDay - 1) * ROW_H + 2,
-                                width: BAR_W, height: (endDay - startDay + 1) * ROW_H - 4,
+                                left: barX, top: (startDay - 1) * (ROW_H + 1) + 2,
+                                width: BAR_W, height: (endDay - startDay + 1) * (ROW_H + 1) - 4,
                                 background: empColor, borderRadius: 4,
-                                opacity: 0.85, cursor: 'default', zIndex: 2,
+                                opacity: 0.85, cursor: 'pointer', zIndex: 2,
                               }}
                             />
                           );
@@ -333,7 +387,7 @@ export default function KalenderTab() {
                       {m === todayMonth && (
                         <div style={{
                           position: 'absolute', left: 0, right: 0,
-                          top: (todayDay - 1) * ROW_H + ROW_H / 2,
+                          top: (todayDay - 1) * (ROW_H + 1) + ROW_H / 2,
                           height: 2, background: 'rgba(239,68,68,0.6)',
                           pointerEvents: 'none', zIndex: 3,
                         }} />
@@ -346,7 +400,7 @@ export default function KalenderTab() {
           </div>
 
           {/* ── Entries list ─────────────────────────────────────────────── */}
-          <div style={{ marginTop: 28 }}>
+          <div ref={listRef} style={{ marginTop: 28 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
               <div style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--text-primary)' }}>
                 Einträge {year}
@@ -396,13 +450,22 @@ export default function KalenderTab() {
                   <tbody>
                     {filteredEntries.map(entry => {
                       const emp = employees.find(e => e.id === entry.employee_id);
-                      const days = Math.round((new Date(entry.end_date) - new Date(entry.start_date)) / 86400000) + 1;
+                      const tt = timeTypes.find(t => t.key === entry.type);
+                      const unit = tt?.unit || 'days';
+                      const ws = parseWorkSchedule(emp?.work_schedule);
+                      const workAmount = calcWorkAmount(entry.start_date, entry.end_date, ws, unit);
+                      const isHighlighted = entry.id === highlightedEntryId;
+                      const highlightBg = `${getTypeColor(entry.type)}22`;
                       return (
                         <tr
                           key={entry.id}
-                          style={{ borderBottom: '1px solid var(--border-color)' }}
-                          onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-secondary)'}
-                          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                          style={{
+                            borderBottom: '1px solid var(--border-color)',
+                            background: isHighlighted ? highlightBg : 'transparent',
+                            transition: 'background 0.15s',
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = isHighlighted ? highlightBg : 'var(--bg-secondary)'}
+                          onMouseLeave={e => e.currentTarget.style.background = isHighlighted ? highlightBg : 'transparent'}
                         >
                           <td style={{ padding: '8px 12px', fontWeight: 500, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -422,7 +485,11 @@ export default function KalenderTab() {
                           </td>
                           <td style={{ padding: '8px 12px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{entry.start_date}</td>
                           <td style={{ padding: '8px 12px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{entry.end_date}</td>
-                          <td style={{ padding: '8px 12px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{days} T.</td>
+                          <td style={{ padding: '8px 12px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                            {workAmount !== null
+                              ? `${workAmount} ${unitLabel(unit)}`
+                              : `${Math.round((new Date(entry.end_date) - new Date(entry.start_date)) / 86400000) + 1} T.`}
+                          </td>
                           <td style={{ padding: '8px 12px', color: 'var(--text-secondary)', maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {entry.notes || '—'}
                           </td>
@@ -454,7 +521,9 @@ export default function KalenderTab() {
             <div><strong>Typ:</strong> {tooltip.content.type}</div>
             <div><strong>Von:</strong> {tooltip.content.start}</div>
             <div><strong>Bis:</strong> {tooltip.content.end}</div>
-            <div><strong>Dauer:</strong> {tooltip.content.days} {tooltip.content.days === 1 ? 'Tag' : 'Tage'}</div>
+            <div><strong>Dauer:</strong> {tooltip.content.workAmount !== null
+              ? `${tooltip.content.workAmount} ${unitLabel(tooltip.content.unit)}`
+              : '—'}</div>
             {tooltip.content.notes && <div style={{ marginTop: 4, color: 'var(--text-primary)' }}>{tooltip.content.notes}</div>}
           </div>
         </div>

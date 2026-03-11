@@ -348,7 +348,8 @@ export default function ZeitEintragenTab() {
   const [employees, setEmployees] = useState([]);
   const [timeTypes, setTimeTypes] = useState([]);
   const [selectedEmp, setSelectedEmp] = useState('');
-  const [empBalances, setEmpBalances] = useState(null);
+  const [currentBalances, setCurrentBalances] = useState(null);
+  const [statsBalances, setStatsBalances] = useState(null);
   const [statsYear, setStatsYear] = useState(new Date().getFullYear());
   const [config, setConfig] = useState({});
   const [entries, setEntries] = useState([{ ...EMPTY_ENTRY }]);
@@ -383,9 +384,15 @@ export default function ZeitEintragenTab() {
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    if (!selectedEmp) { setEmpBalances(null); return; }
-    fetch(`/api/employees/${selectedEmp}/balances?year=${statsYear}`)
-      .then(r => r.json()).then(d => setEmpBalances(d.balances)).catch(() => {});
+    if (!selectedEmp) { setCurrentBalances(null); setStatsBalances(null); return; }
+    const curYear = new Date().getFullYear();
+    Promise.all([
+      fetch(`/api/employees/${selectedEmp}/balances?year=${curYear}`).then(r => r.json()),
+      fetch(`/api/employees/${selectedEmp}/balances?year=${statsYear}`).then(r => r.json()),
+    ]).then(([curData, statsData]) => {
+      setCurrentBalances(curData.balances);
+      setStatsBalances(statsData.balances);
+    }).catch(() => {});
   }, [selectedEmp, statsYear]);
 
   // Re-calculate amounts when employee changes
@@ -455,8 +462,13 @@ export default function ZeitEintragenTab() {
       if (!res.ok) return setError(d.error || 'Fehler');
       setMsg(`${entries.length} Eintrag/Einträge erfolgreich gespeichert.`);
       setEntries(timeTypes.length > 0 ? [{ ...EMPTY_ENTRY, type: timeTypes[0].key }] : [{ ...EMPTY_ENTRY }]);
-      const bRes = await fetch(`/api/employees/${selectedEmp}/balances?year=${statsYear}`);
-      if (bRes.ok) setEmpBalances((await bRes.json()).balances);
+      const curYear = new Date().getFullYear();
+      const [bCur, bStats] = await Promise.all([
+        fetch(`/api/employees/${selectedEmp}/balances?year=${curYear}`).then(r => r.json()),
+        fetch(`/api/employees/${selectedEmp}/balances?year=${statsYear}`).then(r => r.json()),
+      ]);
+      setCurrentBalances(bCur.balances);
+      setStatsBalances(bStats.balances);
     } catch { setError('Netzwerkfehler'); }
     setSaving(false);
   };
@@ -478,7 +490,7 @@ export default function ZeitEintragenTab() {
           </select>
         </div>
 
-        {empBalances && (
+        {currentBalances && statsBalances && (
           <div style={{ marginTop: 14 }}>
             {/* Year selector for stats */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
@@ -489,7 +501,8 @@ export default function ZeitEintragenTab() {
             </div>
             <div className="ma-balance-grid">
               {timeTypes.map(t => {
-                const b = empBalances[t.key] || { allocated: 0, used: 0, remaining: 0, count: 0, total_amount: 0 };
+                const cb = currentBalances[t.key] || { allocated: 0, used: 0, remaining: 0 };
+                const sb = statsBalances[t.key] || { count: 0, total_amount: 0, used: 0 };
                 const unit = unitLabel(t.unit || 'days');
                 return (
                   <div key={t.key} className="ma-balance-chip" style={{ borderLeft: `3px solid ${t.color || '#6366f1'}` }}>
@@ -497,13 +510,13 @@ export default function ZeitEintragenTab() {
                     <div className="ma-balance-chip-values">
                       {t.has_quota ? (
                         <>
-                          <span className="ma-balance-chip-remaining">{b.remaining} {unit}</span>
-                          <span className="ma-balance-chip-used">verfügbar ({b.used} {b.used === 1 ? unitSingular(t.unit || 'days') : unit} {statsYear} verbraucht)</span>
+                          <span className="ma-balance-chip-remaining">{cb.remaining} {unit}</span>
+                          <span className="ma-balance-chip-used">verfügbar ({sb.used} {sb.used === 1 ? unitSingular(t.unit || 'days') : unit} {statsYear} verbraucht)</span>
                         </>
                       ) : (
                         <>
-                          <span className="ma-balance-chip-remaining">{b.total_amount} {unit}</span>
-                          <span className="ma-balance-chip-used">{b.count} Eintrag/Einträge in {statsYear}</span>
+                          <span className="ma-balance-chip-remaining">{sb.total_amount} {unit}</span>
+                          <span className="ma-balance-chip-used">{sb.count} Eintrag/Einträge in {statsYear}</span>
                         </>
                       )}
                     </div>
