@@ -5,6 +5,13 @@ import '../MitarbeiterPage.css';
 const TYPES = ['vacation', 'zeitausgleich', 'sonderurlaub', 'krankenstand'];
 const TYPE_LABELS = { vacation: 'Urlaub', zeitausgleich: 'Zeitausgleich', sonderurlaub: 'Sonderurlaub', krankenstand: 'Krankenstand' };
 
+const COLOR_SWATCHES = [
+  '#6366f1', '#8b5cf6', '#a855f7', '#ec4899', '#ef4444',
+  '#f97316', '#f59e0b', '#eab308', '#84cc16', '#22c55e',
+  '#10b981', '#14b8a6', '#06b6d4', '#3b82f6', '#0ea5e9',
+  '#64748b', '#78716c', '#6b7280',
+];
+
 export default function EmployeeModal({ employee, onClose, onSaved }) {
   const isEdit = !!employee;
   const [form, setForm] = useState({
@@ -15,6 +22,7 @@ export default function EmployeeModal({ employee, onClose, onSaved }) {
     address: employee?.address || '',
     birth_date: employee?.birth_date || '',
     notes: employee?.notes || '',
+    color: employee?.color || '#6366f1',
   });
   const [balances, setBalances] = useState({ vacation: '', zeitausgleich: '', sonderurlaub: '', krankenstand: '' });
   const [saving, setSaving] = useState(false);
@@ -89,6 +97,25 @@ export default function EmployeeModal({ employee, onClose, onSaved }) {
             <div className="ma-field" style={{ gridColumn: '1 / -1' }}>
               <label className="ma-label">Notizen</label>
               <textarea className="ma-input" rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Interne Notizen..." style={{ resize: 'vertical' }} />
+            </div>
+            <div className="ma-field" style={{ gridColumn: '1 / -1' }}>
+              <label className="ma-label">Kalenderfarbe</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                {COLOR_SWATCHES.map(c => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => set('color', c)}
+                    style={{
+                      width: 24, height: 24, borderRadius: 6,
+                      background: c, border: form.color === c ? '3px solid var(--text-primary)' : '2px solid transparent',
+                      cursor: 'pointer', padding: 0, flexShrink: 0,
+                      outline: form.color === c ? '2px solid var(--bg-primary)' : 'none',
+                      outlineOffset: -4,
+                    }}
+                  />
+                ))}
+              </div>
             </div>
           </div>
 

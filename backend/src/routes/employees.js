@@ -56,18 +56,19 @@ router.get('/', (req, res) => {
 router.post('/', (req, res) => {
   if (!req.appUser.is_admin) return res.status(403).json({ error: 'Nur Administratoren' });
 
-  const { first_name, last_name, email, phone, address, birth_date, notes, initial_balances } = req.body;
+  const { first_name, last_name, email, phone, address, birth_date, notes, color, initial_balances } = req.body;
   if (!first_name?.trim() || !last_name?.trim()) {
     return res.status(400).json({ error: 'Vor- und Nachname sind erforderlich' });
   }
 
   try {
     const result = db.prepare(`
-      INSERT INTO employees (first_name, last_name, email, phone, address, birth_date, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO employees (first_name, last_name, email, phone, address, birth_date, notes, color)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       first_name.trim(), last_name.trim(),
-      email || null, phone || null, address || null, birth_date || null, notes || null
+      email || null, phone || null, address || null, birth_date || null, notes || null,
+      color || '#6366f1'
     );
     const empId = result.lastInsertRowid;
     const year = new Date().getFullYear();
@@ -104,7 +105,7 @@ router.patch('/:id', (req, res) => {
   const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(id);
   if (!emp) return res.status(404).json({ error: 'Mitarbeiter nicht gefunden' });
 
-  const fields = ['first_name', 'last_name', 'email', 'phone', 'address', 'birth_date', 'notes'];
+  const fields = ['first_name', 'last_name', 'email', 'phone', 'address', 'birth_date', 'notes', 'color'];
   const updates = [];
   const vals = [];
   const changed = {};

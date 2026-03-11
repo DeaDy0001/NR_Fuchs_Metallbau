@@ -930,6 +930,19 @@ const migrations = [
       `);
       console.log('✓ Migration create_employee_yearly_rules_table completed');
     }
+  },
+  {
+    id: 38,
+    name: 'add_employee_color_column',
+    up: () => {
+      console.log('Running migration: add_employee_color_column');
+      const tableInfo = db.pragma('table_info(employees)');
+      const existingColumns = tableInfo.map(col => col.name);
+      if (!existingColumns.includes('color')) {
+        db.exec("ALTER TABLE employees ADD COLUMN color TEXT DEFAULT '#6366f1'");
+      }
+      console.log('✓ Migration add_employee_color_column completed');
+    }
   }
 ];
 
