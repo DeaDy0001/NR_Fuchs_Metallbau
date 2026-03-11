@@ -71,10 +71,19 @@ router.post('/image-metadata', mobile.reportImageMetadata);
 router.get('/devices', mobile.getDevices);
 router.delete('/devices/:deviceId', mobile.removeDevice);
 
+// Google user management - register from mobile app, manage from desktop
+router.post('/register-google-user', mobile.registerGoogleUser);
+router.get('/google-users', mobile.getGoogleUsers);
+router.delete('/google-users/:userId', mobile.removeGoogleUser);
+
+// Inbox activity log
+router.get('/activities', mobile.getActivities);
+router.post('/activities/read', mobile.markActivitiesRead);
+
 // Inbox (called from desktop)
 router.get('/inbox', mobile.getInbox);
 router.get('/inbox/image-proxy/:fileId', mobile.proxyInboxImage);
-router.get('/inbox/delete-preview/:projectName/:fileName', mobile.previewDeleteRequestImage);
+router.get('/inbox/delete-preview/:fileName', mobile.previewDeleteRequestImage);
 router.get('/inbox/:folderId/images', mobile.getInboxImages);
 router.post('/inbox/confirm', mobile.confirmInboxProject);
 router.post('/inbox/add-to-library', mobile.addToLibrary);
@@ -84,6 +93,17 @@ router.post('/inbox/delete-images', mobile.deleteInboxImages);
 router.post('/inbox/process-delete', mobile.processDeleteRequests);
 router.post('/inbox/dismiss-delete', mobile.dismissDeleteRequests);
 router.delete('/inbox/:folderId', mobile.deleteInboxProject);
+
+// Postfach – JSON-based inbox (called from desktop)
+router.get('/inbox/requests', mobile.getInboxRequests);
+router.post('/inbox/process-image', mobile.processImageRequest);
+router.post('/inbox/reject-image', mobile.rejectImageRequest);
+router.post('/inbox/process-projekt', mobile.processProjektRequest);
+router.post('/inbox/reject-projekt', mobile.rejectProjektRequest);
+router.post('/inbox/process-projekt-change', mobile.processProjektChangeRequest);
+router.post('/inbox/reject-projekt-change', mobile.rejectProjektChangeRequest);
+router.post('/inbox/process-image-change', mobile.processImageChangeRequest);
+router.post('/inbox/reject-image-change', mobile.rejectImageChangeRequest);
 
 // Project changes (new images uploaded from mobile to existing projects)
 router.get('/project-changes', mobile.getProjectChanges);
@@ -111,6 +131,17 @@ router.get('/app.apk', (req, res) => {
   }
 });
 
+// Manually trigger APK upload to Google Drive (called from web frontend)
+router.post('/release-apk', async (req, res) => {
+  try {
+    const { triggerManualUpload } = require('../services/appUpdateService');
+    await triggerManualUpload();
+    res.json({ success: true, message: 'APK wurde zu Google Drive hochgeladen' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ---- Authenticated routes (mobile app) ----
 
 // All routes below require mobile auth token
@@ -120,6 +151,7 @@ router.use(mobile.authenticateDevice);
 router.get('/projects', mobile.getProjects);
 router.get('/projects/:id/images', mobile.getProjectImages);
 router.post('/projects', mobile.createProject);
+router.patch('/projects/:id', mobile.updateProjectMeta);
 
 // Upload
 router.post('/upload', upload.single('image'), mobile.uploadImage);

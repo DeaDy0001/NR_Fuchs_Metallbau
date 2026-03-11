@@ -75,6 +75,23 @@ function ProjectsList() {
     }
   }, [searchQuery]);
 
+  // Listen for project activation events (e.g. from InboxBanner)
+  useEffect(() => {
+    const handler = (e) => {
+      const projectId = e.detail?.projectId;
+      if (!projectId) return;
+      setSelectedProjects(prev => {
+        if (prev.includes(projectId)) return prev;
+        const updated = [...prev, projectId];
+        localStorage.setItem('selectedProjects', JSON.stringify(updated));
+        return updated;
+      });
+      loadProjects();
+    };
+    window.addEventListener('projectActivated', handler);
+    return () => window.removeEventListener('projectActivated', handler);
+  }, []);
+
   // Auto-sync every time the Projekte tab is opened
   useEffect(() => {
     handleSync();
@@ -157,6 +174,13 @@ function ProjectsList() {
       });
 
       if (response.ok) {
+        const newProject = await response.json();
+        // Auto-activate the new project
+        setSelectedProjects(prev => {
+          const updated = prev.includes(newProject.id) ? prev : [...prev, newProject.id];
+          localStorage.setItem('selectedProjects', JSON.stringify(updated));
+          return updated;
+        });
         setShowCreateModal(false);
         setNewProjectName('');
         setNewProjectColor('#3b82f6');
@@ -927,7 +951,7 @@ function ProjectsList() {
                             <Trash2 size={14} />
                           </button>
                         )}
-                        <img src={image.url} alt={image.name} />
+                        <img src={image.thumbnail_url || image.url} alt={image.name} />
                         <div className="project-image-name" title={image.name}>{image.name}</div>
                       </div>
                     ))}

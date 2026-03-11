@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Animated } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Animated, Linking } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -7,6 +7,7 @@ import { getQueueDisplayItems, cleanupOldQueueItems, getDeleteQueueDisplayItems,
 import { forceProcessQueue, addUploadListener, getCurrentUploadState } from '../services/uploadQueue';
 import { addDeleteListener, processDeleteQueue } from '../services/deleteQueue';
 import { useApp } from '../contexts/AppContext';
+import { getNotificationPermissionStatus, requestNotificationPermission } from '../services/backgroundSync';
 
 export default function UploadQueueScreen() {
   const { refreshQueueCount } = useApp();
@@ -17,16 +18,18 @@ export default function UploadQueueScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [uploadState, setUploadState] = useState(getCurrentUploadState());
   const [currentPhase, setCurrentPhase] = useState(null); // 'compressing' or 'uploading'
+  const [notifPermission, setNotifPermission] = useState(null); // null=checking, 'granted', 'denied', 'undetermined'
 
   // Animated progress for uploading items
   const progressAnims = useRef({});
 
-  // Load queue on focus
+  // Load queue on focus + check notification permission
   useFocusEffect(
     useCallback(() => {
       loadQueue();
       loadDeleteQueue();
       setUploadState(getCurrentUploadState());
+      getNotificationPermissionStatus().then(setNotifPermission).catch(() => {});
     }, [])
   );
 
@@ -103,6 +106,11 @@ export default function UploadQueueScreen() {
     }
   };
 
+  const handleRequestNotifPermission = async () => {
+    const granted = await requestNotificationPermission();
+    setNotifPermission(granted ? 'granted' : 'denied');
+  };
+
   const handleForceSync = async () => {
     setRefreshing(true);
     await forceProcessQueue();
@@ -151,7 +159,7 @@ export default function UploadQueueScreen() {
           <Ionicons name={config.icon} size={24} color={config.color} />
         </View>
         <View style={styles.itemInfo}>
-          <Text style={styles.itemName} numberOfLines={1}>{item.file_name}</Text>
+          <Text style={styles.itemName} numberOfLines={1}>{item.custom_title || item.file_name}</Text>
           <View style={styles.itemMeta}>
             <Text style={[styles.itemStatus, { color: config.color }]}>{config.label}</Text>
             {item.project_name && (
@@ -205,7 +213,7 @@ export default function UploadQueueScreen() {
           <Ionicons name="trash-outline" size={24} color={config.color} />
         </View>
         <View style={styles.itemInfo}>
-          <Text style={styles.itemName} numberOfLines={1}>{item.file_name}</Text>
+          <Text style={styles.itemName} numberOfLines={1}>{item.custom_title || item.file_name}</Text>
           <View style={styles.itemMeta}>
             <Text style={[styles.itemStatus, { color: config.color }]}>{config.label}</Text>
             {item.project_name && (
@@ -243,14 +251,34 @@ export default function UploadQueueScreen() {
   }
   if (totalCompleted > 0 || totalDeleteCompleted > 0) {
     allItems.push({ _type: 'section', label: 'Erledigt', icon: 'checkmark-done-outline', color: colors.success });
-    deleteCompleted.forEach(i => allItems.push({ ...i, _type: 'delete' }));
-    completed.forEach(i => allItems.push({ ...i, _type: 'upload' }));
+    const allDone = [
+      ...deleteCompleted.map(i => ({ ...i, _type: 'delete', _sortDate: i.processed_at || '' })),
+      ...completed.map(i => ({ ...i, _type: 'upload', _sortDate: i.uploaded_at || '' })),
+    ].sort((a, b) => b._sortDate.localeCompare(a._sortDate));
+    allDone.forEach(i => allItems.push(i));
   }
 
   const { isProcessing, uploadProgress } = uploadState;
 
   return (
     <View style={styles.container}>
+      {/* Notification permission banner — shown until granted. Tappable: opens settings when denied. */}
+      {notifPermission !== null && notifPermission !== 'granted' && (
+        <TouchableOpacity
+          style={styles.notifBanner}
+          activeOpacity={0.75}
+          onPress={notifPermission === 'denied' ? () => Linking.openSettings() : handleRequestNotifPermission}
+        >
+          <Ionicons name="notifications-outline" size={18} color="#f59e0b" />
+          <Text style={styles.notifBannerText}>
+            {notifPermission === 'denied'
+              ? 'Benachrichtigungen deaktiviert – Tippen um Einstellungen zu öffnen.'
+              : 'Benachrichtigungen erlauben, damit du informiert wirst wenn alle Fotos hochgeladen sind.'}
+          </Text>
+          <Ionicons name="chevron-forward" size={16} color="#f59e0b" style={{ flexShrink: 0 }} />
+        </TouchableOpacity>
+      )}
+
       {/* Summary card */}
       <View style={styles.summary}>
         <View style={styles.summaryItem}>
@@ -351,6 +379,35 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bgPrimary,
+  },
+  notifBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    margin: 12,
+    marginBottom: 0,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: 'rgba(245,158,11,0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.3)',
+  },
+  notifBannerText: {
+    flex: 1,
+    fontSize: 12,
+    color: colors.textSecondary,
+    lineHeight: 17,
+  },
+  notifBannerBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: '#f59e0b',
+  },
+  notifBannerBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'white',
   },
   summary: {
     flexDirection: 'row',

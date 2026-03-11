@@ -15,7 +15,21 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // Static files for uploads
 app.use('/uploads', express.static(path.join(__dirname, '../../uploads')));
 
-// Routes
+// Public routes (no session required)
+app.use('/api/auth/user', require('./routes/userAuth'));
+app.use('/api/mobile', require('./routes/mobile'));
+
+// Session auth middleware for all protected API routes
+const sessionAuth = require('./middleware/sessionAuth');
+const publicApiPrefixes = ['/api/auth/user', '/api/mobile', '/api/health'];
+app.use((req, res, next) => {
+  // Only API routes need auth — static files & SPA routes are always public
+  if (!req.path.startsWith('/api/')) return next();
+  if (publicApiPrefixes.some(p => req.path.startsWith(p))) return next();
+  return sessionAuth(req, res, next);
+});
+
+// Protected routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/drive', require('./routes/drive'));
@@ -25,7 +39,9 @@ app.use('/api/color-presets', require('./routes/colorPresets'));
 app.use('/api/system', require('./routes/system'));
 app.use('/api/github', require('./routes/github'));
 app.use('/api/tags', require('./routes/tags'));
-app.use('/api/mobile', require('./routes/mobile'));
+app.use('/api/users', require('./routes/users'));
+app.use('/api/roles', require('./routes/roles'));
+app.use('/api/employees', require('./routes/employees'));
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -82,6 +98,17 @@ const startServer = async () => {
     // Initialize auto-sync for Google Drive
     const { initializeAutoSync } = require('./services/driveSyncService');
     initializeAutoSync();
+
+    // APK-Upload zu Google Drive nur manuell (Einstellungen → Handy App → APK hochladen)
+    // Auto-Upload deaktiviert um ungewollte Uploads beim Serverstart zu vermeiden
+
+    // Ensure Drive folder structure is correct (startup + every 60 min)
+    const { initializeDriveStructureWatcher } = require('./services/driveStructureService');
+    initializeDriveStructureWatcher();
+
+    // Sync image format settings to NR_Fuchs_Meta/src/settings/settings.json
+    const { syncSettingsToDrive } = require('./controllers/driveController');
+    syncSettingsToDrive().catch(e => console.error('[Settings Sync] Startup sync failed:', e.message));
 
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`

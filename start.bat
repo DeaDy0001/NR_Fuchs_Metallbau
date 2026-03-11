@@ -112,6 +112,7 @@ if %ERRORLEVEL% NEQ 0 (
     pause
     exit /b 1
 )
+call npm audit fix >nul 2>&1
 cd ..
 echo.
 
@@ -125,6 +126,7 @@ if %ERRORLEVEL% NEQ 0 (
     pause
     exit /b 1
 )
+call npm audit fix >nul 2>&1
 cd ..
 echo.
 

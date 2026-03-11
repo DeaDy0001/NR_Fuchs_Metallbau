@@ -1,9 +1,23 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { AppState } from 'react-native';
 import { getSetting, setSetting, getUploadQueueCount, getDeleteQueueCount, getActiveDriveConnection, updateDriveConnectionFolders } from '../services/database';
 import { isAuthenticated, clearAuth, getAccessToken } from '../services/googleAuth';
-import { checkFolderAccess, findOrCreateFolder } from '../services/driveService';
+import { checkFolderAccess, findOrCreateFolder, readJsonFileByName } from '../services/driveService';
 import { startQueueProcessing, stopQueueProcessing, addUploadListener, forceProcessQueue } from '../services/uploadQueue';
 import { startHeartbeat, stopHeartbeat } from '../services/heartbeat';
+import { checkAppUpdate } from '../services/api';
+import { registerBackgroundSync } from '../services/backgroundSync';
+import Constants from 'expo-constants';
+
+const isVersionNewer = (serverVersion, localVersion) => {
+  const s = (serverVersion || '0.0.0').split('.').map(Number);
+  const l = (localVersion || '0.0.0').split('.').map(Number);
+  for (let i = 0; i < Math.max(s.length, l.length); i++) {
+    if ((s[i] || 0) > (l[i] || 0)) return true;
+    if ((s[i] || 0) < (l[i] || 0)) return false;
+  }
+  return false;
+};
 
 const ensureDriveFolders = async (connection) => {
   if (!connection.meta_folder_id || !connection.inbox_folder_id) {
@@ -39,6 +53,10 @@ export const AppProvider = ({ children }) => {
   const [queueCount, setQueueCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
+  // App update state
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState(null); // { version, apkFileId }
+
   // Load saved state on mount
   useEffect(() => {
     console.log('[Fuchs] AppProvider useEffect - calling loadState');
@@ -46,10 +64,43 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   // Start upload queue processing and heartbeat when connected to Drive
+  // Also check for app updates and register background sync
+  const appStateRef = useRef(AppState.currentState);
   useEffect(() => {
+    let updateInterval = null;
+    let appStateSub = null;
+
+    const runUpdateCheck = () => {
+      checkAppUpdate()
+        .then((update) => {
+          if (!update?.version || !update?.apkFileId) return;
+          const installedVersion = Constants.expoConfig?.version || '0.0.0';
+          if (isVersionNewer(update.version, installedVersion)) {
+            setUpdateAvailable(true);
+            setUpdateInfo(update);
+          }
+        })
+        .catch(() => {}); // silently ignore network errors
+    };
+
     if (isConnected && activeConnection) {
       startQueueProcessing();
       startHeartbeat();
+      // Initial update check on connect
+      runUpdateCheck();
+      // Periodic re-check every 6 hours
+      updateInterval = setInterval(runUpdateCheck, 6 * 60 * 60 * 1000);
+
+      // Register background sync task so uploads run even when app is suspended
+      registerBackgroundSync().catch(() => {});
+
+      // When app comes back to foreground, immediately try to sync the queue
+      appStateSub = AppState.addEventListener('change', (nextState) => {
+        if (appStateRef.current !== 'active' && nextState === 'active') {
+          forceProcessQueue().catch(() => {});
+        }
+        appStateRef.current = nextState;
+      });
     } else {
       stopQueueProcessing();
       stopHeartbeat();
@@ -57,6 +108,8 @@ export const AppProvider = ({ children }) => {
     return () => {
       stopQueueProcessing();
       stopHeartbeat();
+      if (updateInterval) clearInterval(updateInterval);
+      if (appStateSub) appStateSub.remove();
     };
   }, [isConnected]);
 
@@ -109,6 +162,20 @@ export const AppProvider = ({ children }) => {
             const accessible = await checkFolderAccess(connection.root_folder_id);
             if (accessible) {
               await ensureDriveFolders(connection);
+
+              // Sync server settings (image format etc.) from NR_Fuchs_Meta/src/settings/settings.json
+              try {
+                const srcFolder = await findOrCreateFolder(connection.meta_folder_id, 'src');
+                const settingsFolder = await findOrCreateFolder(srcFolder.id, 'settings');
+                const serverSettings = await readJsonFileByName(settingsFolder.id, 'settings.json');
+                if (serverSettings?.image_format) {
+                  await setSetting('serverImageFormat', serverSettings.image_format);
+                  console.log('[Fuchs] Server image format synced:', serverSettings.image_format);
+                }
+              } catch (e) {
+                console.log('[Fuchs] Could not sync server settings:', e.message);
+              }
+
               setActiveConnection(connection);
               setIsConnected(true);
             } else {
@@ -139,6 +206,31 @@ export const AppProvider = ({ children }) => {
   };
 
   /**
+   * Register Google user with backend so it can share the Drive folder.
+   * Must be called BEFORE verifying Drive folder access.
+   */
+  const registerWithBackend = async (userInfo, connection) => {
+    const serverUrl = await getSetting('serverUrl');
+    if (!serverUrl || !userInfo.email) return;
+
+    try {
+      await fetch(`${serverUrl}/api/mobile/register-google-user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          googleEmail: userInfo.email,
+          googleName: userInfo.name || '',
+          googleId: userInfo.id || userInfo.sub || null,
+          rootFolderId: connection?.root_folder_id || null,
+        }),
+      });
+    } catch (e) {
+      // Non-fatal - folder might already be accessible or registration can retry later
+      console.log('[Fuchs] Backend registration skipped:', e.message);
+    }
+  };
+
+  /**
    * Called after successful Google login
    */
   const onGoogleLogin = async (userInfo) => {
@@ -148,6 +240,11 @@ export const AppProvider = ({ children }) => {
 
     // Check if there's already an active connection (from QR scan setup)
     const connection = await getActiveDriveConnection();
+
+    // IMPORTANT: Register with backend FIRST so it can grant Drive access
+    // before we try to verify folder accessibility below
+    await registerWithBackend(userInfo, connection);
+
     if (connection) {
       try {
         const accessible = await checkFolderAccess(connection.root_folder_id);
@@ -215,6 +312,25 @@ export const AppProvider = ({ children }) => {
     setQueueCount(uploadCount + deleteCount);
   };
 
+  const recheckUpdate = async () => {
+    try {
+      const update = await checkAppUpdate();
+      if (!update?.version || !update?.apkFileId) {
+        setUpdateAvailable(false);
+        setUpdateInfo(null);
+        return;
+      }
+      const installedVersion = Constants.expoConfig?.version || '0.0.0';
+      if (isVersionNewer(update.version, installedVersion)) {
+        setUpdateAvailable(true);
+        setUpdateInfo(update);
+      } else {
+        setUpdateAvailable(false);
+        setUpdateInfo(null);
+      }
+    } catch {}
+  };
+
   return (
     <AppContext.Provider value={{
       // Auth state
@@ -226,6 +342,10 @@ export const AppProvider = ({ children }) => {
       userEmail,
       queueCount,
       isLoading,
+      // App update
+      updateAvailable,
+      updateInfo,
+      recheckUpdate,
       // Actions
       onSetupComplete,
       onGoogleLogin,

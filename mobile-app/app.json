@@ -4,7 +4,7 @@
     "slug": "fuchs-metallbau",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/splash-icon.png",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -13,9 +13,10 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/splash-icon.png",
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
+      "softwareKeyboardLayoutMode": "pan",
       "package": "com.fuchsmetallbau.app",
       "permissions": [
         "CAMERA",
@@ -25,12 +26,25 @@
         "ACCESS_NETWORK_STATE",
         "INTERNET",
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "ACCESS_COARSE_LOCATION",
+        "REQUEST_INSTALL_PACKAGES",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_DATA_SYNC",
+        "RECEIVE_BOOT_COMPLETED",
+        "POST_NOTIFICATIONS"
       ]
     },
     "scheme": "com.fuchsmetallbau.app",
     "plugins": [
       "./plugins/withCleartextTraffic",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#1e293b",
+          "defaultChannel": "default"
+        }
+      ],
       [
         "expo-camera",
         {

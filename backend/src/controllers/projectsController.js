@@ -15,8 +15,39 @@ const {
   listFilesInFolder,
   uploadFileToDrive,
   deleteFileFromDrive,
+  upsertJsonFileToDrive,
 } = require('../services/googleDriveService');
 const { isAuthenticated, getDriveClient } = require('../services/authService');
+
+/**
+ * Push project metadata (tags, color, notes) as project.json to the Drive project folder.
+ * Called after any update to project metadata. Fails silently.
+ */
+const pushProjectJsonToDrive = async (project) => {
+  try {
+    if (!await isAuthenticated()) return;
+    const drivePath = db.prepare('SELECT path FROM drive_paths LIMIT 1').get();
+    if (!drivePath) return;
+    const { extractFolderId: extractId, findOrCreateSubfolder: findOrCreate } = require('../services/googleDriveService');
+    const rootFolderId = extractId(drivePath.path);
+    if (!rootFolderId) return;
+    const metaFolder = await findOrCreate(rootFolderId, 'NR_Fuchs_Meta');
+    const projektFolder = await findOrCreate(metaFolder.id, 'Projekte');
+    const projectFolder = await findOrCreate(projektFolder.id, project.folder_name);
+    const tags = project.tags ? (typeof project.tags === 'string' ? JSON.parse(project.tags) : project.tags) : [];
+    await upsertJsonFileToDrive(projectFolder.id, 'project.json', {
+      db_id: project.id || null,
+      color: project.color || null,
+      notes: project.notes || null,
+      tags,
+      year: project.year || null,
+      updated_at: project.updated_at || new Date().toISOString(),
+    });
+    console.log(`[Projects] project.json auf Drive aktualisiert für "${project.folder_name}"`);
+  } catch (e) {
+    console.error(`[Projects] Drive project.json Sync fehlgeschlagen für "${project.folder_name}":`, e.message);
+  }
+};
 
 // Get project settings (configured path)
 const getProjectSettings = (req, res) => {
@@ -312,6 +343,9 @@ const updateProject = async (req, res) => {
       await writeProjectMetadata(updatedProject, projectFolderPath);
     }
 
+    // Sync project.json (tags, color, notes) to Google Drive (async, don't block response)
+    pushProjectJsonToDrive(updatedProject).catch(() => {});
+
     res.json(project);
   } catch (error) {
     console.error('Error updating project:', error);
@@ -517,106 +551,146 @@ const deleteDriveProjectFolder = async (folderName, results) => {
 };
 
 // Sync projects from filesystem
+// Supports 3 year-detection modes:
+//   'flat'      - single folder, all subfolders = projects, no year (default)
+//   'suffix'    - project_path ends with a year (e.g. GVU_2025); finds all sibling
+//                 folders with the same base name + any year (GVU_2024, GVU_2026, …)
+//   'subfolder' - project_path contains year-named subfolders (2023/, 2024/, …)
 const syncProjects = async (req, res) => {
   try {
-    // Get configured project path
-    const settingsResult = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+    const settingsResult = db.prepare('SELECT * FROM project_settings WHERE id = 1').get();
 
     if (!settingsResult || !settingsResult.project_path) {
       return res.status(400).json({ error: 'Project path not configured' });
     }
 
     const projectPath = settingsResult.project_path;
+    const mode = settingsResult.year_detection_mode || 'flat';
+    const excludedFolders = JSON.parse(settingsResult.excluded_folders || '[]');
 
-    // Check if path exists (keep async for fs operations)
     const pathExists = await fs.pathExists(projectPath);
     if (!pathExists) {
       return res.status(400).json({ error: 'Configured path does not exist' });
     }
 
-    // Read directories (keep async for fs operations)
-    const items = await fs.readdir(projectPath, { withFileTypes: true });
-    const folders = items.filter(item => item.isDirectory()).map(item => item.name);
-    const folderSet = new Set(folders);
+    // Build list of { year: null|number, basePath: string, folders: string[] }
+    let sources = [];
 
-    // Get existing projects
+    if (mode === 'flat') {
+      const items = await fs.readdir(projectPath, { withFileTypes: true });
+      const folders = items
+        .filter(i => i.isDirectory() && !excludedFolders.includes(i.name))
+        .map(i => i.name);
+      sources.push({ year: null, basePath: projectPath, folders });
+
+    } else if (mode === 'suffix') {
+      const folderName = path.basename(projectPath);
+      const parentDir = path.dirname(projectPath);
+      const match = folderName.match(/^(.+?)(\d{4})$/);
+      if (!match) {
+        return res.status(400).json({
+          error: 'Der Ordnername enthält keine Jahreszahl am Ende (z.B. GVU_2025)'
+        });
+      }
+      const baseName = match[1];
+      const escapedBase = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = new RegExp(`^${escapedBase}(\\d{4})$`);
+
+      const parentItems = await fs.readdir(parentDir, { withFileTypes: true });
+      for (const item of parentItems) {
+        if (!item.isDirectory()) continue;
+        const m = item.name.match(pattern);
+        if (!m) continue;
+        const year = parseInt(m[1]);
+        const sibPath = path.join(parentDir, item.name);
+        const sibItems = await fs.readdir(sibPath, { withFileTypes: true });
+        const folders = sibItems.filter(i => i.isDirectory()).map(i => i.name);
+        sources.push({ year, basePath: sibPath, folders });
+      }
+
+    } else if (mode === 'subfolder') {
+      const items = await fs.readdir(projectPath, { withFileTypes: true });
+      for (const item of items) {
+        if (!item.isDirectory()) continue;
+        if (!/^\d{4}$/.test(item.name)) continue;
+        const year = parseInt(item.name);
+        const yearPath = path.join(projectPath, item.name);
+        const yearItems = await fs.readdir(yearPath, { withFileTypes: true });
+        const folders = yearItems.filter(i => i.isDirectory()).map(i => i.name);
+        sources.push({ year, basePath: yearPath, folders });
+      }
+    }
+
     const existingProjects = db.prepare('SELECT id, folder_name FROM projects').all();
     const existingFolderNames = new Set(existingProjects.map(p => p.folder_name));
 
-    let addedCount = 0;
-    let renamedCount = 0;
+    const insertStmt = db.prepare(
+      'INSERT INTO projects (folder_name, color, notes, year, local_base_path) VALUES (?, ?, ?, ?, ?)'
+    );
+    const updateFolderNameStmt = db.prepare(
+      "UPDATE projects SET folder_name = ?, updated_at = datetime('now') WHERE id = ?"
+    );
+    const updateYearStmt = db.prepare(
+      "UPDATE projects SET year = ?, local_base_path = ?, updated_at = datetime('now') WHERE folder_name = ?"
+    );
 
-    // Add new projects and count images
-    const insertStmt = db.prepare('INSERT INTO projects (folder_name, color, notes) VALUES (?, ?, ?)');
-    const updateFolderNameStmt = db.prepare('UPDATE projects SET folder_name = ?, updated_at = datetime(\'now\') WHERE id = ?');
+    let addedCount = 0;
+    const folderSet = new Set();
     const projectImageCounts = [];
     const renamedProjects = [];
 
-    for (const folderName of folders) {
-      // Check if .project.json exists in Bilder/ subfolder
-      const metadataPath = path.join(projectPath, folderName, 'Bilder', '.project.json');
-      let metadata = null;
-      try {
-        if (await fs.pathExists(metadataPath)) {
-          metadata = await fs.readJson(metadataPath);
-          console.log(`📖 Found metadata for "${folderName}":`, metadata);
+    for (const source of sources) {
+      for (const folderName of source.folders) {
+        const localBasePath = path.join(source.basePath, folderName);
+        folderSet.add(folderName);
 
-          // Check if project with this ID exists in DB
-          const existingProject = db.prepare('SELECT id, folder_name FROM projects WHERE id = ?').get(metadata.id);
-
-          if (existingProject && existingProject.folder_name !== folderName) {
-            // Folder was renamed → update DB
-            console.log(`🔄 Detected rename: "${existingProject.folder_name}" → "${folderName}" (ID: ${metadata.id})`);
-            updateFolderNameStmt.run(folderName, metadata.id);
-            renamedProjects.push({ old: existingProject.folder_name, new: folderName });
-            renamedCount++;
-
-            // Update existingFolderNames to reflect the rename
-            existingFolderNames.delete(existingProject.folder_name);
-            existingFolderNames.add(folderName);
+        // Check for rename via .project.json
+        const metadataPath = path.join(localBasePath, 'Bilder', '.project.json');
+        try {
+          if (await fs.pathExists(metadataPath)) {
+            const metadata = await fs.readJson(metadataPath);
+            const existingProject = db.prepare('SELECT id, folder_name FROM projects WHERE id = ?').get(metadata.id);
+            if (existingProject && existingProject.folder_name !== folderName) {
+              console.log(`🔄 Rename: "${existingProject.folder_name}" → "${folderName}"`);
+              updateFolderNameStmt.run(folderName, metadata.id);
+              renamedProjects.push({ old: existingProject.folder_name, new: folderName });
+              existingFolderNames.delete(existingProject.folder_name);
+              existingFolderNames.add(folderName);
+            }
           }
+        } catch (err) {
+          console.error(`Error reading metadata for ${folderName}:`, err);
         }
-      } catch (err) {
-        console.error(`Error reading metadata for ${folderName}:`, err);
-      }
 
-      // Add project if it doesn't exist (either no metadata or not in DB)
-      if (!existingFolderNames.has(folderName)) {
-        insertStmt.run(folderName, '#3b82f6', '');
-        addedCount++;
-        existingFolderNames.add(folderName);
-      }
-
-      // Count images in Bilder subfolder for reporting
-      const imagesFolderPath = path.join(projectPath, folderName, 'Bilder');
-      let imageCount = 0;
-      try {
-        if (await fs.pathExists(imagesFolderPath)) {
-          const imageFiles = await fs.readdir(imagesFolderPath);
-          imageCount = imageFiles.filter(file => /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(file)).length;
+        if (!existingFolderNames.has(folderName)) {
+          insertStmt.run(folderName, '#3b82f6', '', source.year, localBasePath);
+          addedCount++;
+          existingFolderNames.add(folderName);
+        } else {
+          updateYearStmt.run(source.year, localBasePath, folderName);
         }
-      } catch (err) {
-        // Ignore errors (e.g., no read permission)
-      }
 
-      if (imageCount > 0) {
-        projectImageCounts.push({ folder: folderName, count: imageCount });
+        // Count images for reporting
+        const imagesFolderPath = path.join(localBasePath, 'Bilder');
+        let imageCount = 0;
+        try {
+          if (await fs.pathExists(imagesFolderPath)) {
+            const imageFiles = await fs.readdir(imagesFolderPath);
+            imageCount = imageFiles.filter(f => /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(f)).length;
+          }
+        } catch {}
+        if (imageCount > 0) projectImageCounts.push({ folder: folderName, count: imageCount });
       }
     }
 
-    // Detect removed projects (exist in DB but not on filesystem)
+    // Detect removed projects
     const removedProjects = existingProjects.filter(p => !folderSet.has(p.folder_name));
     const removedNames = removedProjects.map(p => p.folder_name);
-
-    // Delete removed projects (image_project_assignments cleaned up via CASCADE)
     if (removedProjects.length > 0) {
       const deleteStmt = db.prepare('DELETE FROM projects WHERE id = ?');
-      for (const project of removedProjects) {
-        deleteStmt.run(project.id);
-      }
+      for (const project of removedProjects) deleteStmt.run(project.id);
     }
 
-    // Update last_sync timestamp
     db.prepare("UPDATE project_settings SET last_sync = datetime('now') WHERE id = 1").run();
 
     res.json({
@@ -624,12 +698,40 @@ const syncProjects = async (req, res) => {
       added: addedCount,
       removed: removedNames,
       renamed: renamedProjects,
-      total: folders.length,
+      total: folderSet.size,
       imageCounts: projectImageCounts
     });
   } catch (error) {
     console.error('Error syncing projects:', error);
     res.status(500).json({ error: 'Failed to sync projects' });
+  }
+};
+
+// Save year detection mode and excluded folders
+const setYearMode = (req, res) => {
+  try {
+    const { year_detection_mode, excluded_folders } = req.body;
+    const mode = ['flat', 'suffix', 'subfolder'].includes(year_detection_mode)
+      ? year_detection_mode
+      : 'flat';
+    const excluded = JSON.stringify(
+      Array.isArray(excluded_folders) ? excluded_folders : []
+    );
+
+    const result = db.prepare(
+      "UPDATE project_settings SET year_detection_mode = ?, excluded_folders = ? WHERE id = 1"
+    ).run(mode, excluded);
+
+    if (result.changes === 0) {
+      db.prepare(
+        'INSERT INTO project_settings (year_detection_mode, excluded_folders) VALUES (?, ?)'
+      ).run(mode, excluded);
+    }
+
+    res.json({ year_detection_mode: mode, excluded_folders: JSON.parse(excluded) });
+  } catch (error) {
+    console.error('Error saving year mode:', error);
+    res.status(500).json({ error: 'Failed to save year mode' });
   }
 };
 
@@ -665,6 +767,20 @@ const getProjectFiles = async (req, res) => {
 
     // Scan for images in Bilder folder
     const imagesFolderPath = path.join(projectFolderPath, 'Bilder');
+    const THUMBS_DIR = path.join(__dirname, '../../../uploads/thumbnails');
+    await fs.ensureDir(THUMBS_DIR);
+
+    // Returns /uploads/thumbnails/... URL for a project image, generating if needed
+    const getOrMakeThumbnail = async (filePath, projectId, fileName) => {
+      const baseNoExt = path.basename(fileName, path.extname(fileName));
+      const thumbName = `proj_${projectId}_${baseNoExt.replace(/[^a-zA-Z0-9_-]/g, '_')}.jpg`;
+      const thumbPath = path.join(THUMBS_DIR, thumbName);
+      if (!await fs.pathExists(thumbPath)) {
+        try { await generateThumbnail(filePath, thumbPath); } catch { return null; }
+      }
+      return `/uploads/thumbnails/${thumbName}`;
+    };
+
     let images = [];
     if (await fs.pathExists(imagesFolderPath)) {
       const imageFiles = await fs.readdir(imagesFolderPath);
@@ -755,6 +871,9 @@ const getProjectFiles = async (req, res) => {
           const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
           const projectImageUrl = `/api/projects/${projectId}/file/image/${encodeURIComponent(fileName)}`;
 
+          // Generate thumbnail
+          const regThumbUrl = await getOrMakeThumbnail(filePath, projectId, fileName);
+
           // Insert into database (using correct column names from schema)
           const result = db.prepare(`
             INSERT INTO drive_images (
@@ -782,7 +901,7 @@ const getProjectFiles = async (req, res) => {
             now,
             projectImageUrl,  // file_url (required!)
             projectImageUrl,  // local_path
-            projectImageUrl,  // thumbnail_url
+            regThumbUrl || projectImageUrl,  // thumbnail_url
             `image/${fileName.split('.').pop().toLowerCase()}`,
             subfolder || null,
             null  // drive_path_id = NULL for project images
@@ -814,10 +933,14 @@ const getProjectFiles = async (req, res) => {
 
           if (dbImage) {
             // Use full DB info but override paths to use project copy
+            const thumbUrl = await getOrMakeThumbnail(filePath, id, file);
+            if (thumbUrl && dbImage.thumbnail_url !== thumbUrl) {
+              db.prepare('UPDATE drive_images SET thumbnail_url = ? WHERE id = ?').run(thumbUrl, dbImage.id);
+            }
             return {
               ...dbImage,
               local_path: projectImageUrl,
-              thumbnail_url: projectImageUrl,
+              thumbnail_url: thumbUrl || projectImageUrl,
               url: projectImageUrl,
               type: 'image',
               projects: projectsStmt.all(dbImage.id)  // Add projects list
@@ -834,24 +957,26 @@ const getProjectFiles = async (req, res) => {
             if (imageId) {
               // Successfully registered - fetch the full DB entry
               const newDbImage = db.prepare('SELECT * FROM drive_images WHERE id = ?').get(imageId);
+              const newThumbUrl = await getOrMakeThumbnail(filePath, id, file);
 
               return {
                 ...newDbImage,
                 local_path: projectImageUrl,
-                thumbnail_url: projectImageUrl,
+                thumbnail_url: newThumbUrl || projectImageUrl,
                 url: projectImageUrl,
                 type: 'image',
                 projects: projectsStmt.all(imageId)  // Add projects list
               };
             } else {
               // Fallback if registration failed
+              const fbThumbUrl = await getOrMakeThumbnail(filePath, id, file);
               return {
                 name: file,
                 original_name: file,
                 path: filePath,
                 url: projectImageUrl,
                 local_path: projectImageUrl,
-                thumbnail_url: projectImageUrl,
+                thumbnail_url: fbThumbUrl || projectImageUrl,
                 type: 'image',
                 ...metadata
               };
@@ -1010,6 +1135,7 @@ const writeProjectMetadata = async (project, projectFolderPath) => {
       color: project.color,
       notes: project.notes,
       tags: project.tags ? JSON.parse(project.tags) : [],
+      year: project.year || null,
       updated_at: project.updated_at
     };
 
@@ -1234,13 +1360,24 @@ const acceptPendingProject = async (req, res) => {
             fileSize = stats.size;
           } catch (e) { /* ignore */ }
 
+          // Generate thumbnail
+          const apThumbsDir = path.join(__dirname, '../../../uploads/thumbnails');
+          await fs.ensureDir(apThumbsDir);
+          const apBaseNoExt = path.basename(img.name, path.extname(img.name));
+          const apThumbName = `proj_${projectId}_${apBaseNoExt.replace(/[^a-zA-Z0-9_-]/g, '_')}.jpg`;
+          let apThumbUrl = projectImageUrl;
+          try {
+            await generateThumbnail(localPath, path.join(apThumbsDir, apThumbName));
+            apThumbUrl = `/uploads/thumbnails/${apThumbName}`;
+          } catch {}
+
           const imgResult = db.prepare(`
             INSERT INTO drive_images (
               name, original_name, local_path, thumbnail_url, file_url,
               mime_type, drive_file_id, drive_path_id, file_size, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
           `).run(
-            img.name, img.name, projectImageUrl, projectImageUrl, projectImageUrl,
+            img.name, img.name, projectImageUrl, apThumbUrl, projectImageUrl,
             img.mimeType || 'image/jpeg', img.id, fileSize, now
           );
           imageId = imgResult.lastInsertRowid;
@@ -1327,13 +1464,24 @@ const mergePendingProject = async (req, res) => {
             fileSize = stats.size;
           } catch (e) { /* ignore */ }
 
+          // Generate thumbnail
+          const mpThumbsDir = path.join(__dirname, '../../../uploads/thumbnails');
+          await fs.ensureDir(mpThumbsDir);
+          const mpBaseNoExt = path.basename(img.name, path.extname(img.name));
+          const mpThumbName = `proj_${targetProjectId}_${mpBaseNoExt.replace(/[^a-zA-Z0-9_-]/g, '_')}.jpg`;
+          let mpThumbUrl = projectImageUrl;
+          try {
+            await generateThumbnail(localPath, path.join(mpThumbsDir, mpThumbName));
+            mpThumbUrl = `/uploads/thumbnails/${mpThumbName}`;
+          } catch {}
+
           const imgResult = db.prepare(`
             INSERT INTO drive_images (
               name, original_name, local_path, thumbnail_url, file_url,
               mime_type, drive_file_id, drive_path_id, file_size, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
           `).run(
-            img.name, img.name, projectImageUrl, projectImageUrl, projectImageUrl,
+            img.name, img.name, projectImageUrl, mpThumbUrl, projectImageUrl,
             img.mimeType || 'image/jpeg', img.id, fileSize, now
           );
           imageId = imgResult.lastInsertRowid;
@@ -1463,8 +1611,10 @@ const syncProjectsToDrive = async (req, res) => {
     let uploadedImages = 0;
     let skippedImages = 0;
     const errors = [];
+    const driveStatus = []; // per-project Drive validation report
 
     for (const project of projects) {
+      const statusEntry = { name: project.folder_name, onDrive: false, driveImages: 0, localImages: 0 };
       try {
         // Find or create project folder on Drive
         let projectDriveFolder = driveFolderMap.get(project.folder_name.toLowerCase());
@@ -1473,73 +1623,94 @@ const syncProjectsToDrive = async (req, res) => {
           createdFolders++;
           console.log(`📁 Created Drive folder: ${project.folder_name}`);
         }
+        statusEntry.onDrive = true;
+
+        // Always write/update project.json with current metadata (including year)
+        try {
+          const tags = project.tags
+            ? (typeof project.tags === 'string' ? JSON.parse(project.tags) : project.tags)
+            : [];
+          await upsertJsonFileToDrive(projectDriveFolder.id, 'project.json', {
+            db_id: project.id || null,
+            color: project.color || null,
+            notes: project.notes || null,
+            tags,
+            year: project.year || null,
+            updated_at: project.updated_at || new Date().toISOString(),
+          });
+        } catch (jsonErr) {
+          console.warn(`⚠️ project.json update failed for "${project.folder_name}": ${jsonErr.message}`);
+        }
+
+        // Determine local Bilder path (use local_base_path if available)
+        const bilderPath = project.local_base_path
+          ? path.join(project.local_base_path, 'Bilder')
+          : setting?.project_path
+            ? path.join(setting.project_path, project.folder_name, 'Bilder')
+            : null;
+
+        // Count local images for status report
+        if (bilderPath && await fs.pathExists(bilderPath)) {
+          const localFiles = await fs.readdir(bilderPath);
+          const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif', '.heic', '.heif'];
+          statusEntry.localImages = localFiles.filter(f => imageExtensions.includes(path.extname(f).toLowerCase())).length;
+        }
+
+        // Count images already on Drive
+        const existingDriveFiles = await listAllFilesInFolder(projectDriveFolder.id);
+        const existingDriveFileNames = new Set(existingDriveFiles.map(f => f.name.toLowerCase()));
+        statusEntry.driveImages = existingDriveFiles.filter(f => f.mimeType && f.mimeType.startsWith('image/')).length;
 
         // Sync images if requested
-        if (includePhotos && setting?.project_path) {
-          // Get files already in the project folder on Drive (to avoid duplicates)
-          const existingDriveFiles = await listAllFilesInFolder(projectDriveFolder.id);
-          const existingDriveFileNames = new Set(existingDriveFiles.map(f => f.name.toLowerCase()));
+        if (includePhotos && bilderPath && await fs.pathExists(bilderPath)) {
+          const localFiles = await fs.readdir(bilderPath);
+          const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif', '.heic', '.heif'];
 
-          // Scan the local Bilder/ folder for this project
-          const bilderPath = path.join(setting.project_path, project.folder_name, 'Bilder');
-          if (await fs.pathExists(bilderPath)) {
-            const localFiles = await fs.readdir(bilderPath);
-            const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif', '.heic', '.heif'];
+          for (const fileName of localFiles) {
+            const ext = path.extname(fileName).toLowerCase();
+            if (!imageExtensions.includes(ext)) continue;
 
-            for (const fileName of localFiles) {
-              const ext = path.extname(fileName).toLowerCase();
-              if (!imageExtensions.includes(ext)) continue;
+            try {
+              if (existingDriveFileNames.has(fileName.toLowerCase())) {
+                skippedImages++;
+                continue;
+              }
 
-              try {
-                // Skip if already on Drive in this project folder
-                if (existingDriveFileNames.has(fileName.toLowerCase())) {
-                  skippedImages++;
-                  continue;
-                }
+              const dbImage = db.prepare(`
+                SELECT di.drive_file_id FROM drive_images di
+                JOIN image_project_assignments ipa ON di.id = ipa.image_id
+                WHERE ipa.project_id = ?
+                  AND (di.name = ? OR di.original_name = ?)
+                  AND di.drive_file_id IS NOT NULL
+                LIMIT 1
+              `).get(project.id, fileName, fileName);
 
-                // Check if this image has a drive_file_id in the DB
-                // (meaning it exists somewhere else on Drive and should be MOVED)
-                const dbImage = db.prepare(`
-                  SELECT di.drive_file_id FROM drive_images di
-                  JOIN image_project_assignments ipa ON di.id = ipa.image_id
-                  WHERE ipa.project_id = ?
-                    AND (di.name = ? OR di.original_name = ?)
-                    AND di.drive_file_id IS NOT NULL
-                  LIMIT 1
-                `).get(project.id, fileName, fileName);
-
-                if (dbImage && dbImage.drive_file_id) {
-                  // Image exists on Drive → MOVE it to the project folder
-                  try {
-                    const fileMeta = await getFileMetadata(dbImage.drive_file_id);
-                    if (fileMeta && fileMeta.parents && fileMeta.parents.length > 0) {
-                      if (fileMeta.parents.includes(projectDriveFolder.id)) {
-                        skippedImages++;
-                        continue;
-                      }
-                      await moveFileOnDrive(dbImage.drive_file_id, projectDriveFolder.id, fileMeta.parents[0]);
-                      movedImages++;
-                      console.log(`📦 Moved "${fileName}" → ${project.folder_name}/`);
+              if (dbImage && dbImage.drive_file_id) {
+                try {
+                  const fileMeta = await getFileMetadata(dbImage.drive_file_id);
+                  if (fileMeta && fileMeta.parents && fileMeta.parents.length > 0) {
+                    if (fileMeta.parents.includes(projectDriveFolder.id)) {
+                      skippedImages++;
+                      continue;
                     }
-                  } catch (moveErr) {
-                    // If move fails (e.g. file deleted from Drive), upload instead
-                    console.log(`⚠️ Move failed for "${fileName}", uploading instead...`);
-                    const localFilePath = path.join(bilderPath, fileName);
-                    await uploadFileToDrive(localFilePath, projectDriveFolder.id, fileName);
-                    uploadedImages++;
-                    console.log(`⬆️ Uploaded "${fileName}" → ${project.folder_name}/`);
+                    await moveFileOnDrive(dbImage.drive_file_id, projectDriveFolder.id, fileMeta.parents[0]);
+                    movedImages++;
+                    statusEntry.driveImages++;
                   }
-                } else {
-                  // Image is local only → UPLOAD to Drive
+                } catch (moveErr) {
                   const localFilePath = path.join(bilderPath, fileName);
                   await uploadFileToDrive(localFilePath, projectDriveFolder.id, fileName);
                   uploadedImages++;
-                  console.log(`⬆️ Uploaded "${fileName}" → ${project.folder_name}/`);
+                  statusEntry.driveImages++;
                 }
-              } catch (imgError) {
-                console.error(`Error syncing image ${fileName}:`, imgError.message);
-                errors.push(`${project.folder_name}/${fileName}: ${imgError.message}`);
+              } else {
+                const localFilePath = path.join(bilderPath, fileName);
+                await uploadFileToDrive(localFilePath, projectDriveFolder.id, fileName);
+                uploadedImages++;
+                statusEntry.driveImages++;
               }
+            } catch (imgError) {
+              errors.push(`${project.folder_name}/${fileName}: ${imgError.message}`);
             }
           }
         }
@@ -1547,6 +1718,7 @@ const syncProjectsToDrive = async (req, res) => {
         console.error(`Error syncing project ${project.folder_name}:`, projError.message);
         errors.push(`${project.folder_name}: ${projError.message}`);
       }
+      driveStatus.push(statusEntry);
     }
 
     res.json({
@@ -1556,10 +1728,107 @@ const syncProjectsToDrive = async (req, res) => {
       movedImages,
       uploadedImages,
       skippedImages,
+      driveStatus,
       errors: errors.length > 0 ? errors : undefined,
     });
   } catch (error) {
     console.error('Error syncing projects to Drive:', error);
+    res.status(500).json({ error: 'Sync fehlgeschlagen: ' + error.message });
+  }
+};
+
+/**
+ * Pull project metadata (color, notes, tags) from Drive project.json files and update DB.
+ * Reads NR_Fuchs_Meta/Projekte/<name>/project.json for each known project folder.
+ * Only updates DB if the Drive JSON's updated_at is newer than the DB's updated_at.
+ * POST /api/projects/sync-metadata-from-drive
+ */
+const syncMetadataFromDrive = async (req, res) => {
+  try {
+    if (!await isAuthenticated()) {
+      return res.status(401).json({ error: 'Nicht mit Google angemeldet' });
+    }
+
+    const projekteFolder = await findProjekteFolderOnDrive();
+    if (!projekteFolder) {
+      return res.json({ updated: 0, message: 'Kein Projekte-Ordner auf Drive gefunden' });
+    }
+
+    const { readDriveFileAsJson } = require('../services/googleDriveService');
+
+    // List all project folders on Drive
+    const driveFolders = await listFoldersInFolder(projekteFolder.id);
+    const setting = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
+
+    let updated = 0;
+    const details = [];
+
+    for (const folder of driveFolders) {
+      try {
+        // Find project.json inside this folder
+        const files = await listFilesInFolder(folder.id);
+        const metaFile = files.find(f => f.name === 'project.json');
+        if (!metaFile) continue;
+
+        const meta = await readDriveFileAsJson(metaFile.id);
+        if (!meta) continue;
+
+        // Find matching project in DB by folder_name
+        const project = db.prepare('SELECT * FROM projects WHERE folder_name = ?').get(folder.name);
+        if (!project) continue;
+
+        // Compare updated_at: only update if Drive is newer
+        const driveDate = meta.updated_at ? new Date(meta.updated_at) : null;
+        const dbDate = project.updated_at ? new Date(project.updated_at) : null;
+
+        if (driveDate && dbDate && driveDate <= dbDate) continue;
+
+        // Build update fields from Drive JSON (only update fields present in meta)
+        const updates = [];
+        const params = [];
+
+        if (meta.color !== undefined && meta.color !== project.color) {
+          updates.push('color = ?');
+          params.push(meta.color || null);
+        }
+        if (meta.notes !== undefined && meta.notes !== project.notes) {
+          updates.push('notes = ?');
+          params.push(meta.notes || null);
+        }
+        if (meta.tags !== undefined) {
+          const driveTagsStr = JSON.stringify(Array.isArray(meta.tags) ? meta.tags : []);
+          if (driveTagsStr !== (project.tags || '[]')) {
+            updates.push('tags = ?');
+            params.push(driveTagsStr);
+          }
+        }
+
+        if (updates.length === 0) continue;
+
+        updates.push("updated_at = ?");
+        params.push(meta.updated_at || new Date().toISOString());
+        params.push(project.id);
+
+        db.prepare(`UPDATE projects SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+
+        // Also update local .project.json if path configured
+        if (setting?.project_path) {
+          const projectFolderPath = path.join(setting.project_path, project.folder_name);
+          const updatedProject = db.prepare('SELECT * FROM projects WHERE id = ?').get(project.id);
+          await writeProjectMetadata(updatedProject, projectFolderPath).catch(() => {});
+        }
+
+        updated++;
+        details.push(folder.name);
+      } catch (e) {
+        console.warn(`[Projects] syncMetadataFromDrive: Fehler bei "${folder.name}":`, e.message);
+      }
+    }
+
+    console.log(`[Projects] syncMetadataFromDrive: ${updated} Projekte aktualisiert`);
+    res.json({ updated, details, message: `${updated} Projekt(e) von Drive aktualisiert` });
+  } catch (error) {
+    console.error('Error syncing metadata from Drive:', error);
     res.status(500).json({ error: 'Sync fehlgeschlagen: ' + error.message });
   }
 };
@@ -1585,4 +1854,8 @@ module.exports = {
   deletePendingProject,
   // Google Drive sync
   syncProjectsToDrive,
+  syncMetadataFromDrive,
+  pushProjectJsonToDrive,
+  // Year detection
+  setYearMode,
 };

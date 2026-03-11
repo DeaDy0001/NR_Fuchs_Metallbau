@@ -21,6 +21,13 @@
   font-size: 14px;
 }
 
+.inbox-banner-cta {
+  opacity: 0.85;
+  font-weight: 500;
+  font-size: 13px;
+  margin-left: 4px;
+}
+
 /* ========== Modal Overlay ========== */
 .pending-modal-overlay {
   position: fixed;
@@ -169,6 +176,15 @@
   font-size: 12px;
   color: #707070;
   margin-top: 2px;
+}
+
+.pending-project-uploader {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: #a78bfa;
+  margin-top: 1px;
 }
 
 .pending-selection-count {
@@ -1133,6 +1149,10 @@
   font-size: 12px;
   color: var(--text-secondary);
   margin-top: 2px;
+}
+
+.project-change-uploader {
+  color: #a78bfa;
 }
 
 .project-change-existing {

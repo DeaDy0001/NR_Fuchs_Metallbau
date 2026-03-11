@@ -4,8 +4,30 @@ import Layout from './components/Layout';
 import SettingsModal from './components/SettingsModal';
 import DriveImages from './pages/DriveImages';
 import ProjectsList from './pages/ProjectsList';
+import InboxPage from './pages/InboxPage';
+import MitarbeiterPage from './pages/MitarbeiterPage';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import LoginPage from './pages/LoginPage';
 
-function App() {
+function AppInner() {
+  const { loading, setupRequired, authenticated } = useAuth();
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary, #0f1117)' }}>
+        <div style={{ color: '#94a3b8', fontSize: '0.9rem' }}>Lade...</div>
+      </div>
+    );
+  }
+
+  if (setupRequired || !authenticated) {
+    return <LoginPage isSetup={setupRequired} />;
+  }
+
+  return <MainApp />;
+}
+
+function MainApp() {
   const [settings, setSettings] = useState({
     logo_path: null,
     theme: 'dark',
@@ -147,11 +169,17 @@ function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/images" replace />} />
 
+          {/* Inbox */}
+          <Route path="/inbox" element={<InboxPage />} />
+
           {/* Bilder (früher Drive) */}
           <Route path="/images" element={<DriveImages />} />
 
           {/* Projekte */}
           <Route path="/projects" element={<ProjectsList />} />
+
+          {/* Mitarbeiter */}
+          <Route path="/mitarbeiter" element={<MitarbeiterPage />} />
 
           {/* Redirect old routes */}
           <Route path="/drive/images" element={<Navigate to="/images" replace />} />
@@ -171,6 +199,14 @@ function App() {
         onCheckForUpdates={checkForUpdates}
       />
     </Router>
+  );
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppInner />
+    </AuthProvider>
   );
 }
 

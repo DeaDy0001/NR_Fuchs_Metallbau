@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Image,
   ActivityIndicator, FlatList, Dimensions, Modal, ScrollView, TextInput, Animated,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useDialog } from '../components/CustomDialog';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -138,23 +139,6 @@ export default function CameraScreen({ navigation, route }) {
             </TouchableOpacity>
           </View>
 
-          {/* Search */}
-          <View style={styles.pickerSearchContainer}>
-            <Ionicons name="search" size={16} color={colors.textTertiary} />
-            <TextInput
-              style={styles.pickerSearchInput}
-              placeholder="Projekt suchen..."
-              placeholderTextColor={colors.textTertiary}
-              value={projectSearchText}
-              onChangeText={setProjectSearchText}
-            />
-            {projectSearchText ? (
-              <TouchableOpacity onPress={() => setProjectSearchText('')}>
-                <Ionicons name="close-circle" size={18} color={colors.textTertiary} />
-              </TouchableOpacity>
-            ) : null}
-          </View>
-
           {/* Create new project */}
           <View style={styles.newProjectRow}>
             <TextInput
@@ -177,6 +161,23 @@ export default function CameraScreen({ navigation, route }) {
                 ) : (
                   <Ionicons name="add" size={22} color="white" />
                 )}
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          {/* Search */}
+          <View style={styles.pickerSearchContainer}>
+            <Ionicons name="search" size={16} color={colors.textTertiary} />
+            <TextInput
+              style={styles.pickerSearchInput}
+              placeholder="Projekt suchen..."
+              placeholderTextColor={colors.textTertiary}
+              value={projectSearchText}
+              onChangeText={setProjectSearchText}
+            />
+            {projectSearchText ? (
+              <TouchableOpacity onPress={() => setProjectSearchText('')}>
+                <Ionicons name="close-circle" size={18} color={colors.textTertiary} />
               </TouchableOpacity>
             ) : null}
           </View>
@@ -517,42 +518,66 @@ export default function CameraScreen({ navigation, route }) {
           )}
         </View>
 
-        {/* Metadata editing modal */}
-        {editingField && (
+        {/* Metadata editing modal – Notizen: Vollbild, Titel: Bottom-Sheet */}
+        {editingField === 'notes' && (
+          <Modal
+            animationType="slide"
+            onShow={() => { setTimeout(() => metadataInputRef.current?.focus(), 100); }}
+          >
+            <View style={styles.notesFullScreen}>
+              <View style={styles.notesFullScreenHeader}>
+                <Text style={styles.notesFullScreenTitle}>Notizen</Text>
+                <TouchableOpacity onPress={saveEditField} style={styles.notesFullScreenSave}>
+                  <Ionicons name="checkmark-circle" size={28} color={colors.accent} />
+                </TouchableOpacity>
+              </View>
+              <TextInput
+                ref={metadataInputRef}
+                style={styles.notesFullScreenInput}
+                value={editFieldValue}
+                onChangeText={setEditFieldValue}
+                placeholder="Notizen eingeben..."
+                placeholderTextColor={colors.textTertiary}
+                autoFocus
+                multiline
+                textAlignVertical="top"
+              />
+            </View>
+          </Modal>
+        )}
+
+        {editingField === 'title' && (
           <Modal
             transparent
             animationType="slide"
-            onShow={() => {
-              setTimeout(() => metadataInputRef.current?.focus(), 100);
-            }}
+            onShow={() => { setTimeout(() => metadataInputRef.current?.focus(), 100); }}
           >
-            <TouchableOpacity style={styles.metadataModalOverlay} activeOpacity={1} onPress={saveEditField}>
-              <View style={styles.metadataModalContent} onStartShouldSetResponder={() => true}>
-                <View style={styles.metadataModalHeader}>
-                  <Text style={styles.metadataModalTitle}>
-                    {editingField === 'title' ? 'Bild-Titel' : 'Notizen'}
-                  </Text>
-                  <TouchableOpacity onPress={saveEditField}>
-                    <Ionicons name="checkmark-circle" size={28} color={colors.accent} />
-                  </TouchableOpacity>
+            <KeyboardAvoidingView
+              style={{ flex: 1 }}
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            >
+              <TouchableOpacity style={styles.metadataModalOverlay} activeOpacity={1} onPress={saveEditField}>
+                <View style={styles.metadataModalContent} onStartShouldSetResponder={() => true}>
+                  <View style={styles.metadataModalHeader}>
+                    <Text style={styles.metadataModalTitle}>Bild-Titel</Text>
+                    <TouchableOpacity onPress={saveEditField}>
+                      <Ionicons name="checkmark-circle" size={28} color={colors.accent} />
+                    </TouchableOpacity>
+                  </View>
+                  <TextInput
+                    ref={metadataInputRef}
+                    style={styles.metadataModalInput}
+                    value={editFieldValue}
+                    onChangeText={setEditFieldValue}
+                    placeholder="Bildname eingeben..."
+                    placeholderTextColor={colors.textTertiary}
+                    autoFocus
+                    returnKeyType="done"
+                    onSubmitEditing={saveEditField}
+                  />
                 </View>
-                <TextInput
-                  ref={metadataInputRef}
-                  style={[
-                    styles.metadataModalInput,
-                    editingField === 'notes' && { height: 120, textAlignVertical: 'top' }
-                  ]}
-                  value={editFieldValue}
-                  onChangeText={setEditFieldValue}
-                  placeholder={editingField === 'title' ? 'Bildname eingeben...' : 'Notizen eingeben...'}
-                  placeholderTextColor={colors.textTertiary}
-                  autoFocus
-                  multiline={editingField === 'notes'}
-                  returnKeyType={editingField === 'title' ? 'done' : 'default'}
-                  onSubmitEditing={editingField === 'title' ? saveEditField : undefined}
-                />
-              </View>
-            </TouchableOpacity>
+              </TouchableOpacity>
+            </KeyboardAvoidingView>
           </Modal>
         )}
 
@@ -848,7 +873,23 @@ const styles = StyleSheet.create({
   },
   metadataGpsText: { fontSize: 12, color: '#22c55e', fontWeight: '600' },
 
-  // Metadata editing modal
+  // Notizen Vollbild-Editor
+  notesFullScreen: {
+    flex: 1, backgroundColor: colors.bgPrimary, paddingTop: Platform.OS === 'android' ? 40 : 60,
+  },
+  notesFullScreenHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 20, paddingVertical: 14,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  notesFullScreenTitle: { fontSize: 18, fontWeight: '700', color: colors.textPrimary },
+  notesFullScreenSave: { padding: 4 },
+  notesFullScreenInput: {
+    flex: 1, padding: 20, fontSize: 16, color: colors.textPrimary,
+    textAlignVertical: 'top', backgroundColor: colors.bgPrimary,
+  },
+
+  // Metadata editing modal (Titel)
   metadataModalOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end',
   },

@@ -575,55 +575,58 @@ function DriveImages() {
   const handleQuickAssignProject = async (imageId) => {
     if (!selectedProjectId) return;
 
-    // Check if image already has this project - if yes, remove it (toggle behavior)
     const image = images.find(img => img.id === imageId);
     const alreadyHasProject = image?.projects?.some(p => p.id === selectedProjectId);
+    const project = projects.find(p => p.id === selectedProjectId);
 
     if (alreadyHasProject) {
-      // Remove project
+      // Optimistic remove
+      setImages(prev => prev.map(img =>
+        img.id === imageId
+          ? { ...img, projects: (img.projects || []).filter(p => p.id !== selectedProjectId) }
+          : img
+      ));
       try {
-        const response = await fetch('/api/drive/images/unassign-from-project', {
+        await fetch('/api/drive/images/unassign-from-project', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ imageId, projectId: selectedProjectId })
         });
-        if (response.ok) {
-          // Update local state
-          setImages(prev => prev.map(img => {
-            if (img.id === imageId) {
-              return { ...img, projects: (img.projects || []).filter(p => p.id !== selectedProjectId) };
-            }
-            return img;
-          }));
-          loadProjects(); // Refresh counts
-        }
+        loadProjects();
       } catch (error) {
+        // Revert on failure
+        setImages(prev => prev.map(img =>
+          img.id === imageId && project
+            ? { ...img, projects: [...(img.projects || []), { id: project.id, folder_name: project.folder_name, color: project.color }] }
+            : img
+        ));
         console.error('Error unassigning project:', error);
       }
       return;
     }
 
-    // Assign project
+    // Optimistic add
+    if (project) {
+      setImages(prev => prev.map(img =>
+        img.id === imageId
+          ? { ...img, projects: [...(img.projects || []), { id: project.id, folder_name: project.folder_name, color: project.color }] }
+          : img
+      ));
+    }
     try {
-      const response = await fetch('/api/drive/images/assign-to-project', {
+      await fetch('/api/drive/images/assign-to-project', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageId, projectId: selectedProjectId })
       });
-      if (response.ok) {
-        // Update local image state immediately
-        setImages(prev => prev.map(img => {
-          if (img.id === imageId) {
-            const project = projects.find(p => p.id === selectedProjectId);
-            if (project) {
-              return { ...img, projects: [...(img.projects || []), { id: project.id, folder_name: project.folder_name, color: project.color }] };
-            }
-          }
-          return img;
-        }));
-        loadProjects(); // Refresh to update any counts if needed
-      }
+      loadProjects();
     } catch (error) {
+      // Revert on failure
+      setImages(prev => prev.map(img =>
+        img.id === imageId
+          ? { ...img, projects: (img.projects || []).filter(p => p.id !== selectedProjectId) }
+          : img
+      ));
       console.error('Error assigning project:', error);
     }
   };

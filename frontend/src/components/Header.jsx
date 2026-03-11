@@ -1,7 +1,12 @@
 import { Menu, Settings, Download } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 import './Header.css';
 
 function Header({ logoPath, sidebarCollapsed, onToggleSidebar, updateInfo, onOpenSettings, onOpenUpdate }) {
+  const { user } = useAuth();
+
+  const canOpenSettings = user?.permissions?.access_settings;
+
   return (
     <header className="header">
       <div className="header-left">
@@ -37,9 +42,12 @@ function Header({ logoPath, sidebarCollapsed, onToggleSidebar, updateInfo, onOpe
             <span>v{updateInfo.latestVersion}</span>
           </button>
         )}
-        <button className="icon-button" onClick={onOpenSettings} title="Einstellungen">
-          <Settings size={20} />
-        </button>
+        {canOpenSettings && (
+          <button className="icon-button" onClick={onOpenSettings} title="Einstellungen">
+            <Settings size={20} />
+          </button>
+        )}
+
       </div>
     </header>
   );

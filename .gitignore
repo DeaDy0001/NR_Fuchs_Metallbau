@@ -3,6 +3,8 @@ node_modules/
 **/node_modules/
 package-lock.json
 **/package-lock.json
+# Lockfile fuer mobile-app tracken (EAS Build braucht reproduzierbare Installs)
+!mobile-app/package-lock.json
 
 # Build outputs
 frontend/dist/
@@ -53,4 +55,3 @@ uploads/
 *.tmp
 *.temp
 .cache/
-mobile-app/app.json

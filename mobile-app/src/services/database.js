@@ -63,6 +63,7 @@ const initTables = async () => {
       id TEXT PRIMARY KEY,
       folder_name TEXT NOT NULL,
       folder_id TEXT,
+      db_id INTEGER,
       color TEXT,
       notes TEXT,
       tags TEXT DEFAULT '[]',
@@ -150,6 +151,8 @@ const initTables = async () => {
     { table: 'cached_projects', column: 'image_count', sql: 'ALTER TABLE cached_projects ADD COLUMN image_count INTEGER DEFAULT 0' },
     { table: 'cached_projects', column: 'updated_at', sql: 'ALTER TABLE cached_projects ADD COLUMN updated_at TEXT' },
     { table: 'cached_projects', column: 'synced_at', sql: 'ALTER TABLE cached_projects ADD COLUMN synced_at TEXT' },
+    { table: 'cached_projects', column: 'year', sql: 'ALTER TABLE cached_projects ADD COLUMN year INTEGER' },
+    { table: 'cached_projects', column: 'db_id', sql: 'ALTER TABLE cached_projects ADD COLUMN db_id INTEGER' },
     // upload_queue migrations
     { table: 'upload_queue', column: 'project_folder_id', sql: 'ALTER TABLE upload_queue ADD COLUMN project_folder_id TEXT' },
     { table: 'upload_queue', column: 'gps_data', sql: 'ALTER TABLE upload_queue ADD COLUMN gps_data TEXT' },
@@ -293,8 +296,8 @@ export const cacheProjects = async (projects) => {
   await db.runAsync('DELETE FROM cached_projects');
   for (const p of projects) {
     await db.runAsync(
-      'INSERT OR REPLACE INTO cached_projects (id, folder_name, folder_id, color, notes, tags, image_count, is_own, is_starred, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [String(p.id), String(p.folder_name || ''), String(p.folder_id || ''), String(p.color || ''), String(p.notes || ''), String(p.tags || '[]'), Number(p.image_count) || 0, p.is_own ? 1 : 0, p.is_starred ? 1 : 0, String(p.updated_at || '')]
+      'INSERT OR REPLACE INTO cached_projects (id, folder_name, folder_id, db_id, color, notes, tags, image_count, is_own, is_starred, year, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [String(p.id), String(p.folder_name || ''), String(p.folder_id || ''), p.db_id ? Number(p.db_id) : null, String(p.color || ''), String(p.notes || ''), String(p.tags || '[]'), Number(p.image_count) || 0, p.is_own ? 1 : 0, p.is_starred ? 1 : 0, p.year ? Number(p.year) : null, String(p.updated_at || '')]
     );
   }
 };
@@ -303,8 +306,8 @@ export const cacheProjects = async (projects) => {
 export const cacheProject = async (p) => {
   const db = await getDb();
   await db.runAsync(
-    'INSERT OR REPLACE INTO cached_projects (id, folder_name, folder_id, color, notes, tags, image_count, is_own, is_starred, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [String(p.id), String(p.folder_name || ''), String(p.folder_id || ''), String(p.color || ''), String(p.notes || ''), String(p.tags || '[]'), Number(p.image_count) || 0, p.is_own ? 1 : 0, p.is_starred ? 1 : 0, String(p.updated_at || '')]
+    'INSERT OR REPLACE INTO cached_projects (id, folder_name, folder_id, db_id, color, notes, tags, image_count, is_own, is_starred, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [String(p.id), String(p.folder_name || ''), String(p.folder_id || ''), p.db_id ? Number(p.db_id) : null, String(p.color || ''), String(p.notes || ''), String(p.tags || '[]'), Number(p.image_count) || 0, p.is_own ? 1 : 0, p.is_starred ? 1 : 0, String(p.updated_at || '')]
   );
 };
 
@@ -320,6 +323,11 @@ export const getCachedProjects = async () => {
   return await db.getAllAsync(
     'SELECT * FROM cached_projects ORDER BY is_own DESC, is_starred DESC, updated_at DESC'
   );
+};
+
+export const getCachedProjectByFolderId = async (folderId) => {
+  const db = await getDb();
+  return await db.getFirstAsync('SELECT * FROM cached_projects WHERE folder_id = ? OR id = ?', [folderId, folderId]);
 };
 
 export const cacheTags = async (tags) => {

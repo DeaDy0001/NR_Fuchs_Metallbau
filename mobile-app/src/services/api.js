@@ -1,17 +1,28 @@
 /**
  * API Service - Google Drive basiert
  *
- * Projekte = Ordner auf Google Drive unter NR_Fuchs_Meta/Projekte/
- * Bilder mit Projekt → direkt in den Projektordner
- * Bilder ohne Projekt → in NR_Fuchs_Meta/inbox/
+ * Postfach-Architektur (neue JSON-basierte Inbox):
+ *   Bilder → immer in NR_Fuchs_Meta/inbox/images/ (eindeutiger Dateiname)
+ *   Metadaten → in JSON-Dateien im NR_Fuchs_Meta/inbox/ Ordner:
+ *     image_requests.json         – Bild-Uploads (gruppiert nach Projekt)
+ *     projekt_requests.json       – Neue Projekterstellungen
+ *     image_change_requests.json  – Änderungen an Bild-Metadaten
+ *     projekt_change_requests.json – Notizen zu bestehenden Projekten
+ *     delete_requests.json        – Löschanfragen (unverändert)
  *
  * Drive-Ordnerstruktur:
  *   Root Folder (per QR-Code verknüpft)
  *   ├── NR_Fuchs_Meta/
  *   │   ├── Projekte/
- *   │   │   ├── ProjektName1/   (Bilder)
- *   │   │   └── ProjektName2/   (Bilder)
- *   │   └── inbox/              (Bilder ohne Projekt)
+ *   │   │   ├── ProjektName1/   (Bilder nach Bestätigung)
+ *   │   │   └── ProjektName2/
+ *   │   └── inbox/
+ *   │       ├── images/          (alle hochgeladenen Bilder, eindeutige Namen)
+ *   │       ├── image_requests.json
+ *   │       ├── projekt_requests.json
+ *   │       ├── image_change_requests.json
+ *   │       ├── projekt_change_requests.json
+ *   │       └── delete_requests.json
  */
 
 import { getActiveDriveConnection, getSetting } from './database';
@@ -30,6 +41,8 @@ import {
   findOrCreateFolder,
   findFolder,
 } from './driveService';
+import * as FileSystem from 'expo-file-system/legacy';
+import { getAccessToken } from './googleAuth';
 
 // ============================================================
 // Projects - folder-based
@@ -88,12 +101,14 @@ export const fetchProjects = async (onProject = null) => {
       id: folder.id,
       folder_name: folder.name,
       folder_id: folder.id,
+      db_id: meta.db_id || null,
       color: meta.color || null,
       notes: meta.notes || null,
       tags: JSON.stringify(meta.tags || []),
       image_count: imageCount,
       is_own: 1,
       is_starred: meta.is_starred ? 1 : 0,
+      year: meta.year || null,
       updated_at: folder.modifiedTime,
     };
 
@@ -172,33 +187,64 @@ const getInboxFolderId = async () => {
 };
 
 /**
- * Create a new project (= create folder on Drive under inbox/)
- * The project stays in the inbox until confirmed by the desktop software,
- * which moves it to Projekte/ and creates the proper folder structure.
+ * Create a new project – writes entry to projekt_requests.json in inbox/.
+ * The desktop software reads this and shows a pending project creation request.
+ * Returns { id: null, folder_id: null, folder_name: name } since there is no
+ * Drive folder yet – the desktop creates it on confirmation.
  */
 export const createProject = async (name) => {
   const inboxFolderId = await getInboxFolderId();
+  const deviceId = await getSetting('heartbeat_device_id', '');
+  const deviceName = await getSetting('deviceName', 'Handy');
+  const userName = await getSetting('userName', '');
 
-  // Check if folder already exists in inbox
-  const existing = await findFolder(inboxFolderId, name);
-  if (existing) {
-    return {
-      success: true,
-      id: existing.id,
-      folder_name: name,
-      folder_id: existing.id,
-    };
-  }
+  const entry = {
+    id: `proj_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+    device_id: deviceId,
+    device_name: deviceName,
+    user_name: userName,
+    project_name: name,
+    notes: '',
+    created_at: new Date().toISOString(),
+  };
 
-  // Create project folder under inbox/
-  const folder = await findOrCreateFolder(inboxFolderId, name);
+  await _appendToInboxJson(inboxFolderId, 'projekt_requests.json', entry);
 
   return {
     success: true,
-    id: folder.id,
+    id: null,
     folder_name: name,
-    folder_id: folder.id,
+    folder_id: null,
   };
+};
+
+/**
+ * Get or create the inbox/images/ subfolder (for image uploads)
+ */
+const _getInboxImagesFolderId = async (inboxFolderId) => {
+  const folder = await findOrCreateFolder(inboxFolderId, 'images');
+  return folder.id;
+};
+
+/**
+ * Append an entry to a JSON array file in inbox/.
+ * Creates the file if it doesn't exist.
+ */
+const _appendToInboxJson = async (inboxFolderId, fileName, entry) => {
+  let existing = [];
+  try {
+    const data = await readJsonFileByName(inboxFolderId, fileName);
+    if (Array.isArray(data)) existing = data;
+  } catch {}
+
+  const merged = [...existing, entry];
+
+  const files = await listFiles(inboxFolderId, { name: fileName, fields: 'files(id,name)' });
+  if (files.length > 0) {
+    await updateJsonFile(files[0].id, merged);
+  } else {
+    await createJsonFile(inboxFolderId, fileName, merged);
+  }
 };
 
 /**
@@ -236,48 +282,30 @@ export const deletePendingProject = async (folderId) => {
 // ============================================================
 
 /**
- * Upload an image to Google Drive
- * - With project: directly into the project folder
- * - Without project: into inbox folder
+ * Upload an image to Google Drive → always into inbox/images/ with a unique file name.
+ * The caller (uploadQueue) later calls flushImageRequests() to write the JSON metadata.
+ *
+ * Returns { success, fileId, uniqueFileName }
  */
-export const uploadImage = async (fileUri, fileName, mimeType, projectId = null, projectName = null, gpsData = null, customTitle = null, notes = null) => {
+export const uploadImage = async (fileUri, fileName, mimeType, projectFolderId = null, projectName = null, gpsData = null, customTitle = null, notes = null) => {
   const connection = await getActiveDriveConnection();
   if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
 
-  let targetFolderId;
+  const inboxFolderId = await getInboxFolderId();
+  const imagesFolderId = await _getInboxImagesFolderId(inboxFolderId);
 
-  if (projectId) {
-    // projectId is the Drive folder ID - use it directly (inbox or Projekte)
-    targetFolderId = projectId;
-  } else if (projectName) {
-    // Fallback: find/create folder in inbox by name
-    const inboxFolderId = await getInboxFolderId();
-    const projectFolder = await findOrCreateFolder(inboxFolderId, projectName);
-    targetFolderId = projectFolder.id;
-  } else {
-    // No project - upload to inbox/{deviceId}/ subfolder
-    let inboxFolderId;
-    if (!connection.inbox_folder_id) {
-      const inboxFolder = await findOrCreateFolder(connection.meta_folder_id, 'inbox');
-      inboxFolderId = inboxFolder.id;
-    } else {
-      inboxFolderId = connection.inbox_folder_id;
-    }
+  // Build unique file name to avoid collisions across devices
+  const deviceId = await getSetting('heartbeat_device_id', '');
+  const devicePrefix = deviceId ? deviceId.substring(0, 8) : 'unknown';
+  const ext = fileName.includes('.') ? fileName.substring(fileName.lastIndexOf('.')) : '';
+  const baseName = fileName.includes('.') ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
+  const uniqueFileName = `${Date.now()}_${devicePrefix}_${baseName}${ext}`;
 
-    // Use fixed device ID for subfolder (stays constant, unlike userName which can change)
-    const deviceId = await getSetting('heartbeat_device_id', '');
-    if (deviceId) {
-      const deviceFolder = await findOrCreateFolder(inboxFolderId, deviceId);
-      targetFolderId = deviceFolder.id;
-    } else {
-      targetFolderId = inboxFolderId;
-    }
-  }
-
-  // Build metadata description (GPS, title, notes) to store on Drive
+  // Build FUCHS_META description (GPS, title, notes) on the Drive file itself
   let description = null;
   const parsedGps = gpsData ? (typeof gpsData === 'string' ? JSON.parse(gpsData) : gpsData) : null;
-  if (parsedGps || customTitle || notes) {
+  const userName = await getSetting('userName', '');
+  if (parsedGps || customTitle || notes || userName) {
     const meta = {};
     if (parsedGps) {
       meta.gps = {
@@ -288,19 +316,139 @@ export const uploadImage = async (fileUri, fileName, mimeType, projectId = null,
     }
     if (customTitle) meta.title = customTitle;
     if (notes) meta.notes = notes;
+    if (userName) meta.uploaded_by = userName;
     description = `[FUCHS_META]${JSON.stringify(meta)}`;
   }
 
-  // Upload the actual image file
   const uploadedFile = await uploadFile(
-    targetFolderId,
-    fileName,
+    imagesFolderId,
+    uniqueFileName,
     fileUri,
     mimeType || 'image/jpeg',
     description
   );
 
-  return { success: true, fileId: uploadedFile.id };
+  return { success: true, fileId: uploadedFile.id, uniqueFileName };
+};
+
+/**
+ * After a batch of uploads, write/update image_requests.json with grouped entries.
+ * uploadedItems: array of { item (queue DB row), fileId, uniqueFileName }
+ */
+export const flushImageRequests = async (uploadedItems) => {
+  if (!uploadedItems || uploadedItems.length === 0) return;
+
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) return;
+
+  const inboxFolderId = await getInboxFolderId();
+  const deviceId = await getSetting('heartbeat_device_id', '');
+  const deviceName = await getSetting('deviceName', 'Handy');
+  const userName = await getSetting('userName', '');
+
+  // Group by project (project_folder_id + project_name as key)
+  const groups = new Map();
+  for (const { item, fileId, uniqueFileName } of uploadedItems) {
+    const key = `${item.project_folder_id || 'null'}|${item.project_name || 'null'}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        project_folder_id: item.project_folder_id || null,
+        project_name: item.project_name || null,
+        images: [],
+      });
+    }
+    groups.get(key).images.push({
+      drive_file_id: fileId,
+      file_name: uniqueFileName,
+      mime_type: item.mime_type || 'image/jpeg',
+      custom_title: item.custom_title || null,
+      notes: item.notes || null,
+    });
+  }
+
+  // Read existing image_requests.json
+  let existing = [];
+  try {
+    const data = await readJsonFileByName(inboxFolderId, 'image_requests.json');
+    if (Array.isArray(data)) existing = data;
+  } catch {}
+
+  // Add one entry per project group
+  const now = new Date().toISOString();
+  for (const group of groups.values()) {
+    existing.push({
+      id: `img_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+      device_id: deviceId,
+      device_name: deviceName,
+      user_name: userName,
+      project_name: group.project_name,
+      project_folder_id: group.project_folder_id,
+      images: group.images,
+      created_at: now,
+    });
+  }
+
+  // Write back
+  const files = await listFiles(inboxFolderId, { name: 'image_requests.json', fields: 'files(id,name)' });
+  if (files.length > 0) {
+    await updateJsonFile(files[0].id, existing);
+  } else {
+    await createJsonFile(inboxFolderId, 'image_requests.json', existing);
+  }
+};
+
+/**
+ * Report project notes change to desktop via projekt_change_requests.json
+ */
+export const reportProjectNotes = async (projectId, projectFolderId, projectName, notes) => {
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) return;
+
+  const inboxFolderId = await getInboxFolderId();
+  const deviceId = await getSetting('heartbeat_device_id', '');
+  const deviceName = await getSetting('deviceName', 'Handy');
+  const userName = await getSetting('userName', '');
+
+  const entry = {
+    id: `proj_chg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+    device_id: deviceId,
+    device_name: deviceName,
+    user_name: userName,
+    project_id: projectId || null,
+    project_name: projectName,
+    project_folder_id: projectFolderId || null,
+    notes,
+    created_at: new Date().toISOString(),
+  };
+
+  await _appendToInboxJson(inboxFolderId, 'projekt_change_requests.json', entry);
+};
+
+/**
+ * Report image metadata change to desktop via image_change_requests.json.
+ * Used when user edits title/notes of an already-uploaded image.
+ */
+export const reportImageChanges = async (driveFileId, fileName, changes) => {
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) return;
+
+  const inboxFolderId = await getInboxFolderId();
+  const deviceId = await getSetting('heartbeat_device_id', '');
+  const deviceName = await getSetting('deviceName', 'Handy');
+  const userName = await getSetting('userName', '');
+
+  const entry = {
+    id: `img_chg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+    device_id: deviceId,
+    device_name: deviceName,
+    user_name: userName,
+    drive_file_id: driveFileId || null,
+    file_name: fileName,
+    changes,
+    created_at: new Date().toISOString(),
+  };
+
+  await _appendToInboxJson(inboxFolderId, 'image_change_requests.json', entry);
 };
 
 // ============================================================
@@ -392,6 +540,80 @@ export const requestDeleteFromSoftware = async (photos) => {
  */
 export const getImageUrl = async (driveFileId) => {
   return getImageSource(driveFileId);
+};
+
+// ============================================================
+// App Update (via Google Drive)
+// ============================================================
+
+const DRIVE_API = 'https://www.googleapis.com/drive/v3';
+
+/**
+ * Check if a newer version of the app is available on Google Drive.
+ * Looks for:  meta_folder_id / src / app update / version.json
+ *             meta_folder_id / src / app update / app.apk
+ *
+ * Returns { version, apkFileId } or null if no update found.
+ */
+export const checkAppUpdate = async () => {
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) return null;
+
+  try {
+    const srcFolder = await findFolder(connection.meta_folder_id, 'src');
+    if (!srcFolder) return null;
+
+    const updateFolder = await findFolder(srcFolder.id, 'app update');
+    if (!updateFolder) return null;
+
+    const files = await listFiles(updateFolder.id, { fields: 'files(id,name)' });
+    const versionFile = files.find(f => f.name === 'version.json');
+    const apkFile    = files.find(f => f.name === 'app.apk');
+
+    if (!versionFile || !apkFile) return null;
+
+    const versionData = await readJsonFile(versionFile.id);
+    return {
+      version:   versionData?.version || '0.0.0',
+      apkFileId: apkFile.id,
+    };
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Download the update APK from Google Drive to the local cache.
+ * @param {string} apkFileId   - Drive file ID of app.apk
+ * @param {function} onProgress - called with (percent 0-100)
+ * @returns {string} local file URI of the downloaded APK
+ */
+export const downloadAppUpdateApk = async (apkFileId, onProgress) => {
+  const destPath = FileSystem.cacheDirectory + 'fuchs-update.apk';
+
+  // Remove old cached APK
+  try {
+    const info = await FileSystem.getInfoAsync(destPath);
+    if (info.exists) await FileSystem.deleteAsync(destPath, { idempotent: true });
+  } catch {}
+
+  const token = await getAccessToken();
+  if (!token) throw new Error('Nicht mit Google angemeldet');
+
+  const dl = FileSystem.createDownloadResumable(
+    `${DRIVE_API}/files/${apkFileId}?alt=media`,
+    destPath,
+    { headers: { Authorization: `Bearer ${token}` } },
+    (progress) => {
+      if (progress.totalBytesExpectedToWrite > 0 && onProgress) {
+        onProgress(Math.round(progress.totalBytesWritten / progress.totalBytesExpectedToWrite * 100));
+      }
+    }
+  );
+
+  const result = await dl.downloadAsync();
+  if (!result?.uri) throw new Error('Download fehlgeschlagen');
+  return result.uri;
 };
 
 /**

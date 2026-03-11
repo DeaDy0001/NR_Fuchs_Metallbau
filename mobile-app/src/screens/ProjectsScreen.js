@@ -38,14 +38,18 @@ export default function ProjectsScreen({ navigation }) {
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [filterStarred, setFilterStarred] = useState(false);
   const [filterHasImages, setFilterHasImages] = useState(false);
-  const initialSyncDone = useRef(false);
+  const [selectedYear, setSelectedYear] = useState(null);
+  const lastSyncTime = useRef(0);
+  const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
   useFocusEffect(
     useCallback(() => {
+      // Always load instantly from local cache (no network call)
       loadData();
-      // Auto-sync project list on first visit
-      if (!initialSyncDone.current) {
-        initialSyncDone.current = true;
+      // Auto-sync from Drive only if more than 5 min have passed since last sync
+      const now = Date.now();
+      if (now - lastSyncTime.current > SYNC_INTERVAL_MS) {
+        lastSyncTime.current = now;
         handleRefresh();
       }
     }, [])
@@ -175,6 +179,9 @@ export default function ProjectsScreen({ navigation }) {
     // Has images filter
     if (filterHasImages && (!p.image_count || p.image_count === 0)) return false;
 
+    // Year filter
+    if (selectedYear !== null && p.year !== selectedYear) return false;
+
     return true;
   });
 
@@ -245,6 +252,11 @@ export default function ProjectsScreen({ navigation }) {
         <View style={styles.projectContent}>
           <View style={styles.projectNameRow}>
             <Text style={styles.projectName} numberOfLines={1}>{item.folder_name}</Text>
+            {item.year ? (
+              <View style={styles.yearBadge}>
+                <Text style={styles.yearBadgeText}>{item.year}</Text>
+              </View>
+            ) : null}
             {item.is_starred ? (
               <Ionicons name="star" size={14} color={colors.warning} />
             ) : null}
@@ -276,8 +288,13 @@ export default function ProjectsScreen({ navigation }) {
     );
   };
 
-  const activeFilters = (filterStarred ? 1 : 0) + (filterHasImages ? 1 : 0);
+  const activeFilters = (filterStarred ? 1 : 0) + (filterHasImages ? 1 : 0) + (selectedYear !== null ? 1 : 0);
   const currentSort = SORT_OPTIONS.find(s => s.key === sortBy);
+
+  // Collect distinct years from all (unfiltered) projects, sorted descending
+  const availableYears = [...new Set(
+    projects.map(p => p.year).filter(y => y != null)
+  )].sort((a, b) => b - a);
 
   return (
     <View style={styles.container}>
@@ -366,6 +383,33 @@ export default function ProjectsScreen({ navigation }) {
                 selectedTag === item.name && { color: 'white' }
               ]}>
                 {item.name}
+              </Text>
+            </TouchableOpacity>
+          )}
+        />
+      )}
+
+      {/* Year Filter */}
+      {availableYears.length > 0 && (
+        <FlatList
+          horizontal
+          data={[{ year: null, label: 'Alle' }, ...availableYears.map(y => ({ year: y, label: String(y) }))]}
+          keyExtractor={item => item.label}
+          contentContainerStyle={styles.tagList}
+          showsHorizontalScrollIndicator={false}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={[
+                styles.tagChip,
+                selectedYear === item.year && { backgroundColor: colors.accent, borderColor: colors.accent }
+              ]}
+              onPress={() => setSelectedYear(selectedYear === item.year ? (item.year === null ? null : null) : item.year)}
+            >
+              <Text style={[
+                styles.tagText,
+                selectedYear === item.year && { color: 'white' }
+              ]}>
+                {item.label}
               </Text>
             </TouchableOpacity>
           )}
@@ -556,6 +600,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bgTertiary,
   },
   miniTagText: { fontSize: 11, color: colors.textSecondary, maxWidth: 60 },
+
+  // Year badge
+  yearBadge: {
+    paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8,
+    backgroundColor: colors.accent + '20',
+  },
+  yearBadgeText: { fontSize: 11, color: colors.accent, fontWeight: '700' },
 
   // Empty state
   empty: { alignItems: 'center', paddingTop: 64, gap: 12 },

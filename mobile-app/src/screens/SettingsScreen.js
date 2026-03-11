@@ -1,17 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator, Linking } from 'react-native';
+import * as IntentLauncher from 'expo-intent-launcher';
 import { useDialog } from '../components/CustomDialog';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
 import { getSetting, setSetting, getCachedProjects } from '../services/database';
 import { getCacheSize, clearCache, cleanupCache, downloadProjectImages } from '../services/syncService';
-import { fetchProjectImages } from '../services/api';
+import { fetchProjectImages, downloadAppUpdateApk, checkAppUpdate } from '../services/api';
 import Slider from '../components/Slider';
+import * as FileSystem from 'expo-file-system/legacy';
+import Constants from 'expo-constants';
 
 export default function SettingsScreen({ navigation }) {
   const { alert } = useDialog();
-  const { userName, userEmail, updateUserName, disconnectDrive, logout, resetSetup, activeConnection } = useApp();
+  const { userName, userEmail, updateUserName, disconnectDrive, logout, resetSetup, activeConnection, updateAvailable, updateInfo, recheckUpdate } = useApp();
 
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(userName);
@@ -36,6 +39,18 @@ export default function SettingsScreen({ navigation }) {
   const [downloadProgress, setDownloadProgress] = useState('');
   const [downloadMaxDays, setDownloadMaxDays] = useState(60);
 
+  // Server-defined image format (read-only, synced from Drive on startup)
+  const [serverImageFormat, setServerImageFormat] = useState('');
+
+  // App update download state (checking comes from AppContext)
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateDownloading, setUpdateDownloading] = useState(false);
+  const [updateDownloadProgress, setUpdateDownloadProgress] = useState(0);
+  const [reinstalling, setReinstalling] = useState(false);
+  const [reinstallProgress, setReinstallProgress] = useState(0);
+
+  const installedVersion = Constants.expoConfig?.version || '0.0.0';
+
   useEffect(() => {
     loadSettings();
   }, []);
@@ -52,6 +67,7 @@ export default function SettingsScreen({ navigation }) {
     setAutoDeleteDays(parseInt(await getSetting('autoDeleteDays', '60')));
     setGpsDefault((await getSetting('gpsDefault', 'true')) === 'true');
     setDownloadMaxDays(parseInt(await getSetting('downloadMaxDays', '60')));
+    setServerImageFormat((await getSetting('serverImageFormat', 'jpeg')).toUpperCase());
 
     const size = await getCacheSize();
     setCacheSize(size);
@@ -59,6 +75,63 @@ export default function SettingsScreen({ navigation }) {
 
   const saveSetting = async (key, value) => {
     await setSetting(key, String(value));
+  };
+
+  const handleCheckForUpdate = async () => {
+    setUpdateChecking(true);
+    try {
+      await recheckUpdate();
+    } finally {
+      setUpdateChecking(false);
+    }
+  };
+
+  const handleDownloadAndInstall = async () => {
+    if (!updateInfo?.apkFileId) return;
+    setUpdateDownloading(true);
+    setUpdateDownloadProgress(0);
+    try {
+      const uri = await downloadAppUpdateApk(updateInfo.apkFileId, (pct) => {
+        setUpdateDownloadProgress(pct);
+      });
+      const contentUri = await FileSystem.getContentUriAsync(uri);
+      await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+        data: contentUri,
+        flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+        type: 'application/vnd.android.package-archive',
+      });
+    } catch (e) {
+      alert('Update-Fehler', 'Download fehlgeschlagen: ' + (e.message || 'Unbekannter Fehler'));
+    } finally {
+      setUpdateDownloading(false);
+      setUpdateDownloadProgress(0);
+    }
+  };
+
+  const handleReinstall = async () => {
+    setReinstalling(true);
+    setReinstallProgress(0);
+    try {
+      const update = await checkAppUpdate();
+      if (!update?.apkFileId) {
+        alert('Fehler', 'APK nicht auf Google Drive gefunden.');
+        return;
+      }
+      const uri = await downloadAppUpdateApk(update.apkFileId, (pct) => {
+        setReinstallProgress(pct);
+      });
+      const contentUri = await FileSystem.getContentUriAsync(uri);
+      await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+        data: contentUri,
+        flags: 1,
+        type: 'application/vnd.android.package-archive',
+      });
+    } catch (e) {
+      alert('Fehler', 'Download fehlgeschlagen: ' + (e.message || 'Unbekannter Fehler'));
+    } finally {
+      setReinstalling(false);
+      setReinstallProgress(0);
+    }
   };
 
   const handleSaveName = async () => {
@@ -241,6 +314,74 @@ export default function SettingsScreen({ navigation }) {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {/* App Update */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>App-Update</Text>
+
+        <View style={styles.settingRow}>
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>Installierte Version</Text>
+            <Text style={styles.settingDesc}>v{installedVersion}</Text>
+          </View>
+          <TouchableOpacity onPress={handleCheckForUpdate} disabled={updateChecking}>
+            <Ionicons
+              name="refresh-outline"
+              size={20}
+              color={updateChecking ? colors.textTertiary : colors.accent}
+            />
+          </TouchableOpacity>
+        </View>
+
+        {updateChecking && (
+          <View style={styles.updateRow}>
+            <ActivityIndicator size="small" color={colors.accent} />
+            <Text style={styles.updateText}>Prüfe auf Updates…</Text>
+          </View>
+        )}
+
+        {!updateChecking && updateAvailable && updateInfo && (
+          <View style={styles.updateAvailableBox}>
+            <View style={styles.updateAvailableHeader}>
+              <Ionicons name="arrow-up-circle" size={20} color={colors.success} />
+              <Text style={styles.updateAvailableTitle}>
+                Update verfügbar: v{updateInfo.version}
+              </Text>
+            </View>
+
+            {updateDownloading ? (
+              <View style={styles.updateProgressBox}>
+                <View style={[styles.updateProgressBar, { width: `${updateDownloadProgress}%` }]} />
+                <Text style={styles.updateProgressText}>{updateDownloadProgress}% heruntergeladen…</Text>
+              </View>
+            ) : (
+              <TouchableOpacity style={styles.updateButton} onPress={handleDownloadAndInstall}>
+                <Ionicons name="download-outline" size={18} color="white" />
+                <Text style={styles.updateButtonText}>Herunterladen & Installieren</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {!updateChecking && !updateAvailable && (
+          <Text style={styles.updateUpToDate}>App ist aktuell</Text>
+        )}
+
+        {/* Reinstall button — always visible */}
+        <View style={styles.reinstallBox}>
+          {reinstalling ? (
+            <View style={styles.updateProgressBox}>
+              <View style={[styles.updateProgressBar, { width: `${reinstallProgress}%` }]} />
+              <Text style={styles.updateProgressText}>{reinstallProgress}% heruntergeladen…</Text>
+            </View>
+          ) : (
+            <TouchableOpacity style={styles.reinstallButton} onPress={handleReinstall}>
+              <Ionicons name="refresh-circle-outline" size={18} color={colors.textSecondary} />
+              <Text style={styles.reinstallButtonText}>App erneut installieren</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+
       {/* User */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Benutzer</Text>
@@ -282,6 +423,14 @@ export default function SettingsScreen({ navigation }) {
       {/* Upload */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Upload</Text>
+
+        <View style={styles.settingRow}>
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>Bildformat</Text>
+            <Text style={styles.settingDesc}>Wird vom Server festgelegt</Text>
+          </View>
+          <Text style={styles.settingValue}>{serverImageFormat || 'JPEG'}</Text>
+        </View>
 
         <View style={styles.settingRow}>
           <View style={styles.settingInfo}>
@@ -605,6 +754,45 @@ const styles = StyleSheet.create({
     borderColor: colors.error, marginTop: 4,
   },
   dangerButtonText: { color: colors.error, fontSize: 15, fontWeight: '500' },
+
+  // Update section
+  updateRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
+  updateText: { fontSize: 13, color: colors.textSecondary },
+  updateUpToDate: { fontSize: 13, color: colors.textTertiary, paddingVertical: 4 },
+  updateAvailableBox: {
+    marginTop: 8, padding: 12, borderRadius: 10,
+    backgroundColor: 'rgba(34,197,94,0.08)', borderWidth: 1, borderColor: 'rgba(34,197,94,0.25)',
+    gap: 8,
+  },
+  updateAvailableHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  updateAvailableTitle: { fontSize: 14, fontWeight: '600', color: colors.success, flex: 1 },
+  updateChangelog: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+  updateButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, padding: 10, borderRadius: 8,
+    backgroundColor: colors.success, marginTop: 4,
+  },
+  updateButtonText: { color: 'white', fontSize: 14, fontWeight: '600' },
+  updateProgressBox: {
+    marginTop: 4, height: 28, backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 6, overflow: 'hidden', justifyContent: 'center',
+  },
+  updateProgressBar: {
+    position: 'absolute', left: 0, top: 0, bottom: 0,
+    backgroundColor: colors.success, borderRadius: 6,
+  },
+  updateProgressText: {
+    fontSize: 12, color: 'white', textAlign: 'center', fontWeight: '500',
+  },
+
+  reinstallBox: { marginTop: 10 },
+  reinstallButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, padding: 10, borderRadius: 8,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  reinstallButtonText: { fontSize: 13, color: colors.textSecondary },
 
   // Download section
   downloadButton: {

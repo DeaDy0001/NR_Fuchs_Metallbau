@@ -477,6 +477,25 @@ const findOrCreateSubfolder = async (parentFolderId, folderName) => {
 };
 
 /**
+ * Find a file by name in a folder (any MIME type, including JSON).
+ * Returns { id, name, mimeType } or null if not found.
+ */
+const findFileByName = async (parentFolderId, fileName) => {
+  try {
+    const drive = await getDriveClient();
+    const res = await drive.files.list({
+      q: `'${parentFolderId}' in parents and name = '${fileName}' and trashed = false`,
+      fields: 'files(id,name,mimeType)',
+      pageSize: 1,
+    });
+    return res.data.files.length > 0 ? res.data.files[0] : null;
+  } catch (error) {
+    console.error('Error finding file by name:', error.message);
+    return null;
+  }
+};
+
+/**
  * Upload a local file to Google Drive
  * @param {string} localFilePath - Full path to the local file
  * @param {string} parentFolderId - Drive folder to upload into
@@ -563,6 +582,105 @@ const updateDriveFileContent = async (fileId, data) => {
   }
 };
 
+/**
+ * Create or update a JSON file in a Drive folder.
+ * If a file with the given name already exists, it's overwritten; otherwise created.
+ */
+const upsertJsonFileToDrive = async (parentFolderId, fileName, data) => {
+  try {
+    const drive = await getDriveClient();
+    const { Readable } = require('stream');
+    const content = JSON.stringify(data, null, 2);
+
+    // Check if file already exists
+    const listResponse = await drive.files.list({
+      q: `'${parentFolderId}' in parents and name = '${fileName}' and trashed = false`,
+      fields: 'files(id)',
+      pageSize: 1,
+    });
+
+    const makeStream = () => Readable.from([content]);
+
+    if (listResponse.data.files.length > 0) {
+      await drive.files.update({
+        fileId: listResponse.data.files[0].id,
+        media: { mimeType: 'application/json', body: makeStream() },
+      });
+      return listResponse.data.files[0].id;
+    } else {
+      const createResponse = await drive.files.create({
+        requestBody: { name: fileName, parents: [parentFolderId] },
+        media: { mimeType: 'application/json', body: makeStream() },
+        fields: 'id',
+      });
+      return createResponse.data.id;
+    }
+  } catch (error) {
+    console.error('Error upserting JSON file to Drive:', error.message);
+    throw error;
+  }
+};
+
+/**
+ * Share a Drive folder with a specific Google user (by email)
+ * @param {string} folderId - Drive folder ID
+ * @param {string} email - Google email address to share with
+ * @returns {string} permissionId - used later to revoke access
+ */
+const shareFolderWithUser = async (folderId, email) => {
+  try {
+    if (!await isAuthenticated()) {
+      throw new Error('Not authenticated');
+    }
+
+    const drive = await getDriveClient();
+    const response = await drive.permissions.create({
+      fileId: folderId,
+      requestBody: {
+        type: 'user',
+        role: 'writer',
+        emailAddress: email,
+      },
+      sendNotificationEmail: false,
+      fields: 'id',
+    });
+
+    console.log(`✅ Shared folder ${folderId} with ${email} (permissionId: ${response.data.id})`);
+    return response.data.id;
+  } catch (error) {
+    console.error('Error sharing folder with user:', error.message);
+    throw error;
+  }
+};
+
+/**
+ * Remove a specific permission from a Drive folder (revoke user access)
+ * @param {string} folderId - Drive folder ID
+ * @param {string} permissionId - Permission ID returned by shareFolderWithUser
+ */
+const removeFolderPermission = async (folderId, permissionId) => {
+  try {
+    if (!await isAuthenticated()) {
+      throw new Error('Not authenticated');
+    }
+
+    const drive = await getDriveClient();
+    await drive.permissions.delete({
+      fileId: folderId,
+      permissionId,
+    });
+
+    console.log(`✅ Removed permission ${permissionId} from folder ${folderId}`);
+  } catch (error) {
+    if (error.code === 404 || error.status === 404) {
+      console.log(`Permission ${permissionId} already removed from ${folderId}`);
+      return;
+    }
+    console.error('Error removing folder permission:', error.message);
+    throw error;
+  }
+};
+
 module.exports = {
   extractFolderId,
   listFilesInFolder,
@@ -582,4 +700,8 @@ module.exports = {
   uploadFileToDrive,
   readDriveFileAsJson,
   updateDriveFileContent,
+  upsertJsonFileToDrive,
+  findFileByName,
+  shareFolderWithUser,
+  removeFolderPermission,
 };

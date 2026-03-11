@@ -4,6 +4,20 @@ import * as MediaLibrary from 'expo-media-library';
 import { Image } from 'react-native';
 import { getSetting } from './database';
 
+// Map server image_format value → expo SaveFormat + mime + file extension
+const FORMAT_MAP = {
+  jpeg: { saveFormat: SaveFormat.JPEG, mimeType: 'image/jpeg', ext: 'jpg' },
+  jpg:  { saveFormat: SaveFormat.JPEG, mimeType: 'image/jpeg', ext: 'jpg' },
+  png:  { saveFormat: SaveFormat.PNG,  mimeType: 'image/png',  ext: 'png' },
+  webp: { saveFormat: SaveFormat.WEBP, mimeType: 'image/webp', ext: 'webp' },
+};
+
+const changeExtension = (fileName, ext) => {
+  const lastDot = fileName.lastIndexOf('.');
+  const base = lastDot > -1 ? fileName.substring(0, lastDot) : fileName;
+  return `${base}.${ext}`;
+};
+
 /**
  * Get image dimensions from a file URI
  */
@@ -27,6 +41,14 @@ const getImageDimensions = (uri) => new Promise((resolve, reject) => {
  * @returns {string} URI of the processed image (may be same as input if no processing needed)
  */
 export const processImageForUpload = async (fileUri, fileName) => {
+  // Read server-defined image format (set by software, synced on startup)
+  const serverFormat = await getSetting('serverImageFormat', 'jpeg');
+  const isOriginalFormat = serverFormat === 'original';
+  const fmt = FORMAT_MAP[serverFormat] || FORMAT_MAP.jpeg;
+  const saveFormat = isOriginalFormat ? SaveFormat.JPEG : fmt.saveFormat;
+  const mimeType = isOriginalFormat ? 'image/jpeg' : fmt.mimeType;
+  const processedFileName = isOriginalFormat ? fileName : changeExtension(fileName, fmt.ext);
+
   // Read compression settings
   const quality = parseInt(await getSetting('imageQuality', '80')) / 100;
   const maxResolution = parseInt(await getSetting('maxImageResolution', '1920'));
@@ -56,13 +78,14 @@ export const processImageForUpload = async (fileUri, fileName) => {
     }
   }
 
-  // Check if any processing is needed
+  // Skip processing only when no format conversion is needed AND all other settings are default
+  const noFormatConversion = isOriginalFormat || serverFormat === 'jpeg' || serverFormat === 'jpg';
   const noResize = maxResolution === 0;
   const noQualityChange = quality >= 1;
   const noSizeLimit = maxSizeKB === 0;
 
-  if (noResize && noQualityChange && noSizeLimit) {
-    return fileUri; // No processing needed
+  if (noFormatConversion && noResize && noQualityChange && noSizeLimit) {
+    return { uri: fileUri, mimeType: 'image/jpeg', fileName: processedFileName };
   }
 
   // Determine resize actions
@@ -88,7 +111,7 @@ export const processImageForUpload = async (fileUri, fileName) => {
   // First compression pass
   let result = await manipulateAsync(fileUri, actions, {
     compress: quality,
-    format: SaveFormat.JPEG,
+    format: saveFormat,
   });
 
   // Check file size limit and iteratively reduce quality if needed
@@ -101,7 +124,7 @@ export const processImageForUpload = async (fileUri, fileName) => {
       currentQuality = Math.max(0.1, currentQuality - 0.15);
       result = await manipulateAsync(fileUri, actions, {
         compress: currentQuality,
-        format: SaveFormat.JPEG,
+        format: saveFormat,
       });
       fileInfo = await FileSystem.getInfoAsync(result.uri);
       attempts++;
@@ -112,5 +135,5 @@ export const processImageForUpload = async (fileUri, fileName) => {
     }
   }
 
-  return result.uri;
+  return { uri: result.uri, mimeType, fileName: processedFileName };
 };
