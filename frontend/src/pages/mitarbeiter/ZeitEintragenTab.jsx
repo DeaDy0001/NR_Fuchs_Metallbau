@@ -166,7 +166,7 @@ function WorkdayDatePicker({ value, onChange, minDate, workSchedule }) {
             {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((d, i) => (
               <div key={d} style={{
                 textAlign: 'center', fontSize: '0.68rem', fontWeight: 700, padding: '2px 0',
-                color: i >= 5 ? 'rgba(239,68,68,0.7)' : 'var(--text-secondary)',
+                color: i >= 5 ? 'rgba(34,197,94,0.9)' : 'var(--text-secondary)',
               }}>{d}</div>
             ))}
           </div>
@@ -199,7 +199,7 @@ function WorkdayDatePicker({ value, onChange, minDate, workSchedule }) {
                         : isHol
                           ? 'rgba(251,191,36,0.2)'
                           : isWknd
-                            ? 'rgba(239,68,68,0.06)'
+                            ? 'rgba(34,197,94,0.08)'
                             : 'transparent',
                     color: selected
                       ? '#fff'
@@ -208,7 +208,7 @@ function WorkdayDatePicker({ value, onChange, minDate, workSchedule }) {
                         : isHol
                           ? '#92400e'
                           : isWknd
-                            ? '#ef4444'
+                            ? '#16a34a'
                             : 'var(--text-primary)',
                     fontWeight: selected || isToday ? 700 : 400,
                     opacity: disabled ? 0.3 : 1,
@@ -286,7 +286,7 @@ function MiniCalendar({ rangeStart, rangeEnd, allEntries, employees }) {
               <div key={d} style={{
                 width: DAY_W, flexShrink: 0, display: 'flex', flexDirection: 'column',
                 alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem',
-                color: isInRange(d) ? 'var(--accent-primary)' : (isWeekend(d) ? '#ef4444' : 'var(--text-secondary)'),
+                color: isInRange(d) ? 'var(--accent-primary)' : (isWeekend(d) ? '#16a34a' : 'var(--text-secondary)'),
                 fontWeight: isInRange(d) ? 700 : 400,
                 borderRight: '1px solid var(--border-color)',
                 background: isInRange(d) ? 'rgba(99,102,241,0.08)' : 'transparent',
@@ -308,7 +308,7 @@ function MiniCalendar({ rangeStart, rangeEnd, allEntries, employees }) {
                 {days.map(d => (
                   <div key={d} style={{
                     width: DAY_W, flexShrink: 0, borderRight: '1px solid rgba(42,45,62,0.5)',
-                    background: isInRange(d) ? 'rgba(99,102,241,0.05)' : (isWeekend(d) ? 'rgba(239,68,68,0.04)' : 'transparent'),
+                    background: isInRange(d) ? 'rgba(99,102,241,0.05)' : (isWeekend(d) ? 'rgba(34,197,94,0.05)' : 'transparent'),
                   }} />
                 ))}
                 {empEntries.map(entry => {

@@ -132,8 +132,13 @@ export default function EmployeeModal({ employee, onClose, onSaved }) {
           </div>
 
           {/* Work schedule */}
-          <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)', marginBottom: 8, marginTop: 4 }}>
-            Arbeitszeiten (Stunden/Tag)
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8, marginTop: 4 }}>
+            <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>Arbeitszeiten (Stunden/Tag)</div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+              Gesamt: <strong style={{ color: 'var(--text-primary)' }}>
+                {Object.values(workSchedule).reduce((s, h) => s + (parseFloat(h) || 0), 0)} Std/Woche
+              </strong>
+            </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 8, marginBottom: 16 }}>
             {WORK_DAYS.map(({ key, label }) => (

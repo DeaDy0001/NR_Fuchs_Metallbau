@@ -5,6 +5,12 @@ import EmployeeModal from './EmployeeModal';
 import BalanceModal from './BalanceModal';
 import '../MitarbeiterPage.css';
 
+function weeklyHours(ws) {
+  if (!ws) return 40;
+  const s = typeof ws === 'string' ? JSON.parse(ws) : ws;
+  return Object.values(s).reduce((sum, h) => sum + (parseFloat(h) || 0), 0);
+}
+
 function calcAge(birthDate) {
   if (!birthDate) return null;
   const today = new Date();
@@ -81,6 +87,7 @@ export default function MitarbeiterListTab() {
                 <th style={{ padding: '8px 12px', fontWeight: 500 }}>Telefon</th>
                 <th style={{ padding: '8px 12px', fontWeight: 500 }}>Alter</th>
                 <th style={{ padding: '8px 12px', fontWeight: 500 }}>Adresse</th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>Std/Woche</th>
                 <th style={{ padding: '8px 12px', fontWeight: 500 }} />
               </tr>
             </thead>
@@ -97,13 +104,19 @@ export default function MitarbeiterListTab() {
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                 >
                   <td style={{ padding: '10px 12px', fontWeight: 500, color: 'var(--text-primary)' }}>
-                    {emp.first_name} {emp.last_name}
-                    {emp.archived && <span style={{ marginLeft: 6, fontSize: '0.7rem', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 4, padding: '1px 5px' }}>Archiviert</span>}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                      <span style={{ width: 9, height: 9, borderRadius: '50%', background: emp.color || '#6366f1', flexShrink: 0 }} />
+                      {emp.first_name} {emp.last_name}
+                      {emp.archived && <span style={{ marginLeft: 4, fontSize: '0.7rem', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 4, padding: '1px 5px' }}>Archiviert</span>}
+                    </div>
                   </td>
                   <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>{emp.email || '—'}</td>
                   <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>{emp.phone || '—'}</td>
                   <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>{calcAge(emp.birth_date) ?? '—'}</td>
                   <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>{emp.address || '—'}</td>
+                  <td style={{ padding: '10px 12px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                    {weeklyHours(emp.work_schedule)} Std
+                  </td>
                   <td style={{ padding: '10px 12px' }}>
                     <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
                       <button
