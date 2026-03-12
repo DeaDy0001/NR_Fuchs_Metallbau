@@ -2755,6 +2755,7 @@ const proxyInboxImage = async (req, res) => {
  * Body: { requestIds: string[] } - IDs of delete requests to process
  */
 const processDeleteRequests = async (req, res) => {
+  let _deleteRelease;
   try {
     const { requestIds } = req.body;
     if (!requestIds || !Array.isArray(requestIds) || requestIds.length === 0) {
@@ -2777,10 +2778,13 @@ const processDeleteRequests = async (req, res) => {
     const inboxFolder = await findSubfolder(metaFolder.id, 'inbox');
     if (!inboxFolder) return res.status(400).json({ error: 'Inbox nicht gefunden' });
 
-    // Find and read delete_requests.json
+    // Find delete_requests.json (before acquiring lock)
     const allFiles = await listAllFilesInFolder(inboxFolder.id);
     const deleteFile = allFiles.find(f => f.name === 'delete_requests.json');
     if (!deleteFile) return res.status(404).json({ error: 'Keine Löschanfragen gefunden' });
+
+    // Acquire lock – released in finally
+    _deleteRelease = await _acquireFileLock('delete_requests.json');
 
     const allRequests = await readDriveFileAsJson(deleteFile.id);
     if (!Array.isArray(allRequests)) {
@@ -2880,6 +2884,8 @@ const processDeleteRequests = async (req, res) => {
   } catch (error) {
     console.error('Error processing delete requests:', error);
     res.status(500).json({ error: 'Löschen fehlgeschlagen: ' + error.message });
+  } finally {
+    if (_deleteRelease) _deleteRelease();
   }
 };
 
@@ -2912,26 +2918,31 @@ const dismissDeleteRequests = async (req, res) => {
     const deleteFile = allFiles.find(f => f.name === 'delete_requests.json');
     if (!deleteFile) return res.status(404).json({ error: 'Keine Löschanfragen gefunden' });
 
-    const allRequests = await readDriveFileAsJson(deleteFile.id);
-    const dismissed = Array.isArray(allRequests) ? allRequests.filter(r => requestIds.includes(r.id)) : [];
-    const remaining = Array.isArray(allRequests)
-      ? allRequests.filter(r => !requestIds.includes(r.id))
-      : [];
+    const _dismissRelease = await _acquireFileLock('delete_requests.json');
+    try {
+      const allRequests = await readDriveFileAsJson(deleteFile.id);
+      const dismissed = Array.isArray(allRequests) ? allRequests.filter(r => requestIds.includes(r.id)) : [];
+      const remaining = Array.isArray(allRequests)
+        ? allRequests.filter(r => !requestIds.includes(r.id))
+        : [];
 
-    if (remaining.length > 0) {
-      await updateDriveFileContent(deleteFile.id, remaining);
-    } else {
-      await deleteFileFromDrive(deleteFile.id);
+      if (remaining.length > 0) {
+        await updateDriveFileContent(deleteFile.id, remaining);
+      } else {
+        await deleteFileFromDrive(deleteFile.id);
+      }
+
+      // Log activity for each dismissed request
+      for (const req of dismissed) {
+        const reqName = req.file_name || req.fileName || '';
+        const reqBy = req.requested_by || null;
+        logActivity('delete_request', 'Löschanfrage abgewiesen', `„${reqName}" – Datei behalten`, reqBy, `delete_dismissed_${req.id}`);
+      }
+
+      res.json({ success: true, dismissed: requestIds.length });
+    } finally {
+      _dismissRelease();
     }
-
-    // Log activity for each dismissed request
-    for (const req of dismissed) {
-      const reqName = req.file_name || req.fileName || '';
-      const reqBy = req.requested_by || null;
-      logActivity('delete_request', 'Löschanfrage abgewiesen', `„${reqName}" – Datei behalten`, reqBy, `delete_dismissed_${req.id}`);
-    }
-
-    res.json({ success: true, dismissed: requestIds.length });
   } catch (error) {
     console.error('Error dismissing delete requests:', error);
     res.status(500).json({ error: 'Fehler: ' + error.message });
@@ -3527,6 +3538,27 @@ const INBOX_JSON_FILES = [
   'delete_requests.json',
 ];
 
+// ─── Per-file async lock ───────────────────────────────────────────────────────
+// Serializes concurrent read-modify-write operations on the same Drive JSON file.
+// Without this, two rapid requests both read the same data and the last write wins.
+const _inboxFileLocks = new Map();
+
+/**
+ * Acquire an exclusive lock for the given inbox filename.
+ * Returns a release() function – MUST be called in a finally block.
+ *
+ * Usage:
+ *   const release = await _acquireFileLock('image_requests.json');
+ *   try { ... read, modify, save ... } finally { release(); }
+ */
+const _acquireFileLock = (fileName) => {
+  let release;
+  const waitFor = _inboxFileLocks.get(fileName) || Promise.resolve();
+  const acquired = new Promise(resolve => { release = resolve; });
+  _inboxFileLocks.set(fileName, waitFor.then(() => acquired));
+  return waitFor.then(() => release);
+};
+
 /**
  * Helper: get root folder ID + metaFolder + inboxFolder from DB
  */
@@ -3611,11 +3643,15 @@ const getInboxRequests = async (req, res) => {
  * Downloads images from inbox/images/, registers in DB, assigns to project.
  */
 const processImageRequest = async (req, res) => {
-  try {
-    const { requestId, selectedImageIds, projectId } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+  const { requestId, selectedImageIds, projectId } = req.body;
+  if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { inboxFolder, drivePathId, drivePathName, metaFolder, rootFolderId } = await _getInboxSetup();
+  let setup;
+  try { setup = await _getInboxSetup(); } catch (e) { return res.status(500).json({ error: e.message }); }
+
+  const release = await _acquireFileLock('image_requests.json');
+  try {
+    const { inboxFolder, drivePathId, drivePathName, metaFolder, rootFolderId } = setup;
 
     // Read image_requests.json
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'image_requests.json');
@@ -3743,6 +3779,8 @@ const processImageRequest = async (req, res) => {
   } catch (error) {
     console.error('[Postfach] processImageRequest error:', error.message);
     res.status(500).json({ error: 'Fehler beim Verarbeiten: ' + error.message });
+  } finally {
+    release();
   }
 };
 
@@ -3752,11 +3790,15 @@ const processImageRequest = async (req, res) => {
  * Deletes images from inbox/images/ and removes from JSON.
  */
 const rejectImageRequest = async (req, res) => {
-  try {
-    const { requestId, selectedImageIds } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+  const { requestId, selectedImageIds } = req.body;
+  if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { inboxFolder } = await _getInboxSetup();
+  let setup;
+  try { setup = await _getInboxSetup(); } catch (e) { return res.status(500).json({ error: e.message }); }
+
+  const release = await _acquireFileLock('image_requests.json');
+  try {
+    const { inboxFolder } = setup;
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'image_requests.json');
     const entry = data.find(e => e.id === requestId);
     if (!entry) return res.status(404).json({ error: 'Anfrage nicht gefunden' });
@@ -3781,6 +3823,8 @@ const rejectImageRequest = async (req, res) => {
   } catch (error) {
     console.error('[Postfach] rejectImageRequest error:', error.message);
     res.status(500).json({ error: 'Fehler beim Ablehnen: ' + error.message });
+  } finally {
+    release();
   }
 };
 
@@ -3790,11 +3834,15 @@ const rejectImageRequest = async (req, res) => {
  * Creates Drive folder + local folder + DB project entry.
  */
 const processProjektRequest = async (req, res) => {
-  try {
-    const { requestId, projectName: nameOverride } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+  const { requestId, projectName: nameOverride } = req.body;
+  if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { metaFolder, inboxFolder, drivePathId } = await _getInboxSetup();
+  let setup;
+  try { setup = await _getInboxSetup(); } catch (e) { return res.status(500).json({ error: e.message }); }
+
+  const release = await _acquireFileLock('projekt_requests.json');
+  try {
+    const { metaFolder, inboxFolder, drivePathId } = setup;
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'projekt_requests.json');
     const entry = data.find(e => e.id === requestId);
     if (!entry) return res.status(404).json({ error: 'Anfrage nicht gefunden' });
@@ -3840,6 +3888,8 @@ const processProjektRequest = async (req, res) => {
   } catch (error) {
     console.error('[Postfach] processProjektRequest error:', error.message);
     res.status(500).json({ error: 'Fehler beim Erstellen des Projekts: ' + error.message });
+  } finally {
+    release();
   }
 };
 
@@ -3848,11 +3898,15 @@ const processProjektRequest = async (req, res) => {
  * Body: { requestId }
  */
 const rejectProjektRequest = async (req, res) => {
-  try {
-    const { requestId } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+  const { requestId } = req.body;
+  if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { inboxFolder } = await _getInboxSetup();
+  let setup;
+  try { setup = await _getInboxSetup(); } catch (e) { return res.status(500).json({ error: e.message }); }
+
+  const release = await _acquireFileLock('projekt_requests.json');
+  try {
+    const { inboxFolder } = setup;
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'projekt_requests.json');
     const updatedData = data.filter(e => e.id !== requestId);
     await _saveInboxJson(inboxFolder.id, 'projekt_requests.json', fileId, updatedData);
@@ -3860,6 +3914,8 @@ const rejectProjektRequest = async (req, res) => {
   } catch (error) {
     console.error('[Postfach] rejectProjektRequest error:', error.message);
     res.status(500).json({ error: 'Fehler: ' + error.message });
+  } finally {
+    release();
   }
 };
 
@@ -3869,11 +3925,15 @@ const rejectProjektRequest = async (req, res) => {
  * Appends/replaces notes on existing project in DB.
  */
 const processProjektChangeRequest = async (req, res) => {
-  try {
-    const { requestId } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+  const { requestId } = req.body;
+  if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { inboxFolder } = await _getInboxSetup();
+  let setup;
+  try { setup = await _getInboxSetup(); } catch (e) { return res.status(500).json({ error: e.message }); }
+
+  const release = await _acquireFileLock('projekt_change_requests.json');
+  try {
+    const { inboxFolder } = setup;
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'projekt_change_requests.json');
     const entry = data.find(e => e.id === requestId);
     if (!entry) return res.status(404).json({ error: 'Anfrage nicht gefunden' });
@@ -3917,6 +3977,8 @@ const processProjektChangeRequest = async (req, res) => {
   } catch (error) {
     console.error('[Postfach] processProjektChangeRequest error:', error.message);
     res.status(500).json({ error: 'Fehler: ' + error.message });
+  } finally {
+    release();
   }
 };
 
@@ -3925,11 +3987,15 @@ const processProjektChangeRequest = async (req, res) => {
  * Body: { requestId }
  */
 const rejectProjektChangeRequest = async (req, res) => {
-  try {
-    const { requestId } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+  const { requestId } = req.body;
+  if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { inboxFolder } = await _getInboxSetup();
+  let setup;
+  try { setup = await _getInboxSetup(); } catch (e) { return res.status(500).json({ error: e.message }); }
+
+  const release = await _acquireFileLock('projekt_change_requests.json');
+  try {
+    const { inboxFolder } = setup;
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'projekt_change_requests.json');
     const updatedData = data.filter(e => e.id !== requestId);
     await _saveInboxJson(inboxFolder.id, 'projekt_change_requests.json', fileId, updatedData);
@@ -3937,6 +4003,8 @@ const rejectProjektChangeRequest = async (req, res) => {
   } catch (error) {
     console.error('[Postfach] rejectProjektChangeRequest error:', error.message);
     res.status(500).json({ error: 'Fehler: ' + error.message });
+  } finally {
+    release();
   }
 };
 
@@ -3946,11 +4014,15 @@ const rejectProjektChangeRequest = async (req, res) => {
  * Updates image name/notes in DB.
  */
 const processImageChangeRequest = async (req, res) => {
-  try {
-    const { requestId } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+  const { requestId } = req.body;
+  if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { inboxFolder } = await _getInboxSetup();
+  let setup;
+  try { setup = await _getInboxSetup(); } catch (e) { return res.status(500).json({ error: e.message }); }
+
+  const release = await _acquireFileLock('image_change_requests.json');
+  try {
+    const { inboxFolder } = setup;
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'image_change_requests.json');
     const entry = data.find(e => e.id === requestId);
     if (!entry) return res.status(404).json({ error: 'Anfrage nicht gefunden' });
@@ -3998,6 +4070,8 @@ const processImageChangeRequest = async (req, res) => {
   } catch (error) {
     console.error('[Postfach] processImageChangeRequest error:', error.message);
     res.status(500).json({ error: 'Fehler: ' + error.message });
+  } finally {
+    release();
   }
 };
 
@@ -4006,11 +4080,15 @@ const processImageChangeRequest = async (req, res) => {
  * Body: { requestId }
  */
 const rejectImageChangeRequest = async (req, res) => {
-  try {
-    const { requestId } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+  const { requestId } = req.body;
+  if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { inboxFolder } = await _getInboxSetup();
+  let setup;
+  try { setup = await _getInboxSetup(); } catch (e) { return res.status(500).json({ error: e.message }); }
+
+  const release = await _acquireFileLock('image_change_requests.json');
+  try {
+    const { inboxFolder } = setup;
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'image_change_requests.json');
     const updatedData = data.filter(e => e.id !== requestId);
     await _saveInboxJson(inboxFolder.id, 'image_change_requests.json', fileId, updatedData);
@@ -4018,6 +4096,8 @@ const rejectImageChangeRequest = async (req, res) => {
   } catch (error) {
     console.error('[Postfach] rejectImageChangeRequest error:', error.message);
     res.status(500).json({ error: 'Fehler: ' + error.message });
+  } finally {
+    release();
   }
 };
 
