@@ -876,6 +876,10 @@ function DriveImages() {
       } else if (e.key === 'ArrowRight') {
         handleNextImage();
       } else if (e.key === 'Delete') {
+        // Only trigger image delete when no text input / textarea is focused
+        const tag = document.activeElement?.tagName;
+        const isEditable = document.activeElement?.isContentEditable;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || isEditable) return;
         handleDelete();
       }
     };
