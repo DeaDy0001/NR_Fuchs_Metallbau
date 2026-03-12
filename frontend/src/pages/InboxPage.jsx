@@ -836,6 +836,7 @@ export default function PostfachPage() {
       }
     } catch { /* ignore */ }
     setSyncing(false);
+    window.dispatchEvent(new Event('inbox-sync-done'));
   }, []);
 
   const loadActivities = useCallback(async () => {

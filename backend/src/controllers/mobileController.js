@@ -1156,9 +1156,11 @@ const sanitizeFilename = (filename) => {
  * @param {string|null} driveDescription - Google Drive file description (may contain [FUCHS_META])
  * Returns the new drive_images row ID
  */
-const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePathId, drivePathName, driveDescription = null) => {
+const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePathId, drivePathName, driveDescription = null, subfolderName = null) => {
   const uploadBaseDir = path.join(__dirname, '../../../uploads/drive');
-  const drivePathDir = path.join(uploadBaseDir, sanitizeFilename(drivePathName));
+  const drivePathDir = subfolderName
+    ? path.join(uploadBaseDir, sanitizeFilename(drivePathName), sanitizeFilename(subfolderName))
+    : path.join(uploadBaseDir, sanitizeFilename(drivePathName));
   await fs.ensureDir(drivePathDir);
 
   const fileExt = path.extname(fileName);
@@ -1249,7 +1251,9 @@ const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePa
   await generateThumbnail(localFilePath, thumbnailPath);
 
   // Register in drive_images
-  const localPath = `/uploads/drive/${sanitizeFilename(drivePathName)}/${uniqueName}`;
+  const localPath = subfolderName
+    ? `/uploads/drive/${sanitizeFilename(drivePathName)}/${sanitizeFilename(subfolderName)}/${uniqueName}`
+    : `/uploads/drive/${sanitizeFilename(drivePathName)}/${uniqueName}`;
   const thumbnailUrl = `/uploads/thumbnails/${thumbnailFilename}`;
 
   const result = db.prepare(`
@@ -1257,7 +1261,7 @@ const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePa
     (drive_path_id, name, original_name, local_path, thumbnail_url,
      file_size, mime_type, is_compressed, drive_file_id, photo_taken_at, subfolder,
      gps_latitude, gps_longitude, gps_altitude, image_notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     drivePathId,
     customTitle || fileBaseName,
@@ -1268,6 +1272,7 @@ const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePa
     mimeType || 'image/jpeg',
     driveFileId,
     photoTakenAt,
+    subfolderName || null,
     gpsLatitude,
     gpsLongitude,
     gpsAltitude,
@@ -3538,7 +3543,7 @@ const _getInboxSetup = async () => {
 
   const inboxFolder = await findOrCreateSubfolder(metaFolder.id, 'inbox');
 
-  return { rootFolderId, drivePathId: drivePath.id, metaFolder, inboxFolder };
+  return { rootFolderId, drivePathId: drivePath.id, drivePathName: drivePath.name, metaFolder, inboxFolder };
 };
 
 /**
@@ -3610,7 +3615,7 @@ const processImageRequest = async (req, res) => {
     const { requestId, selectedImageIds, projectId } = req.body;
     if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { inboxFolder, drivePathId } = await _getInboxSetup();
+    const { inboxFolder, drivePathId, drivePathName, metaFolder, rootFolderId } = await _getInboxSetup();
 
     // Read image_requests.json
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'image_requests.json');
@@ -3629,10 +3634,24 @@ const processImageRequest = async (req, res) => {
     // Resolve target project
     let targetProjectId = projectId ? parseInt(projectId) : null;
     if (!targetProjectId && entry.project_folder_id) {
-      // Find project by Drive folder reference
       const proj = db.prepare("SELECT id FROM projects WHERE drive_folder_id = ? OR folder_name = ?")
         .get(entry.project_folder_id, entry.project_name || '');
       if (proj) targetProjectId = proj.id;
+    }
+
+    // Get project folder name for local path and Drive placement
+    let projectFolderName = null;
+    if (targetProjectId) {
+      const proj = db.prepare('SELECT folder_name FROM projects WHERE id = ?').get(targetProjectId);
+      projectFolderName = proj?.folder_name || null;
+    }
+
+    // Find/create target Drive folder: Projekte/<name>/ or root
+    let targetDriveFolderId = rootFolderId;
+    if (projectFolderName) {
+      const projekteFolder = await findOrCreateSubfolder(metaFolder.id, 'Projekte');
+      const projectDriveFolder = await findOrCreateSubfolder(projekteFolder.id, projectFolderName);
+      targetDriveFolderId = projectDriveFolder.id;
     }
 
     const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
@@ -3640,44 +3659,56 @@ const processImageRequest = async (req, res) => {
 
     for (const img of toProcess) {
       try {
-        // Download image from inbox/images/ to local drive uploads dir
+        // Build driveDescription from request metadata (title/notes stored in JSON)
+        let driveDescription = null;
+        if (img.custom_title || img.notes) {
+          const meta = {};
+          if (img.custom_title) meta.title = img.custom_title;
+          if (img.notes) meta.notes = img.notes;
+          driveDescription = `[FUCHS_META]${JSON.stringify(meta)}`;
+        }
+
+        // Download to correct local folder: uploads/drive/<driveName>/<project>/
         const imageId = await downloadAndRegisterImage(
           img.drive_file_id,
           img.file_name,
           img.mime_type || 'image/jpeg',
           drivePathId,
-          'mobile_inbox',
-          null
+          drivePathName,
+          driveDescription,
+          projectFolderName  // subfolder = project name, or null for root
         );
 
-        // Assign to project if we have one
+        // Assign to project in DB
         if (imageId && targetProjectId) {
           db.prepare('INSERT OR IGNORE INTO image_project_assignments (image_id, project_id) VALUES (?, ?)')
             .run(imageId, targetProjectId);
         }
 
-        // Also copy to local project Bilder folder if project_path configured
-        if (settings?.project_path && targetProjectId) {
+        // Also copy to local project_path Bilder folder if configured
+        if (settings?.project_path && projectFolderName) {
           try {
-            const proj = db.prepare('SELECT folder_name FROM projects WHERE id = ?').get(targetProjectId);
-            if (proj) {
-              const bilderDir = path.join(settings.project_path, proj.folder_name, 'Bilder');
-              await fs.ensureDir(bilderDir);
-              // Image is already downloaded in downloadAndRegisterImage; we do a best-effort copy
-              const imgRow = db.prepare('SELECT local_path FROM drive_images WHERE id = ?').get(imageId);
-              if (imgRow?.local_path) {
-                const absPath = path.join(__dirname, '../../../', imgRow.local_path.replace(/^\//, ''));
-                const destPath = path.join(bilderDir, img.file_name);
-                if (!await fs.pathExists(destPath)) {
-                  await fs.copy(absPath, destPath).catch(() => {});
-                }
+            const bilderDir = path.join(settings.project_path, projectFolderName, 'Bilder');
+            await fs.ensureDir(bilderDir);
+            const imgRow = db.prepare('SELECT local_path FROM drive_images WHERE id = ?').get(imageId);
+            if (imgRow?.local_path) {
+              const absPath = path.join(__dirname, '../../../', imgRow.local_path.replace(/^\//, ''));
+              const destPath = path.join(bilderDir, img.file_name);
+              if (!await fs.pathExists(destPath)) {
+                await fs.copy(absPath, destPath).catch(() => {});
               }
             }
           } catch {}
         }
 
-        // Delete from inbox/images/ on Drive
-        try { await deleteFileFromDrive(img.drive_file_id); } catch {}
+        // Move file on Drive from inbox/images/ to target project folder (or root)
+        try {
+          await moveFileOnDrive(img.drive_file_id, targetDriveFolderId, imagesSubfolder.id);
+        } catch {
+          // If move fails, delete from inbox as fallback
+          try { await deleteFileFromDrive(img.drive_file_id); } catch {}
+        }
+
         downloaded++;
       } catch (e) {
         console.error(`[Postfach] Failed to process image ${img.file_name}:`, e.message);

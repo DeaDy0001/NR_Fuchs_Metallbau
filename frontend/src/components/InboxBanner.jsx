@@ -29,7 +29,11 @@ function InboxBanner() {
   useEffect(() => {
     refresh();
     const interval = setInterval(refresh, 60000);
-    return () => clearInterval(interval);
+    window.addEventListener('inbox-sync-done', refresh);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('inbox-sync-done', refresh);
+    };
   }, [refresh]);
 
   if (unreadCount === 0) return null;
