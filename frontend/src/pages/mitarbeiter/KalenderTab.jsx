@@ -15,8 +15,9 @@ const HEADER_H = 44;
 const BAR_W = 14;
 const BAR_GAP = 3;
 const MIN_COL_W = 160;
-// Fixed calendar height: header + 31 rows (each row + 1px border) + container borders
-const CALENDAR_GRID_H = HEADER_H + 2 + 31 * (ROW_H + 1) + 2;
+const SCROLLBAR_H = 17; // horizontal scrollbar height
+// Fixed calendar height: header + 31 rows (each row + 1px border) + container borders + scrollbar
+const CALENDAR_GRID_H = HEADER_H + 2 + 31 * (ROW_H + 1) + 2 + SCROLLBAR_H;
 
 // ── Austrian holiday helpers ─────────────────────────────────────────────────
 function getEasterSunday(year) {
@@ -309,7 +310,7 @@ export default function KalenderTab() {
             </div>
 
             {/* Scrollable body */}
-            <div style={{ flex: 1, overflow: 'auto', display: 'flex' }} ref={scrollRef}>
+            <div style={{ flex: 1, overflowX: 'auto', overflowY: 'hidden', display: 'flex' }} ref={scrollRef}>
               {/* Sticky day-number column */}
               <div style={{ width: DAY_COL_W, flexShrink: 0, borderRight: '1px solid var(--border-color)', background: 'var(--bg-secondary)', position: 'sticky', left: 0, zIndex: 5 }}>
                 {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
