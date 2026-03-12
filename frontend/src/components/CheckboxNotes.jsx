@@ -1,15 +1,16 @@
 import { useState, useRef, useCallback } from 'react';
-import { CheckSquare, Square, ListChecks } from 'lucide-react';
+import { CheckSquare, Square, Plus, X } from 'lucide-react';
 import './CheckboxNotes.css';
 
 /**
- * CheckboxNotes – a textarea-like component that renders [ ] / [x] lines as
- * interactive checkboxes.  Plain text lines render normally.
+ * CheckboxNotes – two separate areas:
+ *   1. Free-text notes (textarea, click to edit)
+ *   2. Checklist (always-interactive checkboxes, add/remove/toggle)
  *
- * Storage format (plain text, markdown-like):
+ * Storage format (plain text, unchanged):
+ *   Normal text line
  *   [ ] unchecked item
  *   [x] checked item
- *   Normal text line
  *
  * Props:
  *   value      – string  (the notes text)
@@ -18,133 +19,152 @@ import './CheckboxNotes.css';
  *   disabled   – boolean
  */
 function CheckboxNotes({ value = '', onChange, placeholder = 'Notizen eingeben...', disabled = false }) {
-  const [editing, setEditing] = useState(false);
+  const [editingText, setEditingText] = useState(false);
+  const [newCheckboxText, setNewCheckboxText] = useState('');
   const textareaRef = useRef(null);
+  const addInputRef = useRef(null);
 
   const lines = (value || '').split('\n');
-  const hasCheckboxes = lines.some(l => /^\[[ x]\] /.test(l));
+  const checkboxLines = lines.filter(l => /^\[[ x]\] /.test(l));
+  const textLines = lines.filter(l => !/^\[[ x]\] /.test(l));
+  const textValue = textLines.join('\n').replace(/\n{3,}/g, '\n\n').replace(/^\n+|\n+$/, '');
 
-  // Toggle a checkbox line between [ ] and [x]
-  const toggleLine = useCallback((lineIndex) => {
+  // Rebuild the full notes string: text first, then checkboxes
+  const buildValue = useCallback((newText, newCheckboxes) => {
+    const parts = [];
+    if (newText.trim()) parts.push(newText.trim());
+    if (newCheckboxes.length > 0) parts.push(newCheckboxes.join('\n'));
+    return parts.join('\n');
+  }, []);
+
+  const handleTextChange = (newText) => {
+    onChange(buildValue(newText, checkboxLines));
+  };
+
+  const toggleCheckbox = (index) => {
     if (disabled) return;
-    const updated = lines.map((line, i) => {
-      if (i !== lineIndex) return line;
+    const updated = checkboxLines.map((line, i) => {
+      if (i !== index) return line;
       if (line.startsWith('[ ] ')) return '[x] ' + line.substring(4);
       if (line.startsWith('[x] ')) return '[ ] ' + line.substring(4);
       return line;
     });
-    onChange(updated.join('\n'));
-  }, [lines, onChange, disabled]);
+    onChange(buildValue(textValue, updated));
+  };
 
-  // Insert a new checkbox line at the end
-  const addCheckbox = useCallback(() => {
+  const addCheckbox = () => {
+    if (disabled || !newCheckboxText.trim()) return;
+    const updated = [...checkboxLines, '[ ] ' + newCheckboxText.trim()];
+    onChange(buildValue(textValue, updated));
+    setNewCheckboxText('');
+    setTimeout(() => addInputRef.current?.focus(), 0);
+  };
+
+  const removeCheckbox = (index) => {
     if (disabled) return;
-    const newVal = value ? value + '\n[ ] ' : '[ ] ';
-    onChange(newVal);
-    // Switch to editing and focus at end
-    setEditing(true);
-    setTimeout(() => {
-      if (textareaRef.current) {
-        textareaRef.current.focus();
-        textareaRef.current.selectionStart = newVal.length;
-        textareaRef.current.selectionEnd = newVal.length;
-      }
-    }, 50);
-  }, [value, onChange, disabled]);
+    const updated = checkboxLines.filter((_, i) => i !== index);
+    onChange(buildValue(textValue, updated));
+  };
 
-  // Handle Enter in textarea: if current line is a checkbox, insert new checkbox
-  const handleKeyDown = useCallback((e) => {
-    if (e.key !== 'Enter') return;
-    const ta = e.target;
-    const pos = ta.selectionStart;
-    const before = ta.value.substring(0, pos);
-    const after = ta.value.substring(pos);
-
-    // Find the current line
-    const lastNewline = before.lastIndexOf('\n');
-    const currentLine = before.substring(lastNewline + 1);
-
-    if (/^\[[ x]\] /.test(currentLine)) {
-      // If current line is empty checkbox, remove it instead of adding another
-      if (currentLine === '[ ] ' || currentLine === '[x] ') {
-        e.preventDefault();
-        const newVal = before.substring(0, lastNewline === -1 ? 0 : lastNewline) + (after ? '\n' + after : after);
-        onChange(newVal);
-        setTimeout(() => {
-          ta.selectionStart = ta.selectionEnd = (lastNewline === -1 ? 0 : lastNewline + 1);
-        }, 0);
-        return;
-      }
+  const handleAddKeyDown = (e) => {
+    if (e.key === 'Enter') {
       e.preventDefault();
-      const newVal = before + '\n[ ] ' + after;
-      onChange(newVal);
-      setTimeout(() => {
-        ta.selectionStart = ta.selectionEnd = pos + 5; // after \n[ ]
-      }, 0);
+      addCheckbox();
     }
-  }, [onChange]);
+  };
 
-  if (editing) {
-    return (
-      <div className="checkbox-notes-wrap">
+  return (
+    <div className="checkbox-notes-wrap">
+      {/* ── Text notes ── */}
+      {editingText ? (
         <textarea
           ref={textareaRef}
           className="checkbox-notes-textarea"
-          value={value || ''}
-          onChange={e => onChange(e.target.value)}
-          onBlur={() => setEditing(false)}
-          onKeyDown={handleKeyDown}
+          value={textValue}
+          onChange={e => handleTextChange(e.target.value)}
+          onBlur={() => setEditingText(false)}
           placeholder={placeholder}
           disabled={disabled}
           autoFocus
         />
-        <button type="button" className="checkbox-notes-add-btn" onMouseDown={e => { e.preventDefault(); addCheckbox(); }} title="Checkbox hinzufügen">
-          <ListChecks size={14} /> Checkbox
-        </button>
-      </div>
-    );
-  }
+      ) : (
+        <div
+          className={`checkbox-notes-display ${!textValue.trim() ? 'checkbox-notes-empty' : ''}`}
+          onClick={() => !disabled && setEditingText(true)}
+        >
+          {textValue.trim() ? (
+            textValue.split('\n').map((line, i) => (
+              <div key={i} className="checkbox-notes-line">{line || '\u00A0'}</div>
+            ))
+          ) : (
+            <span className="checkbox-notes-placeholder">{placeholder}</span>
+          )}
+        </div>
+      )}
 
-  // Read mode: render lines with checkboxes
-  const isEmpty = !value || !value.trim();
+      {/* ── Checklist (always visible) ── */}
+      {(!disabled || checkboxLines.length > 0) && (
+        <div className="checkbox-notes-checklist">
+          {checkboxLines.length > 0 && (
+            <div className="checkbox-notes-items">
+              {checkboxLines.map((line, i) => {
+                const match = line.match(/^\[([ x])\] (.*)/);
+                const checked = match ? match[1] === 'x' : false;
+                const text = match ? match[2] : line;
+                return (
+                  <div key={i} className={`checkbox-notes-item${checked ? ' checkbox-notes-item-checked' : ''}`}>
+                    <button
+                      type="button"
+                      className="checkbox-notes-toggle"
+                      onClick={() => toggleCheckbox(i)}
+                      disabled={disabled}
+                      title={checked ? 'Abhaken rückgängig' : 'Abhaken'}
+                    >
+                      {checked ? <CheckSquare size={16} /> : <Square size={16} />}
+                    </button>
+                    <span className={`checkbox-notes-item-text${checked ? ' checkbox-notes-strikethrough' : ''}`}>
+                      {text}
+                    </span>
+                    {!disabled && (
+                      <button
+                        type="button"
+                        className="checkbox-notes-remove"
+                        onClick={() => removeCheckbox(i)}
+                        title="Entfernen"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
-  return (
-    <div className="checkbox-notes-wrap">
-      <div
-        className={`checkbox-notes-display ${isEmpty ? 'checkbox-notes-empty' : ''}`}
-        onClick={() => !disabled && setEditing(true)}
-      >
-        {isEmpty ? (
-          <span className="checkbox-notes-placeholder">{placeholder}</span>
-        ) : (
-          lines.map((line, i) => {
-            const checkMatch = line.match(/^\[([ x])\] (.*)/);
-            if (checkMatch) {
-              const checked = checkMatch[1] === 'x';
-              const text = checkMatch[2];
-              return (
-                <div
-                  key={i}
-                  className={`checkbox-notes-line checkbox-notes-checkbox ${checked ? 'checkbox-notes-checked' : ''}`}
-                  onClick={e => { e.stopPropagation(); toggleLine(i); }}
-                >
-                  {checked ? <CheckSquare size={16} /> : <Square size={16} />}
-                  <span className={checked ? 'checkbox-notes-strikethrough' : ''}>{text}</span>
-                </div>
-              );
-            }
-            return (
-              <div key={i} className="checkbox-notes-line">
-                {line || '\u00A0'}
-              </div>
-            );
-          })
-        )}
-      </div>
-      {!disabled && (
-        <button type="button" className="checkbox-notes-add-btn" onClick={addCheckbox} title="Checkbox hinzufügen">
-          <ListChecks size={14} /> Checkbox
-        </button>
+          {!disabled && (
+            <div className="checkbox-notes-add-row">
+              <input
+                ref={addInputRef}
+                className="checkbox-notes-add-input"
+                type="text"
+                value={newCheckboxText}
+                onChange={e => setNewCheckboxText(e.target.value)}
+                onKeyDown={handleAddKeyDown}
+                placeholder="Neue Checkbox..."
+                disabled={disabled}
+              />
+              <button
+                type="button"
+                className="checkbox-notes-add-btn"
+                onClick={addCheckbox}
+                disabled={!newCheckboxText.trim()}
+                title="Checkbox hinzufügen"
+              >
+                <Plus size={14} />
+              </button>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
