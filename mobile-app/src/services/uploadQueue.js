@@ -1,6 +1,6 @@
 import * as Network from 'expo-network';
-import { getSetting, getQueuedUploads, updateUploadStatus } from './database';
-import { uploadImage, flushImageRequests } from './api';
+import { getSetting, getQueuedUploads, updateUploadStatus, getQueuedMetaChanges, updateMetaChangeStatus } from './database';
+import { uploadImage, flushImageRequests, saveProjectMetadata } from './api';
 import { processImageForUpload } from './imageProcessor';
 import { sendUploadCompleteNotification } from './backgroundSync';
 
@@ -93,9 +93,10 @@ export const processUploadQueue = async () => {
       return;
     }
 
-    // Get queued uploads
+    // Get queued uploads and meta changes
     const queue = await getQueuedUploads();
-    if (queue.length === 0) {
+    const metaChanges = await getQueuedMetaChanges();
+    if (queue.length === 0 && metaChanges.length === 0) {
       notifyListeners({ type: 'idle' });
       return;
     }
@@ -103,7 +104,7 @@ export const processUploadQueue = async () => {
     // We're online with items to process - use fast interval
     switchInterval(30000);
 
-    uploadProgress = { current: 0, total: queue.length };
+    uploadProgress = { current: 0, total: queue.length + metaChanges.length };
     notifyListeners({ type: 'processing', count: queue.length });
 
     let uploadedCount = 0;
@@ -180,6 +181,32 @@ export const processUploadQueue = async () => {
         await flushImageRequests(uploadedItems);
       } catch (e) {
         console.warn('[uploadQueue] flushImageRequests failed:', e.message);
+      }
+    }
+
+    // Process meta change queue (project color / notes / tags)
+    for (const item of metaChanges) {
+      if (item.retry_count >= 3) {
+        await updateMetaChangeStatus(item.id, 'permanently_failed', 'Maximale Versuche erreicht');
+        continue;
+      }
+      uploadProgress.current++;
+      const displayItem = { ...item, file_name: item.project_name || 'Projektdaten' };
+      notifyListeners({ type: 'uploading', item: displayItem, progress: { ...uploadProgress } });
+      try {
+        const meta = {
+          color: item.color,
+          notes: item.notes,
+          tags: JSON.parse(item.tags || '[]'),
+          is_starred: item.is_starred === 1,
+        };
+        await saveProjectMetadata(item.project_folder_id, meta, item.project_name);
+        await updateMetaChangeStatus(item.id, 'uploaded');
+        uploadedCount++;
+        notifyListeners({ type: 'uploaded', item: displayItem, progress: { ...uploadProgress } });
+      } catch (e) {
+        await updateMetaChangeStatus(item.id, 'failed', e.message);
+        notifyListeners({ type: 'error', item: displayItem, error: e.message });
       }
     }
 

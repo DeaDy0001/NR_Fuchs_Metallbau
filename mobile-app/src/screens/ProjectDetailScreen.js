@@ -8,9 +8,10 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import CheckboxNotes from '../components/CheckboxNotes';
-import { fetchProjectImages, getImageUrl, saveProjectMetadata } from '../services/api';
+import { fetchProjectImages, getImageUrl } from '../services/api';
 import { downloadProjectImages } from '../services/syncService';
-import { getCachedProjectByFolderId, cacheProject } from '../services/database';
+import { getCachedProjectByFolderId, cacheProject, addToMetaChangeQueue } from '../services/database';
+import { forceProcessQueue } from '../services/uploadQueue';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const NUM_COLUMNS = 3;
@@ -106,16 +107,20 @@ export default function ProjectDetailScreen({ navigation, route }) {
         tags: meta.tags || [],
         is_starred: false,
       };
-      await saveProjectMetadata(folderId, newMeta, projectName);
 
-      // Update local cache
+      // 1. Update local cache immediately
       const cached = await getCachedProjectByFolderId(folderId);
       if (cached) {
         await cacheProject({ ...cached, notes: newMeta.notes });
       }
 
+      // 2. Close modal immediately
       setMeta(prev => ({ ...prev, notes: newMeta.notes }));
       setShowNotesModal(false);
+
+      // 3. Queue background upload to Drive
+      await addToMetaChangeQueue(folderId, projectName, newMeta);
+      forceProcessQueue();
     } catch (e) {
       alert('Fehler', 'Notiz konnte nicht gespeichert werden: ' + e.message);
     } finally {
@@ -153,9 +158,7 @@ export default function ProjectDetailScreen({ navigation, route }) {
         is_starred: false,
       };
 
-      await saveProjectMetadata(folderId, newMeta, projectName);
-
-      // Update local cache
+      // 1. Update local cache immediately
       const cached = await getCachedProjectByFolderId(folderId);
       if (cached) {
         await cacheProject({
@@ -166,8 +169,13 @@ export default function ProjectDetailScreen({ navigation, route }) {
         });
       }
 
+      // 2. Update UI and close modal immediately
       setMeta({ color: newMeta.color, notes: newMeta.notes, tags: newMeta.tags });
       setShowEditModal(false);
+
+      // 3. Queue background upload to Drive
+      await addToMetaChangeQueue(folderId, projectName, newMeta);
+      forceProcessQueue();
     } catch (e) {
       alert('Fehler', 'Speichern fehlgeschlagen: ' + e.message);
     } finally {

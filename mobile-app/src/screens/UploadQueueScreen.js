@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Ani
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
-import { getQueueDisplayItems, cleanupOldQueueItems, getDeleteQueueDisplayItems, cleanupOldDeleteQueueItems } from '../services/database';
+import { getQueueDisplayItems, cleanupOldQueueItems, getDeleteQueueDisplayItems, cleanupOldDeleteQueueItems, getMetaChangeQueueDisplayItems, cleanupOldMetaChangeQueueItems } from '../services/database';
 import { forceProcessQueue, addUploadListener, getCurrentUploadState } from '../services/uploadQueue';
 import { addDeleteListener, processDeleteQueue } from '../services/deleteQueue';
 import { useApp } from '../contexts/AppContext';
@@ -15,6 +15,8 @@ export default function UploadQueueScreen() {
   const [completed, setCompleted] = useState([]);
   const [deletePending, setDeletePending] = useState([]);
   const [deleteCompleted, setDeleteCompleted] = useState([]);
+  const [metaPending, setMetaPending] = useState([]);
+  const [metaCompleted, setMetaCompleted] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [uploadState, setUploadState] = useState(getCurrentUploadState());
   const [currentPhase, setCurrentPhase] = useState(null); // 'compressing' or 'uploading'
@@ -28,6 +30,7 @@ export default function UploadQueueScreen() {
     useCallback(() => {
       loadQueue();
       loadDeleteQueue();
+      loadMetaQueue();
       setUploadState(getCurrentUploadState());
       getNotificationPermissionStatus().then(setNotifPermission).catch(() => {});
     }, [])
@@ -48,6 +51,7 @@ export default function UploadQueueScreen() {
 
       if (event.type === 'uploaded' || event.type === 'done' || event.type === 'error') {
         await loadQueue();
+        await loadMetaQueue();
         await refreshQueueCount();
       }
       if (event.type === 'uploading') {
@@ -94,6 +98,17 @@ export default function UploadQueueScreen() {
     }
   };
 
+  const loadMetaQueue = async () => {
+    try {
+      const { pending: p, completed: c } = await getMetaChangeQueueDisplayItems();
+      setMetaPending(p);
+      setMetaCompleted(c);
+      await cleanupOldMetaChangeQueueItems();
+    } catch (error) {
+      console.error('Error loading meta queue:', error);
+    }
+  };
+
   const loadQueue = async () => {
     try {
       const { pending: p, completed: c } = await getQueueDisplayItems();
@@ -117,6 +132,7 @@ export default function UploadQueueScreen() {
     processDeleteQueue();
     await loadQueue();
     await loadDeleteQueue();
+    await loadMetaQueue();
     await refreshQueueCount();
     setRefreshing(false);
   };
@@ -234,10 +250,54 @@ export default function UploadQueueScreen() {
     );
   };
 
+  const renderMetaItem = ({ item }) => {
+    const isCurrentlyUploading = uploadState.currentlyUploadingId === item.id;
+    const config = getStatusConfig(item.status, item.id);
+    return (
+      <View style={[styles.queueItem, isCurrentlyUploading && styles.queueItemUploading]}>
+        <View style={styles.itemIconContainer}>
+          <Ionicons name={isCurrentlyUploading ? config.icon : 'create-outline'} size={24} color={config.color} />
+        </View>
+        <View style={styles.itemInfo}>
+          <Text style={styles.itemName} numberOfLines={1}>{item.project_name || 'Projektdaten'}</Text>
+          <View style={styles.itemMeta}>
+            <Text style={[styles.itemStatus, { color: config.color }]}>{config.label}</Text>
+            <Text style={styles.itemProject}>
+              <Ionicons name="color-palette-outline" size={11} color={colors.textTertiary} /> Farbe · Notizen · Tags
+            </Text>
+          </View>
+          {item.error && <Text style={styles.itemError} numberOfLines={2}>{item.error}</Text>}
+          {isCurrentlyUploading && (
+            <View style={styles.progressBarContainer}>
+              <Animated.View
+                style={[
+                  styles.progressBarFill,
+                  {
+                    width: progressAnims.current[item.id]
+                      ? progressAnims.current[item.id].interpolate({
+                          inputRange: [0, 1],
+                          outputRange: ['10%', '100%'],
+                        })
+                      : '50%',
+                  },
+                ]}
+              />
+            </View>
+          )}
+        </View>
+        {item.status === 'uploaded' && item.uploaded_at && (
+          <Text style={styles.itemTime}>{formatTime(item.uploaded_at)}</Text>
+        )}
+      </View>
+    );
+  };
+
   const totalPending = pending.length;
   const totalCompleted = completed.length;
   const totalDeletePending = deletePending.length;
   const totalDeleteCompleted = deleteCompleted.length;
+  const totalMetaPending = metaPending.length;
+  const totalMetaCompleted = metaCompleted.length;
 
   // Build unified list with section headers
   const allItems = [];
@@ -245,14 +305,19 @@ export default function UploadQueueScreen() {
     allItems.push({ _type: 'section', label: `Lösch-Queue (${totalDeletePending})`, icon: 'trash-outline', color: colors.error });
     deletePending.forEach(i => allItems.push({ ...i, _type: 'delete' }));
   }
+  if (totalMetaPending > 0) {
+    allItems.push({ _type: 'section', label: `Projektdaten (${totalMetaPending})`, icon: 'create-outline', color: '#8b5cf6' });
+    metaPending.forEach(i => allItems.push({ ...i, _type: 'meta' }));
+  }
   if (totalPending > 0) {
     allItems.push({ _type: 'section', label: `Upload-Queue (${totalPending})`, icon: 'cloud-upload-outline', color: colors.accent });
     pending.forEach(i => allItems.push({ ...i, _type: 'upload' }));
   }
-  if (totalCompleted > 0 || totalDeleteCompleted > 0) {
+  if (totalCompleted > 0 || totalDeleteCompleted > 0 || totalMetaCompleted > 0) {
     allItems.push({ _type: 'section', label: 'Erledigt', icon: 'checkmark-done-outline', color: colors.success });
     const allDone = [
       ...deleteCompleted.map(i => ({ ...i, _type: 'delete', _sortDate: i.processed_at || '' })),
+      ...metaCompleted.map(i => ({ ...i, _type: 'meta', _sortDate: i.uploaded_at || '' })),
       ...completed.map(i => ({ ...i, _type: 'upload', _sortDate: i.uploaded_at || '' })),
     ].sort((a, b) => b._sortDate.localeCompare(a._sortDate));
     allDone.forEach(i => allItems.push(i));
@@ -282,14 +347,14 @@ export default function UploadQueueScreen() {
       {/* Summary card */}
       <View style={styles.summary}>
         <View style={styles.summaryItem}>
-          <Text style={[styles.summaryNumber, { color: (totalPending + totalDeletePending) > 0 ? colors.warning : colors.textTertiary }]}>
-            {totalPending + totalDeletePending}
+          <Text style={[styles.summaryNumber, { color: (totalPending + totalDeletePending + totalMetaPending) > 0 ? colors.warning : colors.textTertiary }]}>
+            {totalPending + totalDeletePending + totalMetaPending}
           </Text>
           <Text style={styles.summaryLabel}>Ausstehend</Text>
         </View>
         <View style={styles.summaryDivider} />
         <View style={styles.summaryItem}>
-          <Text style={[styles.summaryNumber, { color: colors.success }]}>{totalCompleted + totalDeleteCompleted}</Text>
+          <Text style={[styles.summaryNumber, { color: colors.success }]}>{totalCompleted + totalDeleteCompleted + totalMetaCompleted}</Text>
           <Text style={styles.summaryLabel}>Erledigt</Text>
         </View>
       </View>
@@ -318,7 +383,7 @@ export default function UploadQueueScreen() {
       )}
 
       {/* Offline / WiFi hint */}
-      {uploadState.isProcessing === false && totalPending > 0 && (
+      {uploadState.isProcessing === false && (totalPending + totalMetaPending) > 0 && (
         <View style={styles.hintCard}>
           <Ionicons name="information-circle-outline" size={18} color={colors.textTertiary} />
           <Text style={styles.hintText}>
@@ -356,6 +421,7 @@ export default function UploadQueueScreen() {
             );
           }
           if (item._type === 'delete') return renderDeleteItem({ item });
+          if (item._type === 'meta') return renderMetaItem({ item });
           return renderQueueItem({ item });
         }}
         contentContainerStyle={styles.list}

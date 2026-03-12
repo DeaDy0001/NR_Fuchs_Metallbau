@@ -138,6 +138,21 @@ const initTables = async () => {
       created_at TEXT DEFAULT (datetime('now')),
       processed_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS meta_change_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_folder_id TEXT NOT NULL,
+      project_name TEXT,
+      color TEXT,
+      notes TEXT,
+      tags TEXT DEFAULT '[]',
+      is_starred INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'queued',
+      retry_count INTEGER DEFAULT 0,
+      error TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      uploaded_at TEXT
+    );
   `);
 
   // Migrate: add columns that may be missing from older DB versions
@@ -554,5 +569,71 @@ export const clearConfirmedPendingProjects = async () => {
   await db.runAsync(`
     DELETE FROM pending_projects
     WHERE LOWER(folder_name) IN (SELECT LOWER(folder_name) FROM cached_projects)
+  `);
+};
+
+// ============================================================
+// Meta change queue helpers (project color / notes / tags)
+// ============================================================
+
+export const addToMetaChangeQueue = async (projectFolderId, projectName, meta) => {
+  const db = await getDb();
+  return await db.runAsync(
+    'INSERT INTO meta_change_queue (project_folder_id, project_name, color, notes, tags, is_starred) VALUES (?, ?, ?, ?, ?, ?)',
+    [
+      projectFolderId,
+      projectName || null,
+      meta.color || null,
+      meta.notes || null,
+      JSON.stringify(meta.tags || []),
+      meta.is_starred ? 1 : 0,
+    ]
+  );
+};
+
+export const getQueuedMetaChanges = async () => {
+  const db = await getDb();
+  return await db.getAllAsync(
+    "SELECT * FROM meta_change_queue WHERE status IN ('queued', 'failed') ORDER BY created_at ASC"
+  );
+};
+
+export const updateMetaChangeStatus = async (id, status, error = null) => {
+  const db = await getDb();
+  if (status === 'uploaded') {
+    await db.runAsync(
+      "UPDATE meta_change_queue SET status = ?, uploaded_at = datetime('now') WHERE id = ?",
+      [status, id]
+    );
+  } else {
+    await db.runAsync(
+      'UPDATE meta_change_queue SET status = ?, error = ?, retry_count = retry_count + 1 WHERE id = ?',
+      [status, error, id]
+    );
+  }
+};
+
+export const getMetaChangeQueueDisplayItems = async () => {
+  const db = await getDb();
+  const pending = await db.getAllAsync(
+    "SELECT * FROM meta_change_queue WHERE status IN ('queued', 'failed') ORDER BY created_at ASC"
+  );
+  const completed = await db.getAllAsync(
+    "SELECT * FROM meta_change_queue WHERE status = 'uploaded' ORDER BY uploaded_at DESC LIMIT 30"
+  );
+  return { pending, completed };
+};
+
+export const cleanupOldMetaChangeQueueItems = async () => {
+  const db = await getDb();
+  await db.runAsync(`
+    DELETE FROM meta_change_queue
+    WHERE status = 'uploaded'
+    AND id NOT IN (
+      SELECT id FROM meta_change_queue
+      WHERE status = 'uploaded'
+      ORDER BY uploaded_at DESC
+      LIMIT 30
+    )
   `);
 };
