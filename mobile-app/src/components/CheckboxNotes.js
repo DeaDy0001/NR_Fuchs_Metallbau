@@ -29,9 +29,11 @@ export default function CheckboxNotes({
   editable = true,
   autoFocus = false,
   minHeight = 100,
+  inputRef: externalRef,
 }) {
   const [editing, setEditing] = useState(autoFocus);
-  const inputRef = useRef(null);
+  const internalRef = useRef(null);
+  const inputRef = externalRef || internalRef;
 
   const lines = (value || '').split('\n');
 

@@ -538,7 +538,7 @@ export default function CameraScreen({ navigation, route }) {
         {editingField === 'notes' && (
           <Modal
             animationType="slide"
-            onShow={() => { setTimeout(() => metadataInputRef.current?.focus(), 100); }}
+            onShow={() => { setTimeout(() => metadataInputRef.current?.focus(), 300); }}
           >
             <View style={styles.notesFullScreen}>
               <View style={styles.notesFullScreenHeader}>
@@ -566,7 +566,7 @@ export default function CameraScreen({ navigation, route }) {
           <Modal
             transparent
             animationType="slide"
-            onShow={() => { setTimeout(() => metadataInputRef.current?.focus(), 100); }}
+            onShow={() => { setTimeout(() => metadataInputRef.current?.focus(), 300); }}
           >
             <KeyboardAvoidingView
               style={{ flex: 1 }}
@@ -588,6 +588,7 @@ export default function CameraScreen({ navigation, route }) {
                     placeholder="Bildname eingeben..."
                     placeholderTextColor={colors.textTertiary}
                     autoFocus
+                    selectTextOnFocus
                     returnKeyType="done"
                     onSubmitEditing={saveEditField}
                   />

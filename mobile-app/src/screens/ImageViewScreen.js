@@ -328,6 +328,7 @@ export default function ImageViewScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
   const flatListRef = useRef(null);
   const editInputRef = useRef(null);
+  const notesInputRef = useRef(null);
 
   // Editing state
   const [editingField, setEditingField] = useState(null); // 'title' | 'notes' | null
@@ -573,7 +574,7 @@ export default function ImageViewScreen({ route, navigation }) {
         <Modal
           animationType="slide"
           onShow={() => {
-            setTimeout(() => editInputRef.current?.focus(), 100);
+            setTimeout(() => notesInputRef.current?.focus(), 300);
           }}
         >
           <View style={styles.notesFullScreen}>
@@ -588,6 +589,7 @@ export default function ImageViewScreen({ route, navigation }) {
               onChange={setEditFieldValue}
               placeholder="Notizen eingeben..."
               autoFocus
+              inputRef={notesInputRef}
               minHeight={300}
             />
           </View>
@@ -600,7 +602,7 @@ export default function ImageViewScreen({ route, navigation }) {
           transparent
           animationType="slide"
           onShow={() => {
-            setTimeout(() => editInputRef.current?.focus(), 100);
+            setTimeout(() => editInputRef.current?.focus(), 300);
           }}
         >
           <KeyboardAvoidingView
@@ -623,6 +625,7 @@ export default function ImageViewScreen({ route, navigation }) {
                   placeholder="Bildname eingeben..."
                   placeholderTextColor={colors.textTertiary}
                   autoFocus
+                  selectTextOnFocus
                   returnKeyType="done"
                   onSubmitEditing={saveEditField}
                 />
