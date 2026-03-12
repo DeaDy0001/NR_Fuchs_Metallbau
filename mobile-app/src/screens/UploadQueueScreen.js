@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Animated, Linking } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Animated, Linking, Platform } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -392,6 +392,17 @@ export default function UploadQueueScreen() {
         </View>
       )}
 
+      {/* Android battery optimization hint */}
+      {Platform.OS === 'android' && uploadState.isProcessing === false && (totalPending + totalMetaPending) > 0 && (
+        <TouchableOpacity style={styles.batteryHint} onPress={() => Linking.openSettings()} activeOpacity={0.75}>
+          <Ionicons name="battery-charging-outline" size={18} color="#f59e0b" />
+          <Text style={styles.batteryHintText}>
+            Uploads starten nur beim Öffnen der App? Akku-Optimierung für diese App deaktivieren.
+          </Text>
+          <Ionicons name="chevron-forward" size={15} color="#f59e0b" style={{ flexShrink: 0 }} />
+        </TouchableOpacity>
+      )}
+
       {/* Action button */}
       <View style={styles.actions}>
         <TouchableOpacity style={styles.syncBtn} onPress={handleForceSync} disabled={refreshing}>
@@ -561,6 +572,25 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 12,
     color: colors.textTertiary,
+  },
+  batteryHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(245,158,11,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.25)',
+  },
+  batteryHintText: {
+    flex: 1,
+    fontSize: 12,
+    color: colors.textSecondary,
+    lineHeight: 17,
   },
 
   // Sync button
