@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator, Linking } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator, Linking, AppState } from 'react-native';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { useDialog } from '../components/CustomDialog';
 import { Ionicons } from '@expo/vector-icons';
@@ -51,9 +51,76 @@ export default function SettingsScreen({ navigation }) {
 
   const installedVersion = Constants.expoConfig?.version || '0.0.0';
 
+  // Refs for pause/resume of APK download when screen turns off
+  const downloadResumableRef = useRef(null);
+  const isDownloadPausedRef = useRef(false);
+
   useEffect(() => {
     loadSettings();
   }, []);
+
+  // Cleanup download on unmount (e.g. user navigates away)
+  useEffect(() => {
+    return () => {
+      downloadResumableRef.current = null;
+      isDownloadPausedRef.current = false;
+    };
+  }, []);
+
+  /**
+   * Wraps downloadAppUpdateApk with AppState-aware pause/resume:
+   * - Screen turns off (background/inactive) → download is paused
+   * - App comes back to foreground (active) → download resumes automatically
+   */
+  const doDownloadWithResume = (apkFileId, onProgress) => {
+    return new Promise((resolve, reject) => {
+      let sub = null;
+      isDownloadPausedRef.current = false;
+
+      const done = (uri) => {
+        sub?.remove();
+        downloadResumableRef.current = null;
+        resolve(uri);
+      };
+
+      const fail = (e) => {
+        sub?.remove();
+        downloadResumableRef.current = null;
+        reject(e);
+      };
+
+      const tryResume = async () => {
+        const dl = downloadResumableRef.current;
+        if (!dl) return;
+        isDownloadPausedRef.current = false;
+        try {
+          const result = await dl.resumeAsync();
+          if (result?.uri) done(result.uri);
+          // else: paused again immediately — next AppState event will retry
+        } catch (e) {
+          fail(e);
+        }
+      };
+
+      sub = AppState.addEventListener('change', (nextState) => {
+        const dl = downloadResumableRef.current;
+        if (!dl) return;
+        if ((nextState === 'background' || nextState === 'inactive') && !isDownloadPausedRef.current) {
+          isDownloadPausedRef.current = true;
+          dl.pauseAsync().catch(() => {});
+        } else if (nextState === 'active' && isDownloadPausedRef.current) {
+          tryResume();
+        }
+      });
+
+      downloadAppUpdateApk(apkFileId, onProgress, (dl) => {
+        downloadResumableRef.current = dl;
+      }).then(done).catch((e) => {
+        if (isDownloadPausedRef.current) return; // download was paused, will resume via AppState
+        fail(e);
+      });
+    });
+  };
 
   const loadSettings = async () => {
     setWifiOnly((await getSetting('wifiOnly', 'true')) === 'true');
@@ -91,7 +158,7 @@ export default function SettingsScreen({ navigation }) {
     setUpdateDownloading(true);
     setUpdateDownloadProgress(0);
     try {
-      const uri = await downloadAppUpdateApk(updateInfo.apkFileId, (pct) => {
+      const uri = await doDownloadWithResume(updateInfo.apkFileId, (pct) => {
         setUpdateDownloadProgress(pct);
       });
       const contentUri = await FileSystem.getContentUriAsync(uri);
@@ -117,7 +184,7 @@ export default function SettingsScreen({ navigation }) {
         alert('Fehler', 'APK nicht auf Google Drive gefunden.');
         return;
       }
-      const uri = await downloadAppUpdateApk(update.apkFileId, (pct) => {
+      const uri = await doDownloadWithResume(update.apkFileId, (pct) => {
         setReinstallProgress(pct);
       });
       const contentUri = await FileSystem.getContentUriAsync(uri);

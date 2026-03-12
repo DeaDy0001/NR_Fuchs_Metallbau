@@ -625,7 +625,7 @@ export const checkAppUpdate = async () => {
  * @param {function} onProgress - called with (percent 0-100)
  * @returns {string} local file URI of the downloaded APK
  */
-export const downloadAppUpdateApk = async (apkFileId, onProgress) => {
+export const downloadAppUpdateApk = async (apkFileId, onProgress, onResumableCreated) => {
   const destPath = FileSystem.cacheDirectory + 'fuchs-update.apk';
 
   // Remove old cached APK
@@ -647,6 +647,8 @@ export const downloadAppUpdateApk = async (apkFileId, onProgress) => {
       }
     }
   );
+
+  if (onResumableCreated) onResumableCreated(dl);
 
   const result = await dl.downloadAsync();
   if (!result?.uri) throw new Error('Download fehlgeschlagen');
