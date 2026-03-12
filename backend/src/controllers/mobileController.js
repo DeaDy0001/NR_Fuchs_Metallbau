@@ -2963,22 +2963,34 @@ const previewDeleteRequestImage = async (req, res) => {
     const projectName = req.query.project;
     const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
 
-    // 1. Try local project Bilder/ folder
+    // 1. Try local project Bilder/ folder (exact match, then suffix match)
+    // Mobile sends original camera filename; Drive stores as {timestamp}_{deviceId}_{originalName}
     if (projectName && settings?.project_path) {
-      const filePath = path.join(settings.project_path, projectName, 'Bilder', fileName);
-      if (await fs.pathExists(filePath)) {
-        return res.sendFile(path.resolve(filePath));
+      const bilderDir = path.join(settings.project_path, projectName, 'Bilder');
+      const exactPath = path.join(bilderDir, fileName);
+      if (await fs.pathExists(exactPath)) {
+        return res.sendFile(path.resolve(exactPath));
       }
+      // Suffix match: find any file ending with _fileName (unique Drive naming pattern)
+      try {
+        const files = await fs.readdir(bilderDir);
+        const match = files.find(f => f.endsWith('_' + fileName));
+        if (match) {
+          return res.sendFile(path.resolve(path.join(bilderDir, match)));
+        }
+      } catch { /* folder may not exist */ }
     }
 
-    // 2. Search drive_images DB by filename for thumbnail or local file
+    // 2. Search drive_images DB – exact or suffix match on name/original_name
     const dbImage = db.prepare(`
       SELECT di.*, p.folder_name as project_folder
       FROM drive_images di
       LEFT JOIN projects p ON p.id = di.project_id
-      WHERE di.original_name = ? OR di.name = ?
+      WHERE di.original_name = ?1
+         OR di.name = ?1
+         OR di.name LIKE '%_' || ?1
       ORDER BY di.created_at DESC LIMIT 1
-    `).get(fileName, fileName);
+    `).get(fileName);
 
     if (dbImage) {
       // Try thumbnail (typically /uploads/thumbnails/...)
@@ -2988,11 +3000,17 @@ const previewDeleteRequestImage = async (req, res) => {
           return res.sendFile(path.resolve(thumbPath));
         }
       }
-      // Try local project path via project_folder
+      // Try local project path via project_folder (exact + suffix match)
       if (dbImage.project_folder && settings?.project_path) {
-        const filePath = path.join(settings.project_path, dbImage.project_folder, 'Bilder', fileName);
-        if (await fs.pathExists(filePath)) {
-          return res.sendFile(path.resolve(filePath));
+        const bilderDir = path.join(settings.project_path, dbImage.project_folder, 'Bilder');
+        const exactPath = path.join(bilderDir, dbImage.name || fileName);
+        if (await fs.pathExists(exactPath)) {
+          return res.sendFile(path.resolve(exactPath));
+        }
+        // Also try with original fileName in case name differs
+        const origPath = path.join(bilderDir, fileName);
+        if (await fs.pathExists(origPath)) {
+          return res.sendFile(path.resolve(origPath));
         }
       }
     }

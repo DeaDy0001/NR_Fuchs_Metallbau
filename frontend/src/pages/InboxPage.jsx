@@ -1022,56 +1022,38 @@ export default function PostfachPage() {
             <div className="inbox-entry-loading">Lade Daten von Google Drive…</div>
           )}
 
-          {imageRequests.map(entry => (
-            <ImageRequestRow
-              key={entry.id}
-              entry={entry}
-              projects={projects}
-              canManage={canManageInbox}
-              onRemove={removeRequest(setImageRequests)}
-              onActivity={addActivity}
-            />
-          ))}
-
-          {projektRequests.map(entry => (
-            <ProjektRequestRow
-              key={entry.id}
-              entry={entry}
-              canManage={canManageInbox}
-              onRemove={removeRequest(setProjektRequests)}
-              onActivity={addActivity}
-            />
-          ))}
-
-          {projektChangeRequests.map(entry => (
-            <ProjektChangeRow
-              key={entry.id}
-              entry={entry}
-              canManage={canManageInbox}
-              onRemove={removeRequest(setProjektChangeRequests)}
-              onActivity={addActivity}
-            />
-          ))}
-
-          {imageChangeRequests.map(entry => (
-            <ImageChangeRow
-              key={entry.id}
-              entry={entry}
-              canManage={canManageInbox}
-              onRemove={removeRequest(setImageChangeRequests)}
-              onActivity={addActivity}
-            />
-          ))}
-
-          {deleteRequests.map(req => (
-            <DeleteRequestRow
-              key={req.id}
-              req={req}
-              canManage={canManageInbox}
-              onRemove={removeRequest(setDeleteRequests)}
-              onActivity={addActivity}
-            />
-          ))}
+          {[
+            ...imageRequests.map(e => ({ ...e, _type: 'image',          _sortDate: e.created_at || '' })),
+            ...projektRequests.map(e => ({ ...e, _type: 'projekt',        _sortDate: e.created_at || '' })),
+            ...projektChangeRequests.map(e => ({ ...e, _type: 'projekt_change', _sortDate: e.created_at || '' })),
+            ...imageChangeRequests.map(e => ({ ...e, _type: 'image_change',  _sortDate: e.created_at || '' })),
+            ...deleteRequests.map(e => ({ ...e, _type: 'delete',         _sortDate: e.requested_at || e.created_at || '' })),
+          ]
+            .sort((a, b) => b._sortDate.localeCompare(a._sortDate))
+            .map(item => {
+              if (item._type === 'image') return (
+                <ImageRequestRow key={item.id} entry={item} projects={projects} canManage={canManageInbox}
+                  onRemove={removeRequest(setImageRequests)} onActivity={addActivity} />
+              );
+              if (item._type === 'projekt') return (
+                <ProjektRequestRow key={item.id} entry={item} canManage={canManageInbox}
+                  onRemove={removeRequest(setProjektRequests)} onActivity={addActivity} />
+              );
+              if (item._type === 'projekt_change') return (
+                <ProjektChangeRow key={item.id} entry={item} canManage={canManageInbox}
+                  onRemove={removeRequest(setProjektChangeRequests)} onActivity={addActivity} />
+              );
+              if (item._type === 'image_change') return (
+                <ImageChangeRow key={item.id} entry={item} canManage={canManageInbox}
+                  onRemove={removeRequest(setImageChangeRequests)} onActivity={addActivity} />
+              );
+              if (item._type === 'delete') return (
+                <DeleteRequestRow key={item.id} req={item} canManage={canManageInbox}
+                  onRemove={removeRequest(setDeleteRequests)} onActivity={addActivity} />
+              );
+              return null;
+            })
+          }
         </div>
       )}
 
