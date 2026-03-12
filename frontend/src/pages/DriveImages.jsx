@@ -485,13 +485,13 @@ function DriveImages() {
     loadImages();
   }, [loadImages]);
 
-  // Auto-refresh Bilder-Liste alle 10 Sekunden
+  // Auto-refresh Bilder-Liste alle 30 Sekunden
   useEffect(() => {
     if (!autoRefresh) return;
 
     const interval = setInterval(() => {
       loadImages(true); // Silent refresh (kein Loading-Spinner)
-    }, 10000); // 10 Sekunden
+    }, 30000); // 30 Sekunden
 
     return () => clearInterval(interval);
   }, [autoRefresh, loadImages]); // loadImages has all filter dependencies via useCallback

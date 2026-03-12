@@ -104,19 +104,6 @@ const getAuthenticatedClient = async () => {
   // Set credentials
   client.setCredentials(tokens);
 
-  // Setup automatic token refresh
-  client.on('tokens', async (newTokens) => {
-    console.log('🔄 Refreshing OAuth tokens...');
-
-    // Merge new tokens with existing ones (refresh_token might not be included)
-    const updatedTokens = {
-      ...tokens,
-      ...newTokens
-    };
-
-    await saveTokens(updatedTokens);
-  });
-
   return client;
 };
 
@@ -206,7 +193,7 @@ const getAuthStatus = async () => {
 
 /**
  * Initialize auth service on startup
- * Loads tokens if available
+ * Loads tokens if available and registers the token-refresh listener ONCE.
  */
 const initializeAuth = async () => {
   const client = getOAuth2Client();
@@ -225,6 +212,15 @@ const initializeAuth = async () => {
   } else {
     console.log('ℹ️  No OAuth tokens found - please login via /api/auth/google');
   }
+
+  // Register the token-refresh listener exactly once here so it doesn't
+  // accumulate on every call to getAuthenticatedClient().
+  client.on('tokens', async (newTokens) => {
+    console.log('🔄 Refreshing OAuth tokens...');
+    const currentTokens = await loadTokens();
+    const updatedTokens = { ...(currentTokens || {}), ...newTokens };
+    await saveTokens(updatedTokens);
+  });
 };
 
 /**
