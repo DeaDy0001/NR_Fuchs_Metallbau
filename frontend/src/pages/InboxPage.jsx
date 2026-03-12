@@ -310,24 +310,33 @@ function ImageRequestRow({ entry, projects, canManage, onRemove, onActivity }) {
     const count = ids ? ids.length : entry.images.length;
 
     try {
-      await fetch('/api/mobile/inbox/process-image', {
+      const res = await fetch('/api/mobile/inbox/process-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requestId: entry.id, selectedImageIds: ids, projectId: targetProjectId }),
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(`Fehler: ${data.error || 'Unbekannter Fehler'}`);
+        setBusy(false);
+        return;
+      }
       const projName = targetProjectId
         ? (projects.find(p => p.id === targetProjectId)?.folder_name || entry.project_name)
         : 'Bibliothek';
+      const actualCount = data.downloaded ?? count;
       onActivity({
         id: `local_${Date.now()}`,
         type: 'image_upload',
-        title: `${count} Bild${count !== 1 ? 'er' : ''} hinzugefügt`,
+        title: `${actualCount} Bild${actualCount !== 1 ? 'er' : ''} hinzugefügt`,
         description: `Zu „${projName}" – von ${entry.user_name || entry.device_name}`,
         device_name: entry.device_name,
         created_at: new Date().toISOString(),
       });
-      onRemove(entry.id);
-    } catch { /* ignore */ }
+      if (data.remaining === 0) {
+        onRemove(entry.id);
+      }
+    } catch { /* ignore network errors */ }
     setBusy(false);
   };
 

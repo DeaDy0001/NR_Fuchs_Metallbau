@@ -3692,13 +3692,23 @@ const processImageRequest = async (req, res) => {
 
     const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
     let downloaded = 0;
+    const processedIds = new Set(); // only images that were successfully downloaded + moved
 
     for (const img of toProcess) {
       try {
-        // Build driveDescription from request metadata (title/notes stored in JSON)
+        // Fetch the Drive file's description to get [FUCHS_META] (GPS, title, notes set by mobile app)
         let driveDescription = null;
+        try {
+          const fileMeta = await getFileMetadata(img.drive_file_id);
+          if (fileMeta?.description) driveDescription = fileMeta.description;
+        } catch {}
+
+        // Override with values explicitly stored in the request JSON (title/notes from user input)
         if (img.custom_title || img.notes) {
-          const meta = {};
+          let meta = {};
+          if (driveDescription && driveDescription.startsWith('[FUCHS_META]')) {
+            try { meta = JSON.parse(driveDescription.substring('[FUCHS_META]'.length)); } catch {}
+          }
           if (img.custom_title) meta.title = img.custom_title;
           if (img.notes) meta.notes = img.notes;
           driveDescription = `[FUCHS_META]${JSON.stringify(meta)}`;
@@ -3738,21 +3748,17 @@ const processImageRequest = async (req, res) => {
         }
 
         // Move file on Drive from inbox/images/ to target project folder (or root)
-        try {
-          await moveFileOnDrive(img.drive_file_id, targetDriveFolderId, imagesSubfolder.id);
-        } catch {
-          // If move fails, delete from inbox as fallback
-          try { await deleteFileFromDrive(img.drive_file_id); } catch {}
-        }
+        await moveFileOnDrive(img.drive_file_id, targetDriveFolderId, imagesSubfolder.id);
 
+        // Only mark as processed AFTER both download and Drive move succeed
+        processedIds.add(img.drive_file_id);
         downloaded++;
       } catch (e) {
         console.error(`[Postfach] Failed to process image ${img.file_name}:`, e.message);
       }
     }
 
-    // Update JSON: remove processed images from entry (or whole entry)
-    const processedIds = new Set(toProcess.map(i => i.drive_file_id));
+    // Update JSON: only remove images that were fully processed (downloaded + moved on Drive)
     entry.images = entry.images.filter(i => !processedIds.has(i.drive_file_id));
 
     const updatedData = entry.images.length > 0
@@ -3775,7 +3781,11 @@ const processImageRequest = async (req, res) => {
       );
     }
 
-    res.json({ success: true, downloaded, remaining: entry.images.length });
+    const failed = toProcess.length - downloaded;
+    if (downloaded === 0 && toProcess.length > 0) {
+      return res.status(500).json({ error: `Alle ${toProcess.length} Bilder konnten nicht verarbeitet werden. Bitte Serverlog prüfen.`, downloaded: 0, remaining: entry.images.length });
+    }
+    res.json({ success: true, downloaded, failed, remaining: entry.images.length });
   } catch (error) {
     console.error('[Postfach] processImageRequest error:', error.message);
     res.status(500).json({ error: 'Fehler beim Verarbeiten: ' + error.message });
