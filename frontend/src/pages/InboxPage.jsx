@@ -866,6 +866,11 @@ export default function PostfachPage() {
 
   const totalPending = imageRequests.length + projektRequests.length + imageChangeRequests.length + projektChangeRequests.length + deleteRequests.length;
 
+  // Keep InboxBanner in sync immediately when items are added/removed
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('inbox-count-update', { detail: { count: totalPending } }));
+  }, [totalPending]);
+
   const grouped = groupByDate(activities);
 
   return (

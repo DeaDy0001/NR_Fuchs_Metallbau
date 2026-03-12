@@ -29,10 +29,14 @@ function InboxBanner() {
   useEffect(() => {
     refresh();
     const interval = setInterval(refresh, 60000);
-    window.addEventListener('inbox-sync-done', refresh);
+    const onSyncDone = () => refresh();
+    const onCountUpdate = (e) => setUnreadCount(e.detail.count);
+    window.addEventListener('inbox-sync-done', onSyncDone);
+    window.addEventListener('inbox-count-update', onCountUpdate);
     return () => {
       clearInterval(interval);
-      window.removeEventListener('inbox-sync-done', refresh);
+      window.removeEventListener('inbox-sync-done', onSyncDone);
+      window.removeEventListener('inbox-count-update', onCountUpdate);
     };
   }, [refresh]);
 
