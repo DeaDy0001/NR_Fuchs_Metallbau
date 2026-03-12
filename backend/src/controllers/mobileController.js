@@ -1210,6 +1210,9 @@ const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePa
       if (meta.title) {
         customTitle = meta.title;
       }
+      if (meta.photo_taken_at && !photoTakenAt) {
+        photoTakenAt = meta.photo_taken_at;
+      }
     } catch (e) {
       // Invalid JSON - ignore
     }
@@ -3955,14 +3958,40 @@ const processProjektChangeRequest = async (req, res) => {
 
     if (!project) return res.status(404).json({ error: 'Projekt nicht gefunden' });
 
-    // Append notes
-    const newNotes = entry.notes || '';
-    const combined = project.notes
-      ? `${project.notes}\n\n${newNotes}`.trim()
-      : newNotes;
+    // Apply metadata changes
+    const updates = [];
+    const values = [];
 
-    db.prepare("UPDATE projects SET notes = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(combined, project.id);
+    // Notes: append if project already has notes, otherwise set
+    if (entry.notes != null) {
+      const newNotes = entry.notes || '';
+      const combined = project.notes
+        ? `${project.notes}\n\n${newNotes}`.trim()
+        : newNotes;
+      updates.push('notes = ?');
+      values.push(combined);
+    }
+
+    // Color: replace
+    if (entry.color !== undefined) {
+      updates.push('color = ?');
+      values.push(entry.color || null);
+    }
+
+    // Tags: merge (add new tags to existing)
+    if (entry.tags !== undefined && Array.isArray(entry.tags)) {
+      let existingTags = [];
+      try { existingTags = JSON.parse(project.tags || '[]'); } catch {}
+      const tagSet = new Set([...existingTags, ...entry.tags]);
+      updates.push('tags = ?');
+      values.push(JSON.stringify([...tagSet]));
+    }
+
+    if (updates.length > 0) {
+      updates.push("updated_at = datetime('now')");
+      values.push(project.id);
+      db.prepare(`UPDATE projects SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    }
 
     // Push updated project.json to Drive
     const updatedProject = db.prepare('SELECT * FROM projects WHERE id = ?').get(project.id);
@@ -3975,10 +4004,14 @@ const processProjektChangeRequest = async (req, res) => {
     const updatedData = data.filter(e => e.id !== requestId);
     await _saveInboxJson(inboxFolder.id, 'projekt_change_requests.json', fileId, updatedData);
 
+    const changeDesc = [];
+    if (entry.notes != null) changeDesc.push('Notizen');
+    if (entry.color !== undefined) changeDesc.push('Farbe');
+    if (entry.tags !== undefined) changeDesc.push('Tags');
     logActivity(
-      'project_notes',
-      `Projektnotiz zu „${project.folder_name}"`,
-      `Von ${entry.user_name || entry.device_name}`,
+      'project_update',
+      `Projekt „${project.folder_name}" aktualisiert`,
+      `${changeDesc.join(', ')} – von ${entry.user_name || entry.device_name}`,
       entry.device_name,
       `proj_chg_${requestId}`
     );
@@ -4111,6 +4144,57 @@ const rejectImageChangeRequest = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/mobile/inbox/image-meta/:fileId
+ * Returns Drive file metadata (size, GPS, description) for the inbox lightbox.
+ */
+const getInboxImageMeta = async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    if (!fileId) return res.status(400).json({ error: 'fileId fehlt' });
+
+    const { getDriveClient } = require('../services/authService');
+    const drive = await getDriveClient();
+    const response = await drive.files.get({
+      fileId,
+      fields: 'id, name, size, mimeType, description, imageMediaMetadata, createdTime, modifiedTime',
+    });
+
+    const file = response.data;
+    const result = {
+      name: file.name,
+      size: file.size ? parseInt(file.size) : null,
+      mimeType: file.mimeType,
+      createdTime: file.createdTime || null,
+      modifiedTime: file.modifiedTime || null,
+      width: file.imageMediaMetadata?.width || null,
+      height: file.imageMediaMetadata?.height || null,
+      cameraMake: file.imageMediaMetadata?.cameraMake || null,
+      cameraModel: file.imageMediaMetadata?.cameraModel || null,
+      photoTakenAt: file.imageMediaMetadata?.time || null,
+      gps: null,
+      customTitle: null,
+      notes: null,
+    };
+
+    // Parse [FUCHS_META] from description
+    if (file.description && file.description.startsWith('[FUCHS_META]')) {
+      try {
+        const meta = JSON.parse(file.description.substring('[FUCHS_META]'.length));
+        if (meta.gps) result.gps = meta.gps;
+        if (meta.title) result.customTitle = meta.title;
+        if (meta.notes) result.notes = meta.notes;
+        if (meta.photo_taken_at && !result.photoTakenAt) result.photoTakenAt = meta.photo_taken_at;
+      } catch {}
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error('Error getting inbox image meta:', error.message);
+    res.status(500).json({ error: 'Metadaten konnten nicht geladen werden' });
+  }
+};
+
 module.exports = {
   getActivities,
   markActivitiesRead,
@@ -4133,6 +4217,7 @@ module.exports = {
   getInbox,
   getInboxImages,
   proxyInboxImage,
+  getInboxImageMeta,
   confirmInboxProject,
   addToLibrary,
   mergeInboxProject,

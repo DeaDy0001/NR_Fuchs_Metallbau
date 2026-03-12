@@ -122,7 +122,7 @@ export const fetchProjects = async (onProject = null) => {
 /**
  * Save project metadata (tags, color, notes, starred) to project.json in the project folder
  */
-export const saveProjectMetadata = async (projectFolderId, metadata) => {
+export const saveProjectMetadata = async (projectFolderId, metadata, projectName = null) => {
   // Check if project.json already exists
   const files = await listFiles(projectFolderId, {
     fields: 'files(id,name)',
@@ -144,7 +144,43 @@ export const saveProjectMetadata = async (projectFolderId, metadata) => {
     await createJsonFile(projectFolderId, 'project.json', data);
   }
 
+  // Also create a change request so desktop inbox shows the update
+  try {
+    await reportProjectMetadataChange(projectFolderId, projectName, data);
+  } catch (e) {
+    console.warn('[Fuchs] Could not create project change request:', e.message);
+  }
+
   return data;
+};
+
+/**
+ * Report full project metadata change (color, notes, tags) to desktop inbox.
+ */
+export const reportProjectMetadataChange = async (projectFolderId, projectName, metadata) => {
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) return;
+
+  const inboxFolderId = await getInboxFolderId();
+  const deviceId = await getSetting('heartbeat_device_id', '');
+  const deviceName = await getSetting('deviceName', 'Handy');
+  const userName = await getSetting('userName', '');
+
+  const entry = {
+    id: `proj_chg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+    device_id: deviceId,
+    device_name: deviceName,
+    user_name: userName,
+    project_name: projectName,
+    project_folder_id: projectFolderId || null,
+    color: metadata.color || null,
+    notes: metadata.notes || null,
+    tags: metadata.tags || [],
+    is_starred: metadata.is_starred || false,
+    created_at: new Date().toISOString(),
+  };
+
+  await _appendToInboxJson(inboxFolderId, 'projekt_change_requests.json', entry);
 };
 
 /**
@@ -287,7 +323,7 @@ export const deletePendingProject = async (folderId) => {
  *
  * Returns { success, fileId, uniqueFileName }
  */
-export const uploadImage = async (fileUri, fileName, mimeType, projectFolderId = null, projectName = null, gpsData = null, customTitle = null, notes = null) => {
+export const uploadImage = async (fileUri, fileName, mimeType, projectFolderId = null, projectName = null, gpsData = null, customTitle = null, notes = null, photoTakenAt = null) => {
   const connection = await getActiveDriveConnection();
   if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
 
@@ -301,22 +337,23 @@ export const uploadImage = async (fileUri, fileName, mimeType, projectFolderId =
   const baseName = fileName.includes('.') ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
   const uniqueFileName = `${Date.now()}_${devicePrefix}_${baseName}${ext}`;
 
-  // Build FUCHS_META description (GPS, title, notes) on the Drive file itself
+  // Build FUCHS_META description (GPS, title, notes, capture date) on the Drive file itself
   let description = null;
   const parsedGps = gpsData ? (typeof gpsData === 'string' ? JSON.parse(gpsData) : gpsData) : null;
   const userName = await getSetting('userName', '');
-  if (parsedGps || customTitle || notes || userName) {
-    const meta = {};
-    if (parsedGps) {
-      meta.gps = {
-        latitude: parsedGps.latitude,
-        longitude: parsedGps.longitude,
-        altitude: parsedGps.altitude || null,
-      };
-    }
-    if (customTitle) meta.title = customTitle;
-    if (notes) meta.notes = notes;
-    if (userName) meta.uploaded_by = userName;
+  const meta = {};
+  if (parsedGps) {
+    meta.gps = {
+      latitude: parsedGps.latitude,
+      longitude: parsedGps.longitude,
+      altitude: parsedGps.altitude || null,
+    };
+  }
+  if (customTitle) meta.title = customTitle;
+  if (notes) meta.notes = notes;
+  if (userName) meta.uploaded_by = userName;
+  if (photoTakenAt) meta.photo_taken_at = photoTakenAt;
+  if (Object.keys(meta).length > 0) {
     description = `[FUCHS_META]${JSON.stringify(meta)}`;
   }
 

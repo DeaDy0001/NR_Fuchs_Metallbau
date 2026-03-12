@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useDialog } from '../components/CustomDialog';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
+import CheckboxNotes from '../components/CheckboxNotes';
 import { downloadFullImage } from '../services/syncService';
 import { getImageUrl } from '../services/api';
 import { addToDeleteQueue, updateRecentPhotoMetadata } from '../services/database';
@@ -582,16 +583,12 @@ export default function ImageViewScreen({ route, navigation }) {
                 <Ionicons name="checkmark-circle" size={28} color={colors.accent} />
               </TouchableOpacity>
             </View>
-            <TextInput
-              ref={editInputRef}
-              style={styles.notesFullScreenInput}
+            <CheckboxNotes
               value={editFieldValue}
-              onChangeText={setEditFieldValue}
+              onChange={setEditFieldValue}
               placeholder="Notizen eingeben..."
-              placeholderTextColor={colors.textTertiary}
-              multiline
-              textAlignVertical="top"
               autoFocus
+              minHeight={300}
             />
           </View>
         </Modal>

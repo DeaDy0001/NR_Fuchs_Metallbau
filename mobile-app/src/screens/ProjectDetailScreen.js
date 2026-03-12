@@ -7,7 +7,8 @@ import { useDialog } from '../components/CustomDialog';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
-import { fetchProjectImages, getImageUrl, saveProjectMetadata, reportProjectNotes } from '../services/api';
+import CheckboxNotes from '../components/CheckboxNotes';
+import { fetchProjectImages, getImageUrl, saveProjectMetadata } from '../services/api';
 import { downloadProjectImages } from '../services/syncService';
 import { getCachedProjectByFolderId, cacheProject } from '../services/database';
 
@@ -94,15 +95,29 @@ export default function ProjectDetailScreen({ navigation, route }) {
 
   const handleSendNotes = async () => {
     const text = notesText.trim();
-    if (!text) return;
     setSendingNotes(true);
     try {
-      await reportProjectNotes(projectId, projectFolderId, projectName, text);
-      setNotesText('');
+      const folderId = projectFolderId;
+      if (!folderId) throw new Error('Kein Ordner-ID');
+
+      const newMeta = {
+        color: meta.color || null,
+        notes: text || null,
+        tags: meta.tags || [],
+        is_starred: false,
+      };
+      await saveProjectMetadata(folderId, newMeta, projectName);
+
+      // Update local cache
+      const cached = await getCachedProjectByFolderId(folderId);
+      if (cached) {
+        await cacheProject({ ...cached, notes: newMeta.notes });
+      }
+
+      setMeta(prev => ({ ...prev, notes: newMeta.notes }));
       setShowNotesModal(false);
-      alert('Gesendet', 'Ihre Notiz wurde an die Desktop-Software übermittelt.');
     } catch (e) {
-      alert('Fehler', 'Notiz konnte nicht gesendet werden: ' + e.message);
+      alert('Fehler', 'Notiz konnte nicht gespeichert werden: ' + e.message);
     } finally {
       setSendingNotes(false);
     }
@@ -138,7 +153,7 @@ export default function ProjectDetailScreen({ navigation, route }) {
         is_starred: false,
       };
 
-      await saveProjectMetadata(folderId, newMeta);
+      await saveProjectMetadata(folderId, newMeta, projectName);
 
       // Update local cache
       const cached = await getCachedProjectByFolderId(folderId);
@@ -296,7 +311,7 @@ export default function ProjectDetailScreen({ navigation, route }) {
       {/* FAB - Notes (left of camera) */}
       <TouchableOpacity
         style={styles.fabNotes}
-        onPress={() => { setNotesText(''); setShowNotesModal(true); }}
+        onPress={() => { setNotesText(meta.notes || ''); setShowNotesModal(true); }}
       >
         <Ionicons name="document-text-outline" size={26} color="white" />
       </TouchableOpacity>
@@ -321,31 +336,28 @@ export default function ProjectDetailScreen({ navigation, route }) {
             <TouchableOpacity onPress={() => setShowNotesModal(false)}>
               <Ionicons name="close" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Notiz senden</Text>
+            <Text style={styles.modalTitle}>Notizen</Text>
             <TouchableOpacity
               onPress={handleSendNotes}
-              disabled={sendingNotes || !notesText.trim()}
-              style={[styles.saveBtn, (sendingNotes || !notesText.trim()) && styles.saveBtnDisabled]}
+              disabled={sendingNotes}
+              style={[styles.saveBtn, sendingNotes && styles.saveBtnDisabled]}
             >
               {sendingNotes
                 ? <ActivityIndicator size="small" color="white" />
-                : <Text style={styles.saveBtnText}>Senden</Text>
+                : <Text style={styles.saveBtnText}>Speichern</Text>
               }
             </TouchableOpacity>
           </View>
           <View style={styles.notesModalBody}>
             <Text style={styles.notesModalHint}>
-              Notiz zu „{projectName}" an die Desktop-Software senden:
+              Notizen für „{projectName}":
             </Text>
-            <TextInput
-              style={styles.notesModalInput}
+            <CheckboxNotes
               value={notesText}
-              onChangeText={setNotesText}
+              onChange={setNotesText}
               placeholder="Notiz eingeben..."
-              placeholderTextColor={colors.textTertiary}
-              multiline
               autoFocus
-              textAlignVertical="top"
+              minHeight={200}
             />
           </View>
         </View>
@@ -393,15 +405,11 @@ export default function ProjectDetailScreen({ navigation, route }) {
 
             {/* Notes */}
             <Text style={styles.fieldLabel}>Notizen</Text>
-            <TextInput
-              style={styles.notesInput}
+            <CheckboxNotes
               value={editNotes}
-              onChangeText={setEditNotes}
+              onChange={setEditNotes}
               placeholder="Notizen zum Projekt..."
-              placeholderTextColor={colors.textTertiary}
-              multiline
-              numberOfLines={4}
-              textAlignVertical="top"
+              minHeight={100}
             />
 
             {/* Tags */}

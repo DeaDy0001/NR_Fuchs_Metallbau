@@ -137,8 +137,10 @@ function ProjectPicker({ projects, value, onChange, placeholder = 'Projekt suche
 }
 
 // ─── Lightbox ─────────────────────────────────────────────────────────────────
-function InboxLightbox({ images, startIndex, onClose }) {
+function InboxLightbox({ images, startIndex, onClose, entry }) {
   const [index, setIndex] = useState(startIndex);
+  const [meta, setMeta] = useState(null);
+  const [metaLoading, setMetaLoading] = useState(false);
   const img = images[index];
 
   useEffect(() => {
@@ -150,6 +152,35 @@ function InboxLightbox({ images, startIndex, onClose }) {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [index, images.length, onClose]);
+
+  // Fetch Drive file metadata when image changes
+  useEffect(() => {
+    setMeta(null);
+    setMetaLoading(true);
+    fetch(`/api/mobile/inbox/image-meta/${img.drive_file_id}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => setMeta(data))
+      .catch(() => {})
+      .finally(() => setMetaLoading(false));
+  }, [img.drive_file_id]);
+
+  const formatSize = (bytes) => {
+    if (!bytes) return '–';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  const formatDateTime = (iso) => {
+    if (!iso) return null;
+    const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z');
+    return d.toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric' })
+      + '  ' + d.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const displayTitle = img.custom_title || meta?.customTitle || null;
+  const displayNotes = img.notes || meta?.notes || null;
+  const gps = meta?.gps || null;
 
   return (
     <div className="inbox-lightbox-overlay" onClick={onClose}>
@@ -168,20 +199,77 @@ function InboxLightbox({ images, startIndex, onClose }) {
         <div className="inbox-lightbox-image-area">
           <img
             src={`/api/mobile/inbox/image-proxy/${img.drive_file_id}`}
-            alt={img.custom_title || img.file_name}
+            alt={displayTitle || img.file_name}
             className="inbox-lightbox-img"
           />
         </div>
         <div className="inbox-lightbox-sidebar">
           <div className="inbox-lightbox-counter">{index + 1} / {images.length}</div>
+
+          {displayTitle && (
+            <div className="inbox-lightbox-section">
+              <div className="inbox-lightbox-label">Name</div>
+              <div className="inbox-lightbox-value">{displayTitle}</div>
+            </div>
+          )}
+
           <div className="inbox-lightbox-section">
             <div className="inbox-lightbox-label">Dateiname</div>
-            <div className="inbox-lightbox-value">{img.custom_title || img.file_name}</div>
+            <div className="inbox-lightbox-value inbox-lightbox-filename">{img.file_name}</div>
           </div>
-          {img.notes && (
+
+          <div className="inbox-lightbox-section">
+            <div className="inbox-lightbox-label">Notizen</div>
+            <div className="inbox-lightbox-notes">{displayNotes || 'Keine Notizen vorhanden'}</div>
+          </div>
+
+          {entry?.created_at && (
             <div className="inbox-lightbox-section">
-              <div className="inbox-lightbox-label">Notizen</div>
-              <div className="inbox-lightbox-notes">{img.notes}</div>
+              <div className="inbox-lightbox-label">Hochgeladen am</div>
+              <div className="inbox-lightbox-value">{formatDateTime(entry.created_at)}</div>
+            </div>
+          )}
+
+          {meta?.photoTakenAt && (
+            <div className="inbox-lightbox-section">
+              <div className="inbox-lightbox-label">Aufgenommen am</div>
+              <div className="inbox-lightbox-value">{formatDateTime(meta.photoTakenAt)}</div>
+            </div>
+          )}
+
+          <div className="inbox-lightbox-section">
+            <div className="inbox-lightbox-label">Größe</div>
+            <div className="inbox-lightbox-value">{metaLoading ? '…' : formatSize(meta?.size)}</div>
+          </div>
+
+          {meta?.width && meta?.height && (
+            <div className="inbox-lightbox-section">
+              <div className="inbox-lightbox-label">Auflösung</div>
+              <div className="inbox-lightbox-value">{meta.width} × {meta.height} px</div>
+            </div>
+          )}
+
+          {gps && (
+            <div className="inbox-lightbox-section">
+              <div className="inbox-lightbox-label">GPS</div>
+              <div className="inbox-lightbox-value">
+                {parseFloat(gps.latitude).toFixed(6)}, {parseFloat(gps.longitude).toFixed(6)}
+                {gps.altitude != null && <span style={{ opacity: 0.6 }}> ({parseFloat(gps.altitude).toFixed(0)} m)</span>}
+              </div>
+            </div>
+          )}
+
+          {entry?.user_name && (
+            <div className="inbox-lightbox-section">
+              <div className="inbox-lightbox-label">Hochgeladen von</div>
+              <div className="inbox-lightbox-value">{entry.user_name}</div>
+            </div>
+          )}
+
+          {entry?.device_name && (
+            <div className="inbox-lightbox-section">
+              <div className="inbox-lightbox-label">Gerät</div>
+              <div className="inbox-lightbox-value">{entry.device_name}</div>
             </div>
           )}
         </div>
@@ -448,6 +536,7 @@ function ImageRequestRow({ entry, projects, canManage, onRemove, onActivity }) {
           images={entry.images}
           startIndex={lightboxIndex}
           onClose={() => setLightboxIndex(null)}
+          entry={entry}
         />
       )}
     </div>
@@ -596,7 +685,7 @@ function ProjektChangeRow({ entry, canManage, onRemove, onActivity }) {
           <EntryIconGroup icons={[{ Icon: FileText, color: '#8b5cf6' }, { Icon: FolderPlus, color: '#10b981' }]} />
           <div>
             <div className="inbox-entry-badges">
-              <Badge label="Projektnotiz" color="#8b5cf6" />
+              <Badge label="Projektänderung" color="#8b5cf6" />
               <Badge label={entry.project_name} color="#6b7280" />
             </div>
             <div className="inbox-entry-meta">
@@ -614,8 +703,26 @@ function ProjektChangeRow({ entry, canManage, onRemove, onActivity }) {
 
       {expanded && (
         <div className="inbox-entry-body">
-          {entry.notes && (
-            <p className="inbox-entry-notes">{entry.notes}</p>
+          {entry.color && (
+            <div className="inbox-change-detail">
+              <span className="inbox-change-label">Farbe:</span>
+              <span className="inbox-color-swatch" style={{ background: entry.color }} />
+            </div>
+          )}
+          {entry.tags && entry.tags.length > 0 && (
+            <div className="inbox-change-detail">
+              <span className="inbox-change-label">Tags:</span>
+              <span>{entry.tags.join(', ')}</span>
+            </div>
+          )}
+          {entry.notes != null && (
+            <div className="inbox-change-detail">
+              <span className="inbox-change-label">Notizen:</span>
+              <p className="inbox-entry-notes" style={{ margin: '4px 0 0' }}>{entry.notes || '(leer)'}</p>
+            </div>
+          )}
+          {!entry.notes && !entry.color && (!entry.tags || entry.tags.length === 0) && (
+            <p className="inbox-entry-notes" style={{ opacity: 0.5 }}>Keine Änderungen</p>
           )}
           {canManage && (
             <div className="inbox-entry-actions">

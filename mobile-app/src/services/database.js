@@ -158,6 +158,7 @@ const initTables = async () => {
     { table: 'upload_queue', column: 'gps_data', sql: 'ALTER TABLE upload_queue ADD COLUMN gps_data TEXT' },
     { table: 'upload_queue', column: 'custom_title', sql: 'ALTER TABLE upload_queue ADD COLUMN custom_title TEXT' },
     { table: 'upload_queue', column: 'notes', sql: 'ALTER TABLE upload_queue ADD COLUMN notes TEXT' },
+    { table: 'upload_queue', column: 'photo_taken_at', sql: 'ALTER TABLE upload_queue ADD COLUMN photo_taken_at TEXT' },
     // recent_photos migrations
     { table: 'recent_photos', column: 'custom_title', sql: 'ALTER TABLE recent_photos ADD COLUMN custom_title TEXT' },
     { table: 'recent_photos', column: 'notes', sql: 'ALTER TABLE recent_photos ADD COLUMN notes TEXT' },
@@ -201,7 +202,7 @@ export const setSetting = async (key, value) => {
 // Upload queue helpers
 // ============================================================
 
-export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = null, projectName = null, projectFolderId = null, gpsData = null, skipRecentPhotos = false, customTitle = null, notes = null) => {
+export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = null, projectName = null, projectFolderId = null, gpsData = null, skipRecentPhotos = false, customTitle = null, notes = null, photoTakenAt = null) => {
   const db = await getDb();
 
   // Also add to recent photos for the home screen (skip when re-assigning existing photos)
@@ -219,8 +220,8 @@ export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = 
   }
 
   return await db.runAsync(
-    'INSERT INTO upload_queue (file_uri, file_name, mime_type, project_id, project_name, project_folder_id, gps_data, custom_title, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [fileUri, fileName, mimeType, projectId, projectName, projectFolderId, gpsData, customTitle, notes]
+    'INSERT INTO upload_queue (file_uri, file_name, mime_type, project_id, project_name, project_folder_id, gps_data, custom_title, notes, photo_taken_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [fileUri, fileName, mimeType, projectId, projectName, projectFolderId, gpsData, customTitle, notes, photoTakenAt]
   );
 };
 

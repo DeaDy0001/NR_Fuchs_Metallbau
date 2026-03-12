@@ -155,7 +155,8 @@ export const processUploadQueue = async () => {
           item.project_name || null,
           item.gps_data || null,
           item.custom_title || null,
-          item.notes || null
+          item.notes || null,
+          item.photo_taken_at || null
         );
 
         // Step 3: Report metadata to desktop server (best-effort, legacy endpoint)

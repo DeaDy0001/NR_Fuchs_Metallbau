@@ -1,0 +1,96 @@
+.checkbox-notes-wrap {
+  position: relative;
+}
+
+.checkbox-notes-textarea {
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  background: var(--bg-tertiary, #0f1117);
+  border: 1px solid var(--border-color, #2a2d3e);
+  border-radius: 6px;
+  color: var(--text-primary, #fff);
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.checkbox-notes-textarea:focus {
+  outline: none;
+  border-color: var(--accent-color, #3b82f6);
+}
+
+.checkbox-notes-display {
+  min-height: 40px;
+  background: var(--bg-tertiary, #0f1117);
+  border: 1px solid var(--border-color, #2a2d3e);
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: text;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  transition: border-color 0.15s;
+}
+.checkbox-notes-display:hover {
+  border-color: var(--accent-color, #3b82f6);
+}
+
+.checkbox-notes-empty {
+  min-height: 40px;
+}
+
+.checkbox-notes-placeholder {
+  color: var(--text-tertiary, #555);
+  font-style: italic;
+}
+
+.checkbox-notes-line {
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.checkbox-notes-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  cursor: pointer;
+  padding: 1px 0;
+  user-select: none;
+}
+.checkbox-notes-checkbox:hover {
+  opacity: 0.8;
+}
+.checkbox-notes-checkbox svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--accent-color, #3b82f6);
+}
+.checkbox-notes-checked svg {
+  color: var(--success-color, #22c55e);
+}
+
+.checkbox-notes-strikethrough {
+  text-decoration: line-through;
+  opacity: 0.5;
+}
+
+.checkbox-notes-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 3px 8px;
+  font-size: 0.75rem;
+  background: transparent;
+  border: 1px solid var(--border-color, #2a2d3e);
+  border-radius: 4px;
+  color: var(--text-secondary, #94a3b8);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.checkbox-notes-add-btn:hover {
+  background: var(--bg-tertiary, #0f1117);
+  border-color: var(--accent-color, #3b82f6);
+  color: var(--accent-color, #3b82f6);
+}

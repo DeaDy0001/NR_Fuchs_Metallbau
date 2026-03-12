@@ -314,6 +314,20 @@ export default function CameraScreen({ navigation, route }) {
 
       const gpsData = await getCurrentLocation();
 
+      // Extract capture date from EXIF (will be lost during compression)
+      let capturedAt = null;
+      if (photo.exif) {
+        const dateStr = photo.exif.DateTimeOriginal || photo.exif.DateTime || photo.exif.DateTimeDigitized;
+        if (dateStr) {
+          try {
+            // EXIF format: "2024:03:15 14:30:00" → ISO
+            const iso = dateStr.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3').replace(' ', 'T');
+            capturedAt = new Date(iso).toISOString();
+          } catch {}
+        }
+      }
+      if (!capturedAt) capturedAt = new Date().toISOString();
+
       const newImage = {
         uri: photo.uri,
         fileName: `photo_${Date.now()}.jpg`,
@@ -322,6 +336,7 @@ export default function CameraScreen({ navigation, route }) {
         height: photo.height,
         exif: photo.exif,
         gps: gpsData,
+        capturedAt,
       };
 
       setCapturedImages(prev => [...prev, newImage]);
@@ -416,7 +431,8 @@ export default function CameraScreen({ navigation, route }) {
           img.gps ? JSON.stringify(img.gps) : null,
           false,
           img.customTitle || null,
-          img.notes || null
+          img.notes || null,
+          img.capturedAt || new Date().toISOString()
         );
       }
 
