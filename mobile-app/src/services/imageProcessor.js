@@ -1,6 +1,5 @@
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
-import * as MediaLibrary from 'expo-media-library';
 import { Image } from 'react-native';
 import { getSetting } from './database';
 
@@ -53,30 +52,6 @@ export const processImageForUpload = async (fileUri, fileName) => {
   const quality = parseInt(await getSetting('imageQuality', '80')) / 100;
   const maxResolution = parseInt(await getSetting('maxImageResolution', '1920'));
   const maxSizeKB = parseInt(await getSetting('maxImageSizeKB', '1024'));
-  const keepOriginal = (await getSetting('keepOriginal', 'true')) === 'true';
-
-  // Save original to phone gallery if requested (only for camera captures)
-  // Camera photos are named "photo_..." - gallery picks already exist in the gallery
-  if (keepOriginal && fileName && fileName.startsWith('photo_')) {
-    try {
-      // Use getPermissionsAsync (not request) since we're in background queue.
-      // Permission is pre-requested in CameraScreen when the user opens the camera.
-      let { status } = await MediaLibrary.getPermissionsAsync();
-      if (status !== 'granted') {
-        // Fallback: try requesting (works on some devices even in background)
-        const result = await MediaLibrary.requestPermissionsAsync();
-        status = result.status;
-      }
-      if (status === 'granted') {
-        await MediaLibrary.saveToLibraryAsync(fileUri);
-        console.log(`[Fuchs] Original saved to gallery: ${fileName}`);
-      } else {
-        console.warn('[Fuchs] MediaLibrary permission not granted, cannot save original to gallery');
-      }
-    } catch (e) {
-      console.warn('[Fuchs] Could not save original to gallery:', e.message);
-    }
-  }
 
   // Skip processing only when no format conversion is needed AND all other settings are default
   const noFormatConversion = isOriginalFormat || serverFormat === 'jpeg' || serverFormat === 'jpg';

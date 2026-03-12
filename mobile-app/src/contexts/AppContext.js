@@ -141,7 +141,16 @@ export const AppProvider = ({ children }) => {
       }
 
       // Step 2: Check Google authentication
-      const authed = await isAuthenticated();
+      // If first attempt fails (e.g. transient network on app cold-start) but a
+      // refresh token is stored, wait 2 s and try once more before showing login.
+      let authed = await isAuthenticated();
+      if (!authed) {
+        const storedRefreshToken = await getSetting('googleRefreshToken');
+        if (storedRefreshToken) {
+          await new Promise(r => setTimeout(r, 2000));
+          authed = await isAuthenticated();
+        }
+      }
       console.log('[Fuchs] loadState - google authed:', authed);
       setIsGoogleAuthed(authed);
 

@@ -12,7 +12,7 @@ import * as MediaLibrary from 'expo-media-library';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { addToUploadQueue, getCachedProjects, getPendingProjects, addPendingProject } from '../services/database';
+import { addToUploadQueue, getCachedProjects, getPendingProjects, addPendingProject, getSetting } from '../services/database';
 import { createProject } from '../services/api';
 import { processUploadQueue } from '../services/uploadQueue';
 
@@ -423,6 +423,24 @@ export default function CameraScreen({ navigation, route }) {
     const count = capturedImages.length;
 
     try {
+      // Save original to gallery for camera photos (only once, before queuing)
+      // Gallery picks already exist in the gallery so we skip them.
+      const keepOriginal = (await getSetting('keepOriginal', 'true')) === 'true';
+      if (keepOriginal) {
+        let { status } = await MediaLibrary.getPermissionsAsync();
+        if (status !== 'granted') {
+          const result = await MediaLibrary.requestPermissionsAsync();
+          status = result.status;
+        }
+        if (status === 'granted') {
+          for (const img of capturedImages) {
+            if (img.fileName && img.fileName.startsWith('photo_')) {
+              try { await MediaLibrary.saveToLibraryAsync(img.uri); } catch {}
+            }
+          }
+        }
+      }
+
       // Always add to queue - non-blocking
       for (const img of capturedImages) {
         await addToUploadQueue(

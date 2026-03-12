@@ -31,9 +31,6 @@ export default function SettingsScreen({ navigation }) {
   const [autoDeleteOld, setAutoDeleteOld] = useState(false);
   const [autoDeleteDays, setAutoDeleteDays] = useState(60);
 
-  // GPS settings
-  const [gpsDefault, setGpsDefault] = useState(true);
-
   // Bulk download
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState('');
@@ -132,7 +129,6 @@ export default function SettingsScreen({ navigation }) {
     setLazyLoadImages((await getSetting('lazyLoadImages', 'true')) === 'true');
     setAutoDeleteOld((await getSetting('autoDeleteOld', 'false')) === 'true');
     setAutoDeleteDays(parseInt(await getSetting('autoDeleteDays', '60')));
-    setGpsDefault((await getSetting('gpsDefault', 'true')) === 'true');
     setDownloadMaxDays(parseInt(await getSetting('downloadMaxDays', '60')));
     setServerImageFormat((await getSetting('serverImageFormat', 'jpeg')).toUpperCase());
 
@@ -211,6 +207,8 @@ export default function SettingsScreen({ navigation }) {
   const handleToggleWifi = async (value) => {
     setWifiOnly(value);
     await saveSetting('wifiOnly', value);
+    // Reset banner dismissal so it can reappear when re-enabled
+    if (value) await saveSetting('wifiBannerDismissed', 'false');
   };
 
   const handleClearCache = () => {
@@ -514,24 +512,11 @@ export default function SettingsScreen({ navigation }) {
 
         <View style={styles.settingRow}>
           <View style={styles.settingInfo}>
-            <Text style={styles.settingLabel}>GPS standardmäßig aktiv</Text>
-            <Text style={styles.settingDesc}>Standortdaten bei jedem Foto speichern</Text>
-          </View>
-          <Switch
-            value={gpsDefault}
-            onValueChange={async (v) => { setGpsDefault(v); await saveSetting('gpsDefault', v); }}
-            trackColor={{ false: colors.bgTertiary, true: colors.accent }}
-            thumbColor="white"
-          />
-        </View>
-
-        <View style={styles.settingRow}>
-          <View style={styles.settingInfo}>
             <Text style={styles.settingLabel}>Original behalten</Text>
             <Text style={styles.settingDesc}>
               {keepOriginal
-                ? 'Originalfoto wird in der Galerie gespeichert, komprimierte Version wird hochgeladen'
-                : 'Nur die komprimierte Version bleibt in der App'}
+                ? 'Originalfoto wird beim Hochladen einmalig in der Galerie gespeichert'
+                : 'Kein Foto wird in der Galerie gespeichert'}
             </Text>
           </View>
           <Switch

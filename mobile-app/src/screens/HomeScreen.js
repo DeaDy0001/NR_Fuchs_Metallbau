@@ -2,13 +2,15 @@ import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, RefreshControl,
   Image, Dimensions, ActivityIndicator, Modal, TextInput, ScrollView,
+  Linking,
 } from 'react-native';
 import { useDialog } from '../components/CustomDialog';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Network from 'expo-network';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { getRecentPhotos, getCachedProjects, getPendingProjects, addToUploadQueue, updateRecentPhotoProject, getQueuedFileNames, addToDeleteQueue } from '../services/database';
+import { getRecentPhotos, getCachedProjects, getPendingProjects, addToUploadQueue, updateRecentPhotoProject, getQueuedFileNames, addToDeleteQueue, getSetting, setSetting } from '../services/database';
 import { createProject } from '../services/api';
 import { syncMetadata } from '../services/syncService';
 import { processDeleteQueue } from '../services/deleteQueue';
@@ -32,15 +34,38 @@ export default function HomeScreen({ navigation }) {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
 
+  // WiFi-only banner
+  const [showWifiBanner, setShowWifiBanner] = useState(false);
+
   // Project picker state
   const [showProjectPicker, setShowProjectPicker] = useState(false);
   const [projects, setProjects] = useState([]);
   const [projectSearch, setProjectSearch] = useState('');
   const [assigning, setAssigning] = useState(false);
 
+  const checkWifiBanner = async () => {
+    const dismissed = await getSetting('wifiBannerDismissed', 'false');
+    if (dismissed === 'true') { setShowWifiBanner(false); return; }
+    const wifiOnly = await getSetting('wifiOnly', 'true');
+    if (wifiOnly !== 'true') { setShowWifiBanner(false); return; }
+    try {
+      const netState = await Network.getNetworkStateAsync();
+      const isWifi = netState.type === Network.NetworkStateType.WIFI;
+      setShowWifiBanner(netState.isConnected && !isWifi);
+    } catch {
+      setShowWifiBanner(false);
+    }
+  };
+
+  const dismissWifiBanner = async () => {
+    await setSetting('wifiBannerDismissed', 'true');
+    setShowWifiBanner(false);
+  };
+
   useFocusEffect(
     useCallback(() => {
       loadData();
+      checkWifiBanner();
     }, [])
   );
 
@@ -362,6 +387,22 @@ export default function HomeScreen({ navigation }) {
                 <Text style={styles.statusUser}>{userName}</Text>
               ) : null}
             </View>
+
+            {/* WiFi-only warning banner */}
+            {showWifiBanner && (
+              <View style={styles.wifiBanner}>
+                <Ionicons name="wifi-outline" size={20} color="#f59e0b" />
+                <Text style={styles.wifiBannerText}>
+                  Nur-WLAN-Modus aktiv, aber kein WLAN verbunden – Uploads pausiert.{' '}
+                  <Text style={styles.wifiBannerLink} onPress={() => Linking.openSettings()}>
+                    Einstellungen öffnen
+                  </Text>
+                </Text>
+                <TouchableOpacity style={styles.wifiBannerClose} onPress={dismissWifiBanner} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close" size={18} color={colors.textTertiary} />
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* Recent Photos */}
             {recentPhotos.length > 0 && (
@@ -748,4 +789,30 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
+
+  // WiFi-only warning banner
+  wifiBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: 'rgba(245,158,11,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.3)',
+  },
+  wifiBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.textSecondary,
+    lineHeight: 19,
+  },
+  wifiBannerLink: {
+    color: colors.accent,
+    textDecorationLine: 'underline',
+  },
+  wifiBannerClose: { padding: 2 },
 });
