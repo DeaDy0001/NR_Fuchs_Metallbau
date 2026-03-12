@@ -1258,10 +1258,10 @@ const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePa
 
   const result = db.prepare(`
     INSERT INTO drive_images
-    (drive_path_id, name, original_name, local_path, thumbnail_url,
+    (drive_path_id, name, original_name, file_url, local_path, thumbnail_url,
      file_size, mime_type, is_compressed, drive_file_id, photo_taken_at, subfolder,
      gps_latitude, gps_longitude, gps_altitude, image_notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, '', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     drivePathId,
     customTitle || fileBaseName,
