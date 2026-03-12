@@ -3,6 +3,13 @@ import { getSetting, setSetting } from './database';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const USERINFO_ENDPOINT = 'https://www.googleapis.com/oauth2/v3/userinfo';
 
+// Wrapper with timeout so auth calls never block the loading screen forever
+const fetchWithTimeout = (url, options = {}, timeoutMs = 8000) => {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(id));
+};
+
 /**
  * Get the stored Google Client ID (set via QR code scan)
  */
@@ -56,7 +63,7 @@ export const getAccessToken = async () => {
       const serverUrl = await getSetting('serverUrl');
       if (serverUrl) {
         try {
-          const response = await fetch(`${serverUrl}/api/mobile/auth/refresh`, {
+          const response = await fetchWithTimeout(`${serverUrl}/api/mobile/auth/refresh`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ refresh_token: refreshToken }),
@@ -101,7 +108,7 @@ const refreshAccessToken = async (refreshToken) => {
   ];
   if (clientSecret) params.push(`client_secret=${encodeURIComponent(clientSecret)}`);
 
-  const response = await fetch(TOKEN_ENDPOINT, {
+  const response = await fetchWithTimeout(TOKEN_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: params.join('&'),
@@ -134,7 +141,7 @@ export const exchangeCodeForTokens = async (code, redirectUri) => {
   ];
   if (clientSecret) params.push(`client_secret=${encodeURIComponent(clientSecret)}`);
 
-  const response = await fetch(TOKEN_ENDPOINT, {
+  const response = await fetchWithTimeout(TOKEN_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: params.join('&'),

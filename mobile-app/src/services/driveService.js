@@ -10,6 +10,13 @@ const getHeaders = async () => {
   return { Authorization: `Bearer ${token}` };
 };
 
+// Wrapper with timeout so Drive API calls never block indefinitely
+const fetchWithTimeout = (url, options = {}, timeoutMs = 10000) => {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(id));
+};
+
 // ============================================================
 // File Listing & Search
 // ============================================================
@@ -351,7 +358,7 @@ export const deleteFile = async (fileId) => {
 export const checkFolderAccess = async (folderId) => {
   try {
     const headers = await getHeaders();
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${DRIVE_API}/files/${folderId}?fields=id,name`,
       { headers }
     );
@@ -368,7 +375,7 @@ export const checkFolderAccess = async (folderId) => {
 export const verifyConnection = async (rootFolderId) => {
   try {
     const headers = await getHeaders();
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${DRIVE_API}/files/${rootFolderId}?fields=id,name`,
       { headers }
     );
