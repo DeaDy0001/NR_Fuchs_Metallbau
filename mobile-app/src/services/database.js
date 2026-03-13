@@ -534,14 +534,6 @@ export const getRecentPhotos = async (limit = 20, offset = 0) => {
   );
 };
 
-export const updateRecentPhotoProject = async (photoId, projectId, projectName) => {
-  const db = await getDb();
-  await db.runAsync(
-    'UPDATE recent_photos SET project_id = ?, project_name = ? WHERE id = ?',
-    [projectId, projectName, photoId]
-  );
-};
-
 export const updateRecentPhotoDriveInfo = async (fileName, driveFileId, driveFileName) => {
   const db = await getDb();
   await db.runAsync(
