@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator, Linking, AppState } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator, Linking, AppState, Modal, KeyboardAvoidingView, Platform } from 'react-native';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { useDialog } from '../components/CustomDialog';
 import { Ionicons } from '@expo/vector-icons';
@@ -7,7 +7,7 @@ import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
 import { getSetting, setSetting, getCachedProjects } from '../services/database';
 import { getCacheSize, clearCache, cleanupCache, downloadProjectImages } from '../services/syncService';
-import { fetchProjectImages, downloadAppUpdateApk, checkAppUpdate } from '../services/api';
+import { fetchProjectImages, downloadAppUpdateApk, downloadDevApk } from '../services/api';
 import Slider from '../components/Slider';
 import * as FileSystem from 'expo-file-system/legacy';
 import Constants from 'expo-constants';
@@ -43,8 +43,14 @@ export default function SettingsScreen({ navigation }) {
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateDownloading, setUpdateDownloading] = useState(false);
   const [updateDownloadProgress, setUpdateDownloadProgress] = useState(0);
-  const [reinstalling, setReinstalling] = useState(false);
-  const [reinstallProgress, setReinstallProgress] = useState(0);
+
+  // Dev/admin install state
+  const [devInstalling, setDevInstalling] = useState(false);
+  const [devInstallProgress, setDevInstallProgress] = useState(0);
+
+  // Admin password modal
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
 
   const installedVersion = Constants.expoConfig?.version || '0.0.0';
 
@@ -149,6 +155,25 @@ export default function SettingsScreen({ navigation }) {
     }
   };
 
+  /**
+   * Launch the APK installer and delete the local APK file once the app
+   * returns to the foreground (i.e. after the user finishes/cancels the install).
+   */
+  const launchAndCleanup = async (localUri) => {
+    const contentUri = await FileSystem.getContentUriAsync(localUri);
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        sub.remove();
+        FileSystem.deleteAsync(localUri, { idempotent: true }).catch(() => {});
+      }
+    });
+    await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+      data: contentUri,
+      flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+      type: 'application/vnd.android.package-archive',
+    });
+  };
+
   const handleDownloadAndInstall = async () => {
     if (!updateInfo?.apkFileId) return;
     setUpdateDownloading(true);
@@ -157,12 +182,7 @@ export default function SettingsScreen({ navigation }) {
       const uri = await doDownloadWithResume(updateInfo.apkFileId, (pct) => {
         setUpdateDownloadProgress(pct);
       });
-      const contentUri = await FileSystem.getContentUriAsync(uri);
-      await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-        data: contentUri,
-        flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
-        type: 'application/vnd.android.package-archive',
-      });
+      await launchAndCleanup(uri);
     } catch (e) {
       alert('Update-Fehler', 'Download fehlgeschlagen: ' + (e.message || 'Unbekannter Fehler'));
     } finally {
@@ -171,29 +191,32 @@ export default function SettingsScreen({ navigation }) {
     }
   };
 
-  const handleReinstall = async () => {
-    setReinstalling(true);
-    setReinstallProgress(0);
+  const handleAdminIconPress = () => {
+    setPasswordInput('');
+    setShowPasswordModal(true);
+  };
+
+  const handleDevInstall = async () => {
+    if (passwordInput !== 'netrock!"§$%&') {
+      alert('Fehler', 'Falsches Passwort.');
+      return;
+    }
+    setShowPasswordModal(false);
+    setPasswordInput('');
+    setDevInstalling(true);
+    setDevInstallProgress(0);
     try {
-      const update = await checkAppUpdate();
-      if (!update?.apkFileId) {
-        alert('Fehler', 'APK nicht auf Google Drive gefunden.');
-        return;
-      }
-      const uri = await doDownloadWithResume(update.apkFileId, (pct) => {
-        setReinstallProgress(pct);
-      });
-      const contentUri = await FileSystem.getContentUriAsync(uri);
-      await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-        data: contentUri,
-        flags: 1,
-        type: 'application/vnd.android.package-archive',
-      });
+      const uri = await downloadDevApk(
+        (pct) => setDevInstallProgress(pct),
+        (dl)  => { downloadResumableRef.current = dl; }
+      );
+      await launchAndCleanup(uri);
     } catch (e) {
-      alert('Fehler', 'Download fehlgeschlagen: ' + (e.message || 'Unbekannter Fehler'));
+      alert('Dev-Install Fehler', e.message || 'Unbekannter Fehler');
     } finally {
-      setReinstalling(false);
-      setReinstallProgress(0);
+      setDevInstalling(false);
+      setDevInstallProgress(0);
+      downloadResumableRef.current = null;
     }
   };
 
@@ -388,11 +411,12 @@ export default function SettingsScreen({ navigation }) {
             <Text style={styles.settingLabel}>Installierte Version</Text>
             <Text style={styles.settingDesc}>v{installedVersion}</Text>
           </View>
-          <TouchableOpacity onPress={handleCheckForUpdate} disabled={updateChecking}>
+          {/* Admin icon – password-protected dev installer */}
+          <TouchableOpacity onPress={handleAdminIconPress} disabled={devInstalling}>
             <Ionicons
-              name="refresh-outline"
+              name="construct-outline"
               size={20}
-              color={updateChecking ? colors.textTertiary : colors.accent}
+              color={devInstalling ? colors.textTertiary : colors.textTertiary}
             />
           </TouchableOpacity>
         </View>
@@ -412,6 +436,9 @@ export default function SettingsScreen({ navigation }) {
                 Update verfügbar: v{updateInfo.version}
               </Text>
             </View>
+            {updateInfo.changelog ? (
+              <Text style={styles.updateChangelog}>{updateInfo.changelog}</Text>
+            ) : null}
 
             {updateDownloading ? (
               <View style={styles.updateProgressBox}>
@@ -431,19 +458,24 @@ export default function SettingsScreen({ navigation }) {
           <Text style={styles.updateUpToDate}>App ist aktuell</Text>
         )}
 
-        {/* Reinstall button — always visible */}
+        {/* Dev install progress */}
+        {devInstalling && (
+          <View style={styles.updateProgressBox}>
+            <View style={[styles.updateProgressBar, { width: `${devInstallProgress}%` }]} />
+            <Text style={styles.updateProgressText}>{devInstallProgress}% heruntergeladen (Dev)…</Text>
+          </View>
+        )}
+
+        {/* Nach Updates suchen button (formerly "App erneut installieren") */}
         <View style={styles.reinstallBox}>
-          {reinstalling ? (
-            <View style={styles.updateProgressBox}>
-              <View style={[styles.updateProgressBar, { width: `${reinstallProgress}%` }]} />
-              <Text style={styles.updateProgressText}>{reinstallProgress}% heruntergeladen…</Text>
-            </View>
-          ) : (
-            <TouchableOpacity style={styles.reinstallButton} onPress={handleReinstall}>
-              <Ionicons name="refresh-circle-outline" size={18} color={colors.textSecondary} />
-              <Text style={styles.reinstallButtonText}>App erneut installieren</Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity
+            style={styles.reinstallButton}
+            onPress={handleCheckForUpdate}
+            disabled={updateChecking || devInstalling}
+          >
+            <Ionicons name="search-outline" size={18} color={colors.textSecondary} />
+            <Text style={styles.reinstallButtonText}>Nach Updates suchen</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -743,6 +775,61 @@ export default function SettingsScreen({ navigation }) {
 
       <View style={{ height: 40 }} />
     </ScrollView>
+
+    {/* Admin / Dev-Install password modal */}
+    <Modal
+      visible={showPasswordModal}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setShowPasswordModal(false)}
+    >
+      <KeyboardAvoidingView
+        style={styles.modalOverlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={() => setShowPasswordModal(false)}
+        />
+        <View style={styles.passwordDialog}>
+          <View style={styles.passwordDialogAccent} />
+          <View style={styles.passwordDialogContent}>
+            <View style={styles.passwordDialogHeader}>
+              <Ionicons name="construct-outline" size={20} color={colors.textSecondary} />
+              <Text style={styles.passwordDialogTitle}>Dev-Install</Text>
+            </View>
+            <Text style={styles.passwordDialogDesc}>
+              Bitte Passwort eingeben um die aktuelle Dev-Version zu installieren.
+            </Text>
+            <TextInput
+              style={styles.passwordInput}
+              value={passwordInput}
+              onChangeText={setPasswordInput}
+              placeholder="Passwort"
+              placeholderTextColor={colors.textTertiary}
+              secureTextEntry
+              autoFocus
+              onSubmitEditing={handleDevInstall}
+            />
+          </View>
+          <View style={styles.passwordDialogButtons}>
+            <TouchableOpacity
+              style={[styles.passwordDialogBtn, styles.passwordDialogBtnCancel]}
+              onPress={() => { setShowPasswordModal(false); setPasswordInput(''); }}
+            >
+              <Text style={styles.passwordDialogBtnTextCancel}>Abbrechen</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.passwordDialogBtn, styles.passwordDialogBtnPrimary]}
+              onPress={handleDevInstall}
+            >
+              <Text style={styles.passwordDialogBtnTextPrimary}>Installieren</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 }
 
@@ -845,6 +932,39 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.05)',
   },
   reinstallButtonText: { fontSize: 13, color: colors.textSecondary },
+
+  // Password modal
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  passwordDialog: {
+    width: 320, backgroundColor: colors.bgSecondary,
+    borderRadius: 16, overflow: 'hidden',
+    borderWidth: 1, borderColor: colors.border,
+    elevation: 24,
+  },
+  passwordDialogAccent: { height: 3, backgroundColor: colors.textTertiary },
+  passwordDialogContent: { padding: 20, paddingBottom: 12 },
+  passwordDialogHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  passwordDialogTitle: { fontSize: 16, fontWeight: '700', color: colors.textPrimary },
+  passwordDialogDesc: { fontSize: 13, color: colors.textSecondary, marginBottom: 14, lineHeight: 18 },
+  passwordInput: {
+    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 10,
+    fontSize: 15, color: colors.textPrimary,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  passwordDialogButtons: {
+    flexDirection: 'row', gap: 8, padding: 12, paddingTop: 0,
+  },
+  passwordDialogBtn: {
+    flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center',
+  },
+  passwordDialogBtnCancel: { backgroundColor: colors.bgTertiary },
+  passwordDialogBtnPrimary: { backgroundColor: colors.accent },
+  passwordDialogBtnTextCancel: { fontSize: 14, fontWeight: '600', color: colors.textSecondary },
+  passwordDialogBtnTextPrimary: { fontSize: 14, fontWeight: '600', color: '#ffffff' },
 
   // Download section
   downloadButton: {

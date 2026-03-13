@@ -580,39 +580,50 @@ export const getImageUrl = async (driveFileId) => {
 };
 
 // ============================================================
-// App Update (via Google Drive)
+// App Update (via public Google Drive update folder)
 // ============================================================
 
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 
+// Public shared folder: NR_company_app_update
+// Structure:
+//   version.json                              – current release info
+//   NR_company_app_update/released/<ver>/app.apk  – release APK
+//   NR_company_app_update/dev/app.apk         – dev/unreleased APK
+const PUBLIC_UPDATE_FOLDER_ID = '1qncbili98bj_P5_41fRtjC_NWryE4oMh';
+
 /**
- * Check if a newer version of the app is available on Google Drive.
- * Looks for:  meta_folder_id / src / app update / version.json
- *             meta_folder_id / src / app update / app.apk
- *
- * Returns { version, apkFileId } or null if no update found.
+ * Check if a newer version of the app is available.
+ * Reads version.json from the public update folder and resolves the APK file ID.
+ * Returns { version, buildNumber, releaseDate, changelog, apkFileId } or null.
  */
 export const checkAppUpdate = async () => {
-  const connection = await getActiveDriveConnection();
-  if (!connection?.meta_folder_id) return null;
-
   try {
-    const srcFolder = await findFolder(connection.meta_folder_id, 'src');
-    if (!srcFolder) return null;
+    // 1. Read version.json from folder root
+    const rootFiles = await listFiles(PUBLIC_UPDATE_FOLDER_ID, { fields: 'files(id,name)' });
+    const versionFile = rootFiles.find(f => f.name === 'version.json');
+    if (!versionFile) return null;
 
-    const updateFolder = await findFolder(srcFolder.id, 'app update');
+    const data = await readJsonFile(versionFile.id);
+    if (!data?.version) return null;
+
+    // 2. Navigate to NR_company_app_update/released/<version>/app.apk
+    const updateFolder = await findFolder(PUBLIC_UPDATE_FOLDER_ID, 'NR_company_app_update');
     if (!updateFolder) return null;
+    const releasedFolder = await findFolder(updateFolder.id, 'released');
+    if (!releasedFolder) return null;
+    const versionFolder = await findFolder(releasedFolder.id, data.version);
+    if (!versionFolder) return null;
+    const apkFiles = await listFiles(versionFolder.id, { fields: 'files(id,name)' });
+    const apkFile = apkFiles.find(f => f.name === 'app.apk');
+    if (!apkFile) return null;
 
-    const files = await listFiles(updateFolder.id, { fields: 'files(id,name)' });
-    const versionFile = files.find(f => f.name === 'version.json');
-    const apkFile    = files.find(f => f.name === 'app.apk');
-
-    if (!versionFile || !apkFile) return null;
-
-    const versionData = await readJsonFile(versionFile.id);
     return {
-      version:   versionData?.version || '0.0.0',
-      apkFileId: apkFile.id,
+      version:     data.version,
+      buildNumber: data.buildNumber || null,
+      releaseDate: data.releaseDate || null,
+      changelog:   data.changelog   || null,
+      apkFileId:   apkFile.id,
     };
   } catch {
     return null;
@@ -621,14 +632,14 @@ export const checkAppUpdate = async () => {
 
 /**
  * Download the update APK from Google Drive to the local cache.
- * @param {string} apkFileId   - Drive file ID of app.apk
- * @param {function} onProgress - called with (percent 0-100)
+ * @param {string} apkFileId       - Drive file ID of app.apk
+ * @param {function} onProgress    - called with (percent 0-100)
+ * @param {function} onResumableCreated - called with the DownloadResumable instance
  * @returns {string} local file URI of the downloaded APK
  */
 export const downloadAppUpdateApk = async (apkFileId, onProgress, onResumableCreated) => {
   const destPath = FileSystem.cacheDirectory + 'fuchs-update.apk';
 
-  // Remove old cached APK
   try {
     const info = await FileSystem.getInfoAsync(destPath);
     if (info.exists) await FileSystem.deleteAsync(destPath, { idempotent: true });
@@ -639,6 +650,49 @@ export const downloadAppUpdateApk = async (apkFileId, onProgress, onResumableCre
 
   const dl = FileSystem.createDownloadResumable(
     `${DRIVE_API}/files/${apkFileId}?alt=media`,
+    destPath,
+    { headers: { Authorization: `Bearer ${token}` } },
+    (progress) => {
+      if (progress.totalBytesExpectedToWrite > 0 && onProgress) {
+        onProgress(Math.round(progress.totalBytesWritten / progress.totalBytesExpectedToWrite * 100));
+      }
+    }
+  );
+
+  if (onResumableCreated) onResumableCreated(dl);
+
+  const result = await dl.downloadAsync();
+  if (!result?.uri) throw new Error('Download fehlgeschlagen');
+  return result.uri;
+};
+
+/**
+ * Download the dev (unreleased) APK from NR_company_app_update/dev/app.apk.
+ * @param {function} onProgress    - called with (percent 0-100)
+ * @param {function} onResumableCreated - called with the DownloadResumable instance
+ * @returns {string} local file URI of the downloaded APK
+ */
+export const downloadDevApk = async (onProgress, onResumableCreated) => {
+  const destPath = FileSystem.cacheDirectory + 'fuchs-dev.apk';
+
+  try {
+    const info = await FileSystem.getInfoAsync(destPath);
+    if (info.exists) await FileSystem.deleteAsync(destPath, { idempotent: true });
+  } catch {}
+
+  const updateFolder = await findFolder(PUBLIC_UPDATE_FOLDER_ID, 'NR_company_app_update');
+  if (!updateFolder) throw new Error('Update-Ordner nicht gefunden');
+  const devFolder = await findFolder(updateFolder.id, 'dev');
+  if (!devFolder) throw new Error('Dev-Ordner nicht gefunden');
+  const devFiles = await listFiles(devFolder.id, { fields: 'files(id,name)' });
+  const apkFile = devFiles.find(f => f.name === 'app.apk');
+  if (!apkFile) throw new Error('Dev-APK nicht gefunden');
+
+  const token = await getAccessToken();
+  if (!token) throw new Error('Nicht mit Google angemeldet');
+
+  const dl = FileSystem.createDownloadResumable(
+    `${DRIVE_API}/files/${apkFile.id}?alt=media`,
     destPath,
     { headers: { Authorization: `Bearer ${token}` } },
     (progress) => {
