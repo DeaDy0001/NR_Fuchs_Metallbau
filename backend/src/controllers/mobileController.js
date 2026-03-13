@@ -2986,7 +2986,8 @@ const previewDeleteRequestImage = async (req, res) => {
     const dbImage = db.prepare(`
       SELECT di.*, p.folder_name as project_folder
       FROM drive_images di
-      LEFT JOIN projects p ON p.id = di.project_id
+      LEFT JOIN image_project_assignments ipa ON ipa.image_id = di.id
+      LEFT JOIN projects p ON p.id = ipa.project_id
       WHERE di.original_name = ?1
          OR di.name = ?1
          OR di.name LIKE '%_' || ?1
