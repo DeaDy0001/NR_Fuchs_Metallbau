@@ -198,6 +198,8 @@ const initTables = async () => {
     // image_change_queue migrations
     { table: 'image_change_queue', column: 'project_name', sql: 'ALTER TABLE image_change_queue ADD COLUMN project_name TEXT' },
     { table: 'image_change_queue', column: 'project_folder_id', sql: 'ALTER TABLE image_change_queue ADD COLUMN project_folder_id TEXT' },
+    // cached_images migrations
+    { table: 'cached_images', column: 'created_time', sql: 'ALTER TABLE cached_images ADD COLUMN created_time TEXT' },
   ];
 
   for (const m of migrations) {
@@ -389,6 +391,60 @@ export const cacheTags = async (tags) => {
 export const getCachedTags = async () => {
   const db = await getDb();
   return await db.getAllAsync('SELECT * FROM cached_tags ORDER BY name');
+};
+
+/** Cache image list for a project (upsert by Drive file id) */
+export const cacheProjectImages = async (projectFolderId, images) => {
+  const db = await getDb();
+  for (const img of images) {
+    await db.runAsync(
+      `INSERT INTO cached_images (id, project_id, name, mime_type, size, modified_time, created_time, thumbnail_link, synced_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(id) DO UPDATE SET
+         project_id = excluded.project_id,
+         name = excluded.name,
+         mime_type = excluded.mime_type,
+         size = excluded.size,
+         modified_time = excluded.modified_time,
+         created_time = excluded.created_time,
+         thumbnail_link = excluded.thumbnail_link,
+         synced_at = excluded.synced_at`,
+      [
+        img.id,
+        projectFolderId,
+        img.name || '',
+        img.mime_type || 'image/jpeg',
+        img.size || 0,
+        img.modified_time || null,
+        img.created_time || null,
+        img.thumbnail_link || null,
+      ]
+    );
+  }
+};
+
+/** Update local file paths after downloading */
+export const updateCachedImagePaths = async (driveFileId, thumbnailPath, fullPath) => {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE cached_images SET local_thumbnail_path = COALESCE(?, local_thumbnail_path), local_full_path = COALESCE(?, local_full_path) WHERE id = ?',
+    [thumbnailPath || null, fullPath || null, driveFileId]
+  );
+};
+
+/** Get a single cached image entry by Drive file ID */
+export const getCachedImageByDriveId = async (driveFileId) => {
+  const db = await getDb();
+  return await db.getFirstAsync('SELECT * FROM cached_images WHERE id = ?', [driveFileId]);
+};
+
+/** Get all cached images for a project folder */
+export const getCachedProjectImages = async (projectFolderId) => {
+  const db = await getDb();
+  return await db.getAllAsync(
+    'SELECT * FROM cached_images WHERE project_id = ? ORDER BY modified_time DESC',
+    [projectFolderId]
+  );
 };
 
 // ============================================================

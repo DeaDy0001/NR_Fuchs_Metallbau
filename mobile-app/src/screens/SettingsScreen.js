@@ -5,9 +5,9 @@ import { useDialog } from '../components/CustomDialog';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { getSetting, setSetting, getCachedProjects } from '../services/database';
-import { getCacheSize, clearCache, cleanupCache, downloadProjectImages } from '../services/syncService';
-import { fetchProjectImages, downloadAppUpdateApk, downloadDevApk } from '../services/api';
+import { getSetting, setSetting } from '../services/database';
+import { getCacheSize, clearCache, syncAllThumbnails, cleanupFullImages } from '../services/syncService';
+import { downloadAppUpdateApk, downloadDevApk } from '../services/api';
 import Slider from '../components/Slider';
 import * as FileSystem from 'expo-file-system/legacy';
 import Constants from 'expo-constants';
@@ -26,15 +26,15 @@ export default function SettingsScreen({ navigation }) {
   const [maxResolution, setMaxResolution] = useState(1920);
   const [maxImageSizeKB, setMaxImageSizeKB] = useState(1024);
   const [keepOriginal, setKeepOriginal] = useState(true);
-  const [cacheMaxAgeDays, setCacheMaxAgeDays] = useState(30);
   const [lazyLoadImages, setLazyLoadImages] = useState(true);
   const [autoDeleteOld, setAutoDeleteOld] = useState(false);
-  const [autoDeleteDays, setAutoDeleteDays] = useState(60);
+  const [autoDeleteUnit, setAutoDeleteUnit] = useState('monate');   // 'tage' | 'monate' | 'jahre'
+  const [autoDeleteValue, setAutoDeleteValue] = useState(10);
+  const [autoDeleteDateType, setAutoDeleteDateType] = useState('upload'); // 'upload' | 'erstellung'
 
-  // Bulk download
+  // Bulk download / thumbnail sync
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState('');
-  const [downloadMaxDays, setDownloadMaxDays] = useState(60);
 
   // Server-defined image format (read-only, synced from Drive on startup)
   const [serverImageFormat, setServerImageFormat] = useState('');
@@ -131,11 +131,11 @@ export default function SettingsScreen({ navigation }) {
     setMaxResolution(parseInt(await getSetting('maxImageResolution', '1920')));
     setMaxImageSizeKB(parseInt(await getSetting('maxImageSizeKB', '1024')));
     setKeepOriginal((await getSetting('keepOriginal', 'true')) === 'true');
-    setCacheMaxAgeDays(parseInt(await getSetting('cacheMaxAgeDays', '30')));
     setLazyLoadImages((await getSetting('lazyLoadImages', 'true')) === 'true');
     setAutoDeleteOld((await getSetting('autoDeleteOld', 'false')) === 'true');
-    setAutoDeleteDays(parseInt(await getSetting('autoDeleteDays', '60')));
-    setDownloadMaxDays(parseInt(await getSetting('downloadMaxDays', '60')));
+    setAutoDeleteUnit(await getSetting('autoDeleteUnit', 'monate'));
+    setAutoDeleteValue(parseInt(await getSetting('autoDeleteValue', '10')));
+    setAutoDeleteDateType(await getSetting('autoDeleteDateType', 'upload'));
     setServerImageFormat((await getSetting('serverImageFormat', 'jpeg')).toUpperCase());
 
     const size = await getCacheSize();
@@ -253,8 +253,8 @@ export default function SettingsScreen({ navigation }) {
 
   const handleBulkDownload = () => {
     alert(
-      'Bilder herunterladen',
-      `Alle Projektbilder der letzten ${downloadMaxDays} Tage werden heruntergeladen.\n\nDies kann je nach Menge einige Zeit dauern.`,
+      'Thumbnails synchronisieren',
+      'Alle Vorschaubilder aller Projekte werden heruntergeladen.\n\nDies kann je nach Menge einige Zeit dauern.',
       [
         { text: 'Abbrechen', style: 'cancel' },
         { text: 'Herunterladen', onPress: startBulkDownload },
@@ -264,56 +264,17 @@ export default function SettingsScreen({ navigation }) {
 
   const startBulkDownload = async () => {
     setDownloading(true);
-    setDownloadProgress('Projekte laden...');
+    setDownloadProgress('Starte...');
 
     try {
-      const projects = await getCachedProjects();
-      let totalDownloaded = 0;
-      let totalImages = 0;
-
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - downloadMaxDays);
-
-      for (let i = 0; i < projects.length; i++) {
-        const project = projects[i];
-        if (!project.folder_id) continue;
-
-        setDownloadProgress(`Projekt ${i + 1}/${projects.length}: ${project.folder_name}`);
-
-        try {
-          const images = await fetchProjectImages(project.folder_id);
-
-          // Filter by date
-          const filteredImages = downloadMaxDays > 0
-            ? images.filter(img => new Date(img.modified_time) >= cutoffDate)
-            : images;
-
-          totalImages += filteredImages.length;
-
-          if (filteredImages.length > 0) {
-            const downloaded = await downloadProjectImages(
-              project.id,
-              filteredImages,
-              (done, total) => {
-                setDownloadProgress(
-                  `${project.folder_name}: ${done}/${total} Bilder\n(Projekt ${i + 1}/${projects.length})`
-                );
-              }
-            );
-            totalDownloaded += downloaded;
-          }
-        } catch (error) {
-          console.error(`Failed to download images for project ${project.folder_name}:`, error);
-        }
-      }
+      const downloaded = await syncAllThumbnails((projectIndex, total, projectName) => {
+        setDownloadProgress(`Projekt ${projectIndex + 1}/${total}:\n${projectName}`);
+      });
 
       const size = await getCacheSize();
       setCacheSize(size);
 
-      alert(
-        'Download abgeschlossen',
-        `${totalDownloaded} von ${totalImages} Bildern heruntergeladen.`
-      );
+      alert('Fertig', `${downloaded} neue Thumbnails heruntergeladen.`);
     } catch (error) {
       alert('Fehler', 'Download fehlgeschlagen: ' + error.message);
     } finally {
@@ -379,25 +340,6 @@ export default function SettingsScreen({ navigation }) {
     { label: '2 MB', value: 2048 },
     { label: '5 MB', value: 5120 },
     { label: 'Kein Limit', value: 0 },
-  ];
-
-  const ageDayOptions = [
-    { label: '7 Tage', value: 7 },
-    { label: '14 Tage', value: 14 },
-    { label: '30 Tage', value: 30 },
-    { label: '60 Tage', value: 60 },
-    { label: '90 Tage', value: 90 },
-    { label: 'Nie', value: 0 },
-  ];
-
-  const downloadDayOptions = [
-    { label: '7 Tage', value: 7 },
-    { label: '14 Tage', value: 14 },
-    { label: '30 Tage', value: 30 },
-    { label: '60 Tage', value: 60 },
-    { label: '90 Tage', value: 90 },
-    { label: '180 Tage', value: 180 },
-    { label: 'Alle', value: 0 },
   ];
 
   return (
@@ -619,27 +561,14 @@ export default function SettingsScreen({ navigation }) {
         </View>
       </View>
 
-      {/* Bilder herunterladen */}
+      {/* Thumbnails herunterladen */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Bilder herunterladen</Text>
+        <Text style={styles.sectionTitle}>Vorschaubilder</Text>
 
-        <View style={styles.settingBlock}>
-          <Text style={styles.settingLabel}>Zeitraum für Bilder-Download</Text>
-          <Text style={styles.settingDesc}>Nur Bilder herunterladen, die nicht älter sind als:</Text>
-          <View style={styles.optionGrid}>
-            {downloadDayOptions.map(opt => (
-              <TouchableOpacity
-                key={opt.value}
-                style={[styles.optionChip, downloadMaxDays === opt.value && styles.optionChipActive]}
-                onPress={async () => { setDownloadMaxDays(opt.value); await saveSetting('downloadMaxDays', opt.value); }}
-              >
-                <Text style={[styles.optionChipText, downloadMaxDays === opt.value && styles.optionChipTextActive]}>
-                  {opt.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
+        <Text style={styles.settingDesc}>
+          Alle Vorschaubilder aller Projekte werden lokal gespeichert, damit sie auch ohne Internet verfügbar sind.
+          Dabei werden auch Datum-Informationen der Bilder gespeichert (für die automatische Bereinigung).
+        </Text>
 
         <TouchableOpacity
           style={[styles.downloadButton, downloading && styles.buttonDisabled]}
@@ -654,7 +583,7 @@ export default function SettingsScreen({ navigation }) {
           ) : (
             <>
               <Ionicons name="download-outline" size={20} color={colors.accent} />
-              <Text style={styles.downloadButtonText}>Alle Projektbilder herunterladen</Text>
+              <Text style={styles.downloadButtonText}>Alle Vorschaubilder synchronisieren</Text>
             </>
           )}
         </TouchableOpacity>
@@ -682,56 +611,109 @@ export default function SettingsScreen({ navigation }) {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Speicher</Text>
 
+        {/* Auto-delete toggle */}
         <View style={styles.settingRow}>
           <View style={styles.settingInfo}>
             <Text style={styles.settingLabel}>Alte Bilder automatisch löschen</Text>
-            <Text style={styles.settingDesc}>Nur vom Gerät, nicht von Google Drive</Text>
+            <Text style={styles.settingDesc}>Vollbilder ab einem bestimmten Alter vom Gerät entfernen (Nur Vollbilder – Vorschaubilder bleiben erhalten)</Text>
           </View>
           <Switch
             value={autoDeleteOld}
-            onValueChange={async (v) => { setAutoDeleteOld(v); await saveSetting('autoDeleteOld', v); }}
+            onValueChange={async (v) => {
+              setAutoDeleteOld(v);
+              await saveSetting('autoDeleteOld', v);
+              if (!v) return;
+              try { await cleanupFullImages(); } catch {}
+              const size = await getCacheSize();
+              setCacheSize(size);
+            }}
             trackColor={{ false: colors.bgTertiary, true: colors.accent }}
             thumbColor="white"
           />
         </View>
 
+        {/* Cache-Lebensdauer – nur sichtbar wenn Toggle aktiv */}
         {autoDeleteOld && (
-          <View style={styles.settingBlock}>
-            <Text style={styles.settingLabel}>Bilder löschen, die älter sind als:</Text>
+          <View style={[styles.settingBlock, styles.autoDeleteBox]}>
+            <Text style={styles.settingLabel}>Cache-Lebensdauer</Text>
+
+            {/* Unit selector */}
+            <Text style={[styles.settingDesc, { marginTop: 8 }]}>Einheit</Text>
             <View style={styles.optionGrid}>
-              {ageDayOptions.filter(o => o.value > 0).map(opt => (
+              {[{ label: 'Tage', value: 'tage' }, { label: 'Monate', value: 'monate' }, { label: 'Jahre', value: 'jahre' }].map(opt => (
                 <TouchableOpacity
                   key={opt.value}
-                  style={[styles.optionChip, autoDeleteDays === opt.value && styles.optionChipActive]}
-                  onPress={async () => { setAutoDeleteDays(opt.value); await saveSetting('autoDeleteDays', opt.value); }}
+                  style={[styles.optionChip, autoDeleteUnit === opt.value && styles.optionChipActive]}
+                  onPress={async () => {
+                    const defaults = { tage: 30, monate: 10, jahre: 2 };
+                    const newVal = defaults[opt.value];
+                    setAutoDeleteUnit(opt.value);
+                    setAutoDeleteValue(newVal);
+                    await saveSetting('autoDeleteUnit', opt.value);
+                    await saveSetting('autoDeleteValue', newVal);
+                    try { await cleanupFullImages(); } catch {}
+                    const size = await getCacheSize();
+                    setCacheSize(size);
+                  }}
                 >
-                  <Text style={[styles.optionChipText, autoDeleteDays === opt.value && styles.optionChipTextActive]}>
+                  <Text style={[styles.optionChipText, autoDeleteUnit === opt.value && styles.optionChipTextActive]}>
                     {opt.label}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
+
+            {/* Value slider */}
+            <Text style={[styles.settingDesc, { marginTop: 12 }]}>
+              Vollbilder löschen, die älter sind als: <Text style={{ color: colors.accent, fontWeight: '700' }}>{autoDeleteValue} {autoDeleteUnit === 'tage' ? 'Tage' : autoDeleteUnit === 'monate' ? 'Monate' : 'Jahre'}</Text>
+            </Text>
+            <Slider
+              value={autoDeleteValue}
+              min={1}
+              max={autoDeleteUnit === 'tage' ? 365 : autoDeleteUnit === 'monate' ? 36 : 10}
+              step={1}
+              onValueChange={async (v) => {
+                setAutoDeleteValue(v);
+                await saveSetting('autoDeleteValue', v);
+                try { await cleanupFullImages(); } catch {}
+                const size = await getCacheSize();
+                setCacheSize(size);
+              }}
+              leftLabel="1"
+              rightLabel={autoDeleteUnit === 'tage' ? '365' : autoDeleteUnit === 'monate' ? '36' : '10'}
+            />
+
+            {/* Date type selector */}
+            <Text style={[styles.settingDesc, { marginTop: 12 }]}>Datum verwenden</Text>
+            <View style={styles.optionGrid}>
+              {[
+                { label: 'Upload-Datum', value: 'upload', desc: 'Wann das Bild hochgeladen wurde' },
+                { label: 'Erstellungsdatum', value: 'erstellung', desc: 'EXIF-Datum der Aufnahme' },
+              ].map(opt => (
+                <TouchableOpacity
+                  key={opt.value}
+                  style={[styles.optionChip, autoDeleteDateType === opt.value && styles.optionChipActive]}
+                  onPress={async () => {
+                    setAutoDeleteDateType(opt.value);
+                    await saveSetting('autoDeleteDateType', opt.value);
+                    try { await cleanupFullImages(); } catch {}
+                    const size = await getCacheSize();
+                    setCacheSize(size);
+                  }}
+                >
+                  <Text style={[styles.optionChipText, autoDeleteDateType === opt.value && styles.optionChipTextActive]}>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={[styles.settingDesc, { marginTop: 6 }]}>
+              {autoDeleteDateType === 'erstellung'
+                ? 'Bilder ohne Erstellungsdatum werden nicht gelöscht.'
+                : 'Bilder ohne Upload-Datum werden nicht gelöscht.'}
+            </Text>
           </View>
         )}
-
-        {/* Cache Max Age */}
-        <View style={styles.settingBlock}>
-          <Text style={styles.settingLabel}>Cache-Lebensdauer</Text>
-          <Text style={styles.settingDesc}>Wie lange heruntergeladene Bilder gespeichert bleiben</Text>
-          <View style={styles.optionGrid}>
-            {ageDayOptions.map(opt => (
-              <TouchableOpacity
-                key={opt.value}
-                style={[styles.optionChip, cacheMaxAgeDays === opt.value && styles.optionChipActive]}
-                onPress={async () => { setCacheMaxAgeDays(opt.value); await saveSetting('cacheMaxAgeDays', opt.value); }}
-              >
-                <Text style={[styles.optionChipText, cacheMaxAgeDays === opt.value && styles.optionChipTextActive]}>
-                  {opt.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
 
         {/* Cache info */}
         <View style={styles.cacheInfo}>
@@ -856,6 +838,14 @@ const styles = StyleSheet.create({
   settingValue: { fontSize: 15, color: colors.accent },
   settingValueSmall: { fontSize: 13, color: colors.textSecondary },
   settingBlock: { paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.border },
+  autoDeleteBox: {
+    backgroundColor: 'rgba(59,130,246,0.06)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(59,130,246,0.2)',
+    paddingHorizontal: 12,
+    marginTop: 4,
+  },
   editRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   nameInput: {
     backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.border,

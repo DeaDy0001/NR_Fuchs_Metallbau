@@ -203,6 +203,7 @@ export const fetchProjectImages = async (projectFolderId) => {
     mime_type: f.mimeType,
     size: f.size ? parseInt(f.size) : 0,
     modified_time: f.modifiedTime,
+    created_time: f.imageMediaMetadata?.time || null,
     thumbnail_link: f.thumbnailLink,
     width: f.imageMediaMetadata?.width,
     height: f.imageMediaMetadata?.height,

@@ -1,6 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { getSetting, setSetting, cacheProjects, cacheTags, cacheProject, clearCachedProjects } from './database';
-import { fetchSyncData, fetchProjects, downloadImageFile } from './api';
+import { getSetting, setSetting, cacheProjects, cacheTags, cacheProject, clearCachedProjects, getCachedProjects, cacheProjectImages, updateCachedImagePaths, getCachedImageByDriveId } from './database';
+import { fetchSyncData, fetchProjects, fetchProjectImages, downloadImageFile } from './api';
 
 const IMAGE_CACHE_DIR = FileSystem.documentDirectory + 'image_cache/';
 const THUMBNAIL_CACHE_DIR = FileSystem.documentDirectory + 'thumbnail_cache/';
@@ -111,27 +111,111 @@ export const getLocalThumbnailPath = async (driveFileId) => {
 };
 
 /**
- * Clean up old cached images
+ * Sync ALL thumbnails for all cached projects.
+ * Also caches the image list (with dates) to the local DB for offline cleanup.
+ * @param {function} onProgress - optional: called with (projectIndex, totalProjects, projectName)
  */
-export const cleanupCache = async () => {
-  const maxAgeDays = parseInt(await getSetting('cacheMaxAgeDays', '30'));
-  if (maxAgeDays <= 0) return;
+export const syncAllThumbnails = async (onProgress) => {
+  await ensureCacheDirs();
 
-  const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+  const projects = await getCachedProjects();
+  let totalDownloaded = 0;
 
-  for (const dir of [IMAGE_CACHE_DIR, THUMBNAIL_CACHE_DIR]) {
+  for (let i = 0; i < projects.length; i++) {
+    const project = projects[i];
+    if (!project.folder_id) continue;
+
+    if (onProgress) onProgress(i, projects.length, project.folder_name);
+
     try {
-      const files = await FileSystem.readDirectoryAsync(dir);
-      for (const file of files) {
-        const filePath = dir + file;
-        const info = await FileSystem.getInfoAsync(filePath);
-        if (info.exists && info.modificationTime && info.modificationTime * 1000 < cutoff) {
-          await FileSystem.deleteAsync(filePath, { idempotent: true });
+      const images = await fetchProjectImages(project.folder_id);
+
+      // Cache image metadata (dates) to DB for offline cleanup
+      if (images.length > 0) {
+        await cacheProjectImages(project.folder_id, images);
+      }
+
+      // Download missing thumbnails
+      for (const img of images) {
+        try {
+          const localPath = THUMBNAIL_CACHE_DIR + `thumb_${img.id}.jpg`;
+          const existing = await FileSystem.getInfoAsync(localPath);
+          if (!existing.exists) {
+            await downloadImageFile(img.id, localPath);
+            totalDownloaded++;
+          }
+          await updateCachedImagePaths(img.id, localPath, null);
+        } catch {
+          // Skip failed individual thumbnail
         }
       }
-    } catch (e) {
-      // Directory might not exist yet
+    } catch {
+      // Skip failed project
     }
+  }
+
+  return totalDownloaded;
+};
+
+/**
+ * Clean up full-resolution cached images based on age settings.
+ * Only deletes files in image_cache/ (never thumbnails).
+ * Uses image date from DB (upload date or EXIF creation date).
+ * If no date is available for an image, it is kept.
+ */
+export const cleanupFullImages = async () => {
+  const autoDeleteOld = (await getSetting('autoDeleteOld', 'false')) === 'true';
+  if (!autoDeleteOld) return;
+
+  const unit = await getSetting('autoDeleteUnit', 'monate');
+  const value = parseInt(await getSetting('autoDeleteValue', '10'));
+  const dateType = await getSetting('autoDeleteDateType', 'upload');
+
+  if (!value || value <= 0) return;
+
+  // Convert to milliseconds
+  let thresholdMs;
+  if (unit === 'tage') thresholdMs = value * 24 * 60 * 60 * 1000;
+  else if (unit === 'monate') thresholdMs = value * 30 * 24 * 60 * 60 * 1000;
+  else thresholdMs = value * 365 * 24 * 60 * 60 * 1000;
+
+  const cutoff = Date.now() - thresholdMs;
+
+  try {
+    const imgDir = await FileSystem.getInfoAsync(IMAGE_CACHE_DIR);
+    if (!imgDir.exists) return;
+
+    const files = await FileSystem.readDirectoryAsync(IMAGE_CACHE_DIR);
+
+    for (const file of files) {
+      // Only process full image files: full_{driveFileId}.jpg
+      if (!file.startsWith('full_')) continue;
+
+      const driveFileId = file.replace(/^full_/, '').replace(/\.jpg$/, '');
+      const filePath = IMAGE_CACHE_DIR + file;
+
+      // Look up image date from DB
+      const cached = await getCachedImageByDriveId(driveFileId);
+
+      let dateStr = null;
+      if (cached) {
+        dateStr = dateType === 'erstellung'
+          ? (cached.created_time || null)
+          : (cached.modified_time || null);
+      }
+
+      // No date available → keep the file
+      if (!dateStr) continue;
+
+      const imageDate = new Date(dateStr).getTime();
+      if (isNaN(imageDate)) continue;
+
+      if (imageDate < cutoff) {
+        await FileSystem.deleteAsync(filePath, { idempotent: true });
+      }
+    }
+  } catch {
+    // Directory might not exist yet
   }
 };
 
