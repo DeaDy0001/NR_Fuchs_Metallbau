@@ -313,6 +313,11 @@ export const getQueueDisplayItems = async () => {
 /**
  * Cleanup old completed items - keep only last 30
  */
+export const dismissFailedUploadItem = async (id) => {
+  const db = await getDb();
+  await db.runAsync("DELETE FROM upload_queue WHERE id = ? AND status = 'permanently_failed'", [id]);
+};
+
 export const cleanupOldQueueItems = async () => {
   const db = await getDb();
   await db.runAsync(`

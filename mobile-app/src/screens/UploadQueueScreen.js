@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Ani
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
-import { getQueueDisplayItems, cleanupOldQueueItems, getDeleteQueueDisplayItems, cleanupOldDeleteQueueItems, getMetaChangeQueueDisplayItems, cleanupOldMetaChangeQueueItems, getImageChangeQueueDisplayItems, cleanupOldImageChangeQueueItems } from '../services/database';
+import { getQueueDisplayItems, cleanupOldQueueItems, getDeleteQueueDisplayItems, cleanupOldDeleteQueueItems, getMetaChangeQueueDisplayItems, cleanupOldMetaChangeQueueItems, getImageChangeQueueDisplayItems, cleanupOldImageChangeQueueItems, dismissFailedUploadItem } from '../services/database';
 import { forceProcessQueue, addUploadListener, getCurrentUploadState } from '../services/uploadQueue';
 import { addDeleteListener, processDeleteQueue } from '../services/deleteQueue';
 import { useApp } from '../contexts/AppContext';
@@ -151,6 +151,12 @@ export default function UploadQueueScreen() {
     setRefreshing(false);
   };
 
+  const handleDismissFailed = async (id) => {
+    await dismissFailedUploadItem(id);
+    await loadQueue();
+    await refreshQueueCount();
+  };
+
   const getStatusConfig = (status, itemId) => {
     const isCurrentlyUploading = uploadState.currentlyUploadingId === itemId;
     if (isCurrentlyUploading && currentPhase === 'compressing') {
@@ -221,6 +227,11 @@ export default function UploadQueueScreen() {
         </View>
         {item.status === 'uploaded' && item.uploaded_at && (
           <Text style={styles.itemTime}>{formatTime(item.uploaded_at)}</Text>
+        )}
+        {item.status === 'permanently_failed' && (
+          <TouchableOpacity onPress={() => handleDismissFailed(item.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="close-circle" size={22} color={colors.textTertiary} />
+          </TouchableOpacity>
         )}
       </View>
     );
