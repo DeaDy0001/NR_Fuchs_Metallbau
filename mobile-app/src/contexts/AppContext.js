@@ -66,12 +66,16 @@ export const AppProvider = ({ children }) => {
   // Start upload queue processing and heartbeat when connected to Drive
   // Also check for app updates and register background sync
   const appStateRef = useRef(AppState.currentState);
+  const lastUpdateCheckRef = useRef(0); // timestamp of last update check
+  const UPDATE_CHECK_INTERVAL = 60 * 60 * 1000; // 1 hour
+
   useEffect(() => {
     let updateInterval = null;
     let tokenRefreshInterval = null;
     let appStateSub = null;
 
     const runUpdateCheck = () => {
+      lastUpdateCheckRef.current = Date.now();
       checkAppUpdate()
         .then((update) => {
           if (!update?.version || !update?.apkFileId) return;
@@ -98,10 +102,10 @@ export const AppProvider = ({ children }) => {
     if (isConnected && activeConnection) {
       startQueueProcessing();
       startHeartbeat();
-      // Initial update check on connect
+      // Initial update check on startup / connect
       runUpdateCheck();
-      // Periodic re-check every 6 hours
-      updateInterval = setInterval(runUpdateCheck, 6 * 60 * 60 * 1000);
+      // Periodic re-check every hour
+      updateInterval = setInterval(runUpdateCheck, UPDATE_CHECK_INTERVAL);
 
       // Refresh token every 50 minutes so it never expires mid-session
       tokenRefreshInterval = setInterval(refreshTokenSilently, 50 * 60 * 1000);
@@ -109,10 +113,14 @@ export const AppProvider = ({ children }) => {
       // Register background sync task so uploads run even when app is suspended
       registerBackgroundSync().catch(() => {});
 
-      // When app comes back to foreground: refresh token first, then sync queue
+      // When app comes back to foreground: refresh token + sync queue,
+      // and also run an update check if 1 hour has passed since the last one.
       appStateSub = AppState.addEventListener('change', (nextState) => {
         if (appStateRef.current !== 'active' && nextState === 'active') {
           refreshTokenSilently().then(() => forceProcessQueue().catch(() => {}));
+          if (Date.now() - lastUpdateCheckRef.current >= UPDATE_CHECK_INTERVAL) {
+            runUpdateCheck();
+          }
         }
         appStateRef.current = nextState;
       });
