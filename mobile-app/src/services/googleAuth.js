@@ -94,13 +94,11 @@ export const getAccessToken = async () => {
 };
 
 /**
- * Refresh the access token using a refresh token
+ * Try to refresh the access token with a specific client ID / secret pair.
+ * Returns the new access token on success, null on failure.
  */
-const refreshAccessToken = async (refreshToken) => {
-  const clientId = await getGoogleClientId();
-  if (!clientId) throw new Error('Keine Google Client ID konfiguriert');
-  const clientSecret = await getSetting('googleClientSecret');
-
+const tryRefreshWithClient = async (refreshToken, clientId, clientSecret) => {
+  if (!clientId) return null;
   const params = [
     'grant_type=refresh_token',
     `refresh_token=${encodeURIComponent(refreshToken)}`,
@@ -108,21 +106,41 @@ const refreshAccessToken = async (refreshToken) => {
   ];
   if (clientSecret) params.push(`client_secret=${encodeURIComponent(clientSecret)}`);
 
-  const response = await fetchWithTimeout(TOKEN_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: params.join('&'),
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.error_description || 'Token refresh fehlgeschlagen');
+  try {
+    const response = await fetchWithTimeout(TOKEN_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.join('&'),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (!data.access_token) return null;
+    await storeTokens(data.access_token, refreshToken, data.expires_in);
+    return data.access_token;
+  } catch {
+    return null;
   }
+};
 
-  const data = await response.json();
-  await storeTokens(data.access_token, refreshToken, data.expires_in);
+/**
+ * Refresh the access token using a refresh token.
+ * Tries the device-flow client first, then the web-OAuth client as fallback –
+ * because we don't know which one was used at login time.
+ */
+const refreshAccessToken = async (refreshToken) => {
+  // Attempt 1: device-flow / installed-app client (TVs and Limited Input)
+  const deviceClientId = await getGoogleClientId();
+  const deviceClientSecret = await getSetting('googleClientSecret');
+  const token1 = await tryRefreshWithClient(refreshToken, deviceClientId, deviceClientSecret);
+  if (token1) return { accessToken: token1 };
 
-  return { accessToken: data.access_token };
+  // Attempt 2: web-application client (used when device flow is unavailable)
+  const webClientId = await getSetting('webClientId');
+  const webClientSecret = await getSetting('webClientSecret');
+  const token2 = await tryRefreshWithClient(refreshToken, webClientId, webClientSecret);
+  if (token2) return { accessToken: token2 };
+
+  throw new Error('Token refresh fehlgeschlagen (beide OAuth-Clients versucht)');
 };
 
 /**

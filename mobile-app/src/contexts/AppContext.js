@@ -68,6 +68,7 @@ export const AppProvider = ({ children }) => {
   const appStateRef = useRef(AppState.currentState);
   useEffect(() => {
     let updateInterval = null;
+    let tokenRefreshInterval = null;
     let appStateSub = null;
 
     const runUpdateCheck = () => {
@@ -83,6 +84,23 @@ export const AppProvider = ({ children }) => {
         .catch(() => {}); // silently ignore network errors
     };
 
+    // Proactively refresh the access token. If it can no longer be refreshed
+    // (all retries exhausted), mark the user as logged out so they see the
+    // login screen instead of cryptic "Nicht angemeldet" errors mid-upload.
+    const refreshTokenSilently = async () => {
+      try {
+        const token = await getAccessToken();
+        if (!token) {
+          console.log('[Fuchs] Token refresh failed - logging out');
+          setIsGoogleAuthed(false);
+          setIsConnected(false);
+          setActiveConnection(null);
+        }
+      } catch (e) {
+        console.log('[Fuchs] Silent token refresh error:', e.message);
+      }
+    };
+
     if (isConnected && activeConnection) {
       startQueueProcessing();
       startHeartbeat();
@@ -91,13 +109,16 @@ export const AppProvider = ({ children }) => {
       // Periodic re-check every 6 hours
       updateInterval = setInterval(runUpdateCheck, 6 * 60 * 60 * 1000);
 
+      // Refresh token every 50 minutes so it never expires mid-session
+      tokenRefreshInterval = setInterval(refreshTokenSilently, 50 * 60 * 1000);
+
       // Register background sync task so uploads run even when app is suspended
       registerBackgroundSync().catch(() => {});
 
-      // When app comes back to foreground, immediately try to sync the queue
+      // When app comes back to foreground: refresh token first, then sync queue
       appStateSub = AppState.addEventListener('change', (nextState) => {
         if (appStateRef.current !== 'active' && nextState === 'active') {
-          forceProcessQueue().catch(() => {});
+          refreshTokenSilently().then(() => forceProcessQueue().catch(() => {}));
         }
         appStateRef.current = nextState;
       });
@@ -109,6 +130,7 @@ export const AppProvider = ({ children }) => {
       stopQueueProcessing();
       stopHeartbeat();
       if (updateInterval) clearInterval(updateInterval);
+      if (tokenRefreshInterval) clearInterval(tokenRefreshInterval);
       if (appStateSub) appStateSub.remove();
     };
   }, [isConnected]);
