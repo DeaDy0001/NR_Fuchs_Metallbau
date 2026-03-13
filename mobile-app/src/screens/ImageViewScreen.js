@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View, Text, StyleSheet, Image, Dimensions, TouchableOpacity,
+  View, Text, StyleSheet, Image, Dimensions, TouchableOpacity, ScrollView,
   ActivityIndicator, FlatList, Animated, PanResponder, Modal, TextInput, Linking,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
@@ -10,8 +10,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import CheckboxNotes from '../components/CheckboxNotes';
 import { downloadFullImage } from '../services/syncService';
-import { getImageUrl } from '../services/api';
-import { addToDeleteQueue, updateRecentPhotoMetadata, addToImageChangeQueue } from '../services/database';
+import { getImageUrl, assignProjectToInboxImage, createProject } from '../services/api';
+import { addToDeleteQueue, updateRecentPhotoMetadata, addToImageChangeQueue, updateRecentPhotoProject, getCachedProjects, getPendingProjects, addPendingProject } from '../services/database';
 import { processDeleteQueue } from '../services/deleteQueue';
 import { processUploadQueue } from '../services/uploadQueue';
 
@@ -335,7 +335,15 @@ export default function ImageViewScreen({ route, navigation }) {
   const [editingField, setEditingField] = useState(null); // 'title' | 'notes' | null
   const [editFieldValue, setEditFieldValue] = useState('');
   const [saving, setSaving] = useState(false);
-  const [committedMeta, setCommittedMeta] = useState({}); // { [id]: {customTitle, notes} } — last saved values
+  const [committedMeta, setCommittedMeta] = useState({}); // { [id]: {customTitle, notes, projectName, projectFolderId} } — last saved values
+
+  // Project picker
+  const [showProjectPicker, setShowProjectPicker] = useState(false);
+  const [projects, setProjects] = useState([]);
+  const [pendingProjects, setPendingProjects] = useState([]);
+  const [projectSearchText, setProjectSearchText] = useState('');
+  const [newProjectName, setNewProjectName] = useState('');
+  const [creatingProject, setCreatingProject] = useState(false);
 
   // Single image mode (no images array), filter out deleted
   const allImages = images || [{ id: imageId, name: imageName, localUri }];
@@ -349,6 +357,9 @@ export default function ImageViewScreen({ route, navigation }) {
     return {
       customTitle: overrides.customTitle !== undefined ? overrides.customTitle : (currentImage.customTitle || null),
       notes: overrides.notes !== undefined ? overrides.notes : (currentImage.notes || null),
+      projectId: overrides.projectId !== undefined ? overrides.projectId : (currentImage.projectId || null),
+      projectName: overrides.projectName !== undefined ? overrides.projectName : (currentImage.projectName || null),
+      projectFolderId: overrides.projectFolderId !== undefined ? overrides.projectFolderId : (currentImage.projectFolderId || null),
       gpsData: currentImage.gpsData || null,
       createdAt: currentImage.createdAt || null,
       isLocal: currentImage.isLocal || false,
@@ -364,6 +375,66 @@ export default function ImageViewScreen({ route, navigation }) {
       return typeof meta.gpsData === 'string' ? JSON.parse(meta.gpsData) : meta.gpsData;
     } catch { return null; }
   })();
+
+  // Project picker helpers
+  const loadProjects = async () => {
+    try {
+      const [cached, pending] = await Promise.all([getCachedProjects(), getPendingProjects()]);
+      setProjects(cached);
+      setPendingProjects(pending);
+    } catch {}
+  };
+
+  const openProjectPicker = () => {
+    loadProjects();
+    setNewProjectName('');
+    setProjectSearchText('');
+    setShowProjectPicker(true);
+  };
+
+  const allPickerProjects = [
+    ...projects,
+    ...pendingProjects
+      .filter(pp => !projects.some(p => p.folder_id === pp.folder_id))
+      .map(pp => ({
+        id: pp.folder_id || `pending_${pp.id}`,
+        folder_name: pp.folder_name,
+        folder_id: pp.folder_id,
+        color: '#6b7280',
+        image_count: 0,
+        isPending: true,
+      })),
+  ];
+
+  const filteredPickerProjects = allPickerProjects.filter(p =>
+    !projectSearchText || p.folder_name.toLowerCase().includes(projectSearchText.toLowerCase())
+  );
+
+  const selectProject = (project) => {
+    if (!currentImage) { setShowProjectPicker(false); return; }
+    const newMeta = { ...(imageMetadata[currentImage.id] || {}) };
+    newMeta.projectId   = project ? project.id : null;
+    newMeta.projectName = project ? project.folder_name : null;
+    newMeta.projectFolderId = project ? project.folder_id : null;
+    setImageMetadata(prev => ({ ...prev, [currentImage.id]: newMeta }));
+    setShowProjectPicker(false);
+  };
+
+  const handleCreateProject = async () => {
+    const name = newProjectName.trim();
+    if (!name) return;
+    setCreatingProject(true);
+    try {
+      const result = await createProject(name);
+      await addPendingProject(name, result.folder_id);
+      selectProject({ id: result.id, folder_name: result.folder_name, folder_id: result.folder_id });
+      setNewProjectName('');
+    } catch (e) {
+      alert('Fehler', 'Projekt konnte nicht erstellt werden: ' + e.message);
+    } finally {
+      setCreatingProject(false);
+    }
+  };
 
   // Display name: customTitle > basename without extension
   const getDisplayName = () => {
@@ -408,10 +479,13 @@ export default function ImageViewScreen({ route, navigation }) {
     const baseline = committedMeta[currentImage.id] ?? {
       customTitle: currentImage.customTitle ?? null,
       notes: currentImage.notes ?? null,
+      projectName: currentImage.projectName ?? null,
+      projectFolderId: currentImage.projectFolderId ?? null,
     };
-    const curTitle = overrides.customTitle !== undefined ? overrides.customTitle : baseline.customTitle;
-    const curNotes = overrides.notes !== undefined ? overrides.notes : baseline.notes;
-    return curTitle !== baseline.customTitle || curNotes !== baseline.notes;
+    const curTitle   = overrides.customTitle    !== undefined ? overrides.customTitle    : baseline.customTitle;
+    const curNotes   = overrides.notes          !== undefined ? overrides.notes          : baseline.notes;
+    const curProject = overrides.projectName    !== undefined ? overrides.projectName    : baseline.projectName;
+    return curTitle !== baseline.customTitle || curNotes !== baseline.notes || curProject !== baseline.projectName;
   })();
 
   // Persist all pending changes for the current image in one request, in background
@@ -423,19 +497,59 @@ export default function ImageViewScreen({ route, navigation }) {
       const baseline = committedMeta[currentImage.id] ?? {
         customTitle: currentImage.customTitle ?? null,
         notes: currentImage.notes ?? null,
+        projectName: currentImage.projectName ?? null,
+        projectFolderId: currentImage.projectFolderId ?? null,
       };
-      const title = overrides.customTitle !== undefined ? overrides.customTitle : baseline.customTitle;
-      const notes = overrides.notes !== undefined ? overrides.notes : baseline.notes;
+      const title           = overrides.customTitle    !== undefined ? overrides.customTitle    : baseline.customTitle;
+      const notes           = overrides.notes          !== undefined ? overrides.notes          : baseline.notes;
+      const projectName     = overrides.projectName    !== undefined ? overrides.projectName    : baseline.projectName;
+      const projectFolderId = overrides.projectFolderId !== undefined ? overrides.projectFolderId : baseline.projectFolderId;
+      const projectId       = overrides.projectId      !== undefined ? overrides.projectId      : (currentImage.projectId || null);
+      const projectChanged  = projectName !== baseline.projectName;
 
       if (currentImage.isLocal) {
         await updateRecentPhotoMetadata(currentImage.id, title, notes);
+        if (projectChanged) {
+          // Try to update inbox image_requests.json first (image not yet confirmed)
+          const { found } = await assignProjectToInboxImage(
+            currentImage.driveFileId || null,
+            currentImage.driveFileName || null,
+            currentImage.name,
+            projectName,
+            projectFolderId
+          );
+          if (!found) {
+            // Already confirmed → queue a change request
+            await addToImageChangeQueue(
+              currentImage.driveFileId || String(currentImage.id),
+              currentImage.name,
+              title,
+              notes,
+              projectName,
+              projectFolderId
+            );
+            processUploadQueue();
+          }
+          // Update local DB
+          await updateRecentPhotoProject(currentImage.id, projectId, projectName, projectFolderId);
+        }
       } else {
-        await addToImageChangeQueue(currentImage.id, currentImage.name, title, notes);
-        processUploadQueue(); // fire and forget – respects WiFi-only + queues when offline
+        await addToImageChangeQueue(
+          currentImage.id,
+          currentImage.name,
+          title,
+          notes,
+          projectChanged ? projectName : null,
+          projectChanged ? projectFolderId : null
+        );
+        processUploadQueue();
       }
 
       // Record committed state so hasPendingChanges → false
-      setCommittedMeta(prev => ({ ...prev, [currentImage.id]: { customTitle: title, notes } }));
+      setCommittedMeta(prev => ({
+        ...prev,
+        [currentImage.id]: { customTitle: title, notes, projectName, projectFolderId },
+      }));
     } catch (e) {
       console.warn('Failed to save changes:', e);
     } finally {
@@ -576,6 +690,33 @@ export default function ImageViewScreen({ route, navigation }) {
           </View>
         )}
 
+        {/* Project assignment row – only for local (recently uploaded) images */}
+        {meta.isLocal && (
+          <TouchableOpacity style={styles.projectRow} onPress={openProjectPicker}>
+            <Ionicons
+              name={meta.projectName ? 'folder' : 'folder-outline'}
+              size={14}
+              color={meta.projectName ? colors.accent : colors.textTertiary}
+            />
+            <Text
+              style={[styles.projectRowText, meta.projectName && { color: colors.accent }]}
+              numberOfLines={1}
+            >
+              {meta.projectName || 'Projekt zuweisen'}
+            </Text>
+            {meta.projectName ? (
+              <TouchableOpacity
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                onPress={(e) => { e.stopPropagation(); selectProject(null); }}
+              >
+                <Ionicons name="close-circle" size={14} color={colors.textTertiary} />
+              </TouchableOpacity>
+            ) : (
+              <Ionicons name="chevron-forward" size={12} color={colors.textTertiary} />
+            )}
+          </TouchableOpacity>
+        )}
+
         {/* Editable buttons row + Speichern */}
         <View style={styles.editRow}>
           <TouchableOpacity
@@ -679,6 +820,91 @@ export default function ImageViewScreen({ route, navigation }) {
           </KeyboardAvoidingView>
         </Modal>
       )}
+
+      {/* Project picker modal */}
+      <Modal
+        visible={showProjectPicker}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowProjectPicker(false)}
+      >
+        <View style={styles.pickerOverlay}>
+          <View style={styles.pickerContent}>
+            <View style={styles.pickerHeader}>
+              <Text style={styles.pickerTitle}>Projekt zuweisen</Text>
+              <TouchableOpacity onPress={() => setShowProjectPicker(false)}>
+                <Ionicons name="close" size={24} color={colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Create new project */}
+            <View style={styles.pickerNewRow}>
+              <TextInput
+                style={styles.pickerNewInput}
+                placeholder="Neues Projekt erstellen..."
+                placeholderTextColor={colors.textTertiary}
+                value={newProjectName}
+                onChangeText={setNewProjectName}
+                onSubmitEditing={handleCreateProject}
+                returnKeyType="done"
+              />
+              {newProjectName.trim() ? (
+                <TouchableOpacity style={styles.pickerNewBtn} onPress={handleCreateProject} disabled={creatingProject}>
+                  {creatingProject
+                    ? <ActivityIndicator size="small" color="white" />
+                    : <Ionicons name="add" size={22} color="white" />}
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {/* Search */}
+            <View style={styles.pickerSearch}>
+              <Ionicons name="search" size={16} color={colors.textTertiary} />
+              <TextInput
+                style={styles.pickerSearchInput}
+                placeholder="Projekt suchen..."
+                placeholderTextColor={colors.textTertiary}
+                value={projectSearchText}
+                onChangeText={setProjectSearchText}
+              />
+              {projectSearchText ? (
+                <TouchableOpacity onPress={() => setProjectSearchText('')}>
+                  <Ionicons name="close-circle" size={18} color={colors.textTertiary} />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {/* No project option */}
+            <TouchableOpacity
+              style={[styles.pickerItem, !meta.projectName && styles.pickerItemActive]}
+              onPress={() => selectProject(null)}
+            >
+              <Ionicons name="close-circle-outline" size={20} color={colors.textTertiary} />
+              <Text style={styles.pickerItemText}>Kein Projekt</Text>
+            </TouchableOpacity>
+
+            <ScrollView style={{ maxHeight: 360 }}>
+              {filteredPickerProjects.map(p => (
+                <TouchableOpacity
+                  key={p.id}
+                  style={[styles.pickerItem, meta.projectName === p.folder_name && styles.pickerItemActive]}
+                  onPress={() => selectProject(p)}
+                >
+                  <View style={[styles.pickerItemColor, { backgroundColor: p.color || colors.accent }]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.pickerItemText}>{p.folder_name}</Text>
+                    {p.isPending && <Text style={styles.pickerItemPending}>Unbestätigt</Text>}
+                  </View>
+                  <Text style={styles.pickerItemCount}>{p.image_count || 0} Bilder</Text>
+                </TouchableOpacity>
+              ))}
+              {filteredPickerProjects.length === 0 && (
+                <Text style={styles.pickerEmpty}>Keine Projekte gefunden</Text>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* Footer - Back button + GPS + delete + navigation */}
       <View style={[styles.footer, { paddingBottom: insets.bottom || 4 }]}>
@@ -936,4 +1162,50 @@ const styles = StyleSheet.create({
   navBtnDisabled: {
     opacity: 0.3,
   },
+
+  // Project row in info bar
+  projectRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingVertical: 6, paddingHorizontal: 10,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    marginBottom: 6,
+  },
+  projectRowText: { flex: 1, fontSize: 12, color: colors.textTertiary, fontWeight: '500' },
+
+  // Project picker modal
+  pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
+  pickerContent: {
+    backgroundColor: colors.bgPrimary, borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    maxHeight: '75%', padding: 20,
+  },
+  pickerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  pickerTitle: { fontSize: 20, fontWeight: '700', color: colors.textPrimary },
+  pickerNewRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  pickerNewInput: {
+    flex: 1, backgroundColor: colors.inputBg || colors.bgSecondary,
+    borderWidth: 1, borderColor: colors.border, borderRadius: 10,
+    paddingHorizontal: 14, paddingVertical: 10, fontSize: 15, color: colors.textPrimary,
+  },
+  pickerNewBtn: {
+    width: 42, height: 42, borderRadius: 10, backgroundColor: colors.accent,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  pickerSearch: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: colors.bgSecondary, borderRadius: 10,
+    paddingHorizontal: 12, marginBottom: 12, gap: 8,
+  },
+  pickerSearchInput: { flex: 1, color: colors.textPrimary, fontSize: 14, paddingVertical: 10 },
+  pickerItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    padding: 14, borderRadius: 10, marginBottom: 6,
+    backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.border,
+  },
+  pickerItemActive: { borderColor: colors.accent, backgroundColor: 'rgba(59,130,246,0.1)' },
+  pickerItemColor: { width: 4, height: 28, borderRadius: 2 },
+  pickerItemText: { flex: 1, fontSize: 15, fontWeight: '500', color: colors.textPrimary },
+  pickerItemPending: { fontSize: 11, color: '#f59e0b', fontWeight: '600', marginTop: 2 },
+  pickerItemCount: { fontSize: 12, color: colors.textTertiary },
+  pickerEmpty: { color: colors.textTertiary, fontSize: 14, textAlign: 'center', paddingVertical: 24 },
 });

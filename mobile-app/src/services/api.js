@@ -462,6 +462,47 @@ export const reportProjectNotes = async (projectId, projectFolderId, projectName
 };
 
 /**
+ * Try to assign a project to an image that is still pending in image_requests.json.
+ * Finds the matching entry by driveFileId, driveFileName, or localFileName suffix.
+ * If found, updates project_name and project_folder_id and writes back.
+ * Returns { found: boolean }
+ */
+export const assignProjectToInboxImage = async (driveFileId, driveFileName, localFileName, projectName, projectFolderId) => {
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) return { found: false };
+
+  try {
+    const inboxFolderId = await getInboxFolderId();
+    const data = await readJsonFileByName(inboxFolderId, 'image_requests.json');
+    if (!Array.isArray(data)) return { found: false };
+
+    let found = false;
+    const updated = data.map(entry => {
+      if (!Array.isArray(entry.images)) return entry;
+      const hasImage = entry.images.some(img => {
+        if (driveFileId && img.drive_file_id === driveFileId) return true;
+        if (driveFileName && img.file_name === driveFileName) return true;
+        if (localFileName && img.file_name?.endsWith('_' + localFileName)) return true;
+        return false;
+      });
+      if (!hasImage) return entry;
+      found = true;
+      return { ...entry, project_name: projectName || null, project_folder_id: projectFolderId || null };
+    });
+
+    if (!found) return { found: false };
+
+    const files = await listFiles(inboxFolderId, { name: 'image_requests.json', fields: 'files(id,name)' });
+    if (files.length > 0) {
+      await updateJsonFile(files[0].id, updated);
+    }
+    return { found: true };
+  } catch {
+    return { found: false };
+  }
+};
+
+/**
  * Report image metadata change to desktop via image_change_requests.json.
  * Used when user edits title/notes of an already-uploaded image.
  */

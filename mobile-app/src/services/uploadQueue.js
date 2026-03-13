@@ -1,5 +1,5 @@
 import * as Network from 'expo-network';
-import { getSetting, getQueuedUploads, updateUploadStatus, getQueuedMetaChanges, updateMetaChangeStatus, getQueuedImageChanges, updateImageChangeStatus } from './database';
+import { getSetting, getQueuedUploads, updateUploadStatus, getQueuedMetaChanges, updateMetaChangeStatus, getQueuedImageChanges, updateImageChangeStatus, updateRecentPhotoDriveInfo } from './database';
 import { uploadImage, flushImageRequests, saveProjectMetadata, reportImageChanges } from './api';
 import { processImageForUpload } from './imageProcessor';
 import { sendUploadCompleteNotification } from './backgroundSync';
@@ -167,6 +167,10 @@ export const processUploadQueue = async () => {
         }
 
         await updateUploadStatus(item.id, 'uploaded');
+        // Store Drive file ID in recent_photos so project assignment can find it later
+        try {
+          await updateRecentPhotoDriveInfo(item.file_name, uploadResult?.fileId, uploadResult?.uniqueFileName || uploadFileName);
+        } catch {}
         uploadedCount++;
         uploadedItems.push({ item, fileId: uploadResult?.fileId, uniqueFileName: uploadResult?.uniqueFileName || uploadFileName });
         notifyListeners({ type: 'uploaded', item, progress: { ...uploadProgress } });
@@ -224,6 +228,8 @@ export const processUploadQueue = async () => {
         const changes = {};
         if (item.custom_title !== null) changes.custom_title = item.custom_title;
         if (item.notes !== null) changes.notes = item.notes;
+        if (item.project_name !== null) changes.project_name = item.project_name;
+        if (item.project_folder_id !== null) changes.project_folder_id = item.project_folder_id;
         await reportImageChanges(item.image_id, item.image_name, changes);
         await updateImageChangeStatus(item.id, 'uploaded');
         uploadedCount++;

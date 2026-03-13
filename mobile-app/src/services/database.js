@@ -160,6 +160,8 @@ const initTables = async () => {
       image_name TEXT NOT NULL,
       custom_title TEXT,
       notes TEXT,
+      project_name TEXT,
+      project_folder_id TEXT,
       status TEXT DEFAULT 'queued',
       retry_count INTEGER DEFAULT 0,
       error TEXT,
@@ -190,6 +192,12 @@ const initTables = async () => {
     // recent_photos migrations
     { table: 'recent_photos', column: 'custom_title', sql: 'ALTER TABLE recent_photos ADD COLUMN custom_title TEXT' },
     { table: 'recent_photos', column: 'notes', sql: 'ALTER TABLE recent_photos ADD COLUMN notes TEXT' },
+    { table: 'recent_photos', column: 'project_folder_id', sql: 'ALTER TABLE recent_photos ADD COLUMN project_folder_id TEXT' },
+    { table: 'recent_photos', column: 'drive_file_id', sql: 'ALTER TABLE recent_photos ADD COLUMN drive_file_id TEXT' },
+    { table: 'recent_photos', column: 'drive_file_name', sql: 'ALTER TABLE recent_photos ADD COLUMN drive_file_name TEXT' },
+    // image_change_queue migrations
+    { table: 'image_change_queue', column: 'project_name', sql: 'ALTER TABLE image_change_queue ADD COLUMN project_name TEXT' },
+    { table: 'image_change_queue', column: 'project_folder_id', sql: 'ALTER TABLE image_change_queue ADD COLUMN project_folder_id TEXT' },
   ];
 
   for (const m of migrations) {
@@ -237,8 +245,8 @@ export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = 
   if (!skipRecentPhotos) {
     try {
       await db.runAsync(
-        'INSERT INTO recent_photos (file_uri, file_name, mime_type, project_id, project_name, gps_data, thumbnail_uri, custom_title, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [fileUri, fileName, mimeType, projectId, projectName, gpsData, fileUri, customTitle, notes]
+        'INSERT INTO recent_photos (file_uri, file_name, mime_type, project_id, project_name, project_folder_id, gps_data, thumbnail_uri, custom_title, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [fileUri, fileName, mimeType, projectId, projectName, projectFolderId, gpsData, fileUri, customTitle, notes]
       );
       // Keep only last 50 recent photos
       await db.runAsync(
@@ -454,6 +462,22 @@ export const updateRecentPhotoProject = async (photoId, projectId, projectName) 
   );
 };
 
+export const updateRecentPhotoDriveInfo = async (fileName, driveFileId, driveFileName) => {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE recent_photos SET drive_file_id = ?, drive_file_name = ? WHERE file_name = ?',
+    [driveFileId || null, driveFileName || null, fileName]
+  );
+};
+
+export const updateRecentPhotoProject = async (photoId, projectId, projectName, projectFolderId) => {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE recent_photos SET project_id = ?, project_name = ?, project_folder_id = ? WHERE id = ?',
+    [projectId || null, projectName || null, projectFolderId || null, photoId]
+  );
+};
+
 export const updateRecentPhotoMetadata = async (photoId, customTitle, notes) => {
   const db = await getDb();
   await db.runAsync(
@@ -658,7 +682,7 @@ export const cleanupOldMetaChangeQueueItems = async () => {
 // Image change queue (title/notes edits for already-uploaded images)
 // ============================================================
 
-export const addToImageChangeQueue = async (imageId, imageName, customTitle, notes) => {
+export const addToImageChangeQueue = async (imageId, imageName, customTitle, notes, projectName = null, projectFolderId = null) => {
   const db = await getDb();
   // Merge into any existing pending entry for this image (one request per image)
   await db.runAsync(
@@ -666,8 +690,8 @@ export const addToImageChangeQueue = async (imageId, imageName, customTitle, not
     [imageId]
   );
   await db.runAsync(
-    'INSERT INTO image_change_queue (image_id, image_name, custom_title, notes) VALUES (?, ?, ?, ?)',
-    [imageId, imageName, customTitle ?? null, notes ?? null]
+    'INSERT INTO image_change_queue (image_id, image_name, custom_title, notes, project_name, project_folder_id) VALUES (?, ?, ?, ?, ?, ?)',
+    [imageId, imageName, customTitle ?? null, notes ?? null, projectName ?? null, projectFolderId ?? null]
   );
 };
 

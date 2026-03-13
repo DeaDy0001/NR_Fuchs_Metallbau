@@ -153,6 +153,11 @@ export default function HomeScreen({ navigation }) {
         gpsData: p.gps_data || null,
         createdAt: p.created_at || null,
         isLocal: true,
+        projectId: p.project_id || null,
+        projectName: p.project_name || null,
+        projectFolderId: p.project_folder_id || null,
+        driveFileId: p.drive_file_id || null,
+        driveFileName: p.drive_file_name || null,
       }));
       navigation.navigate('ImageView', {
         images: imagesList,
