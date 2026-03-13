@@ -11,9 +11,9 @@ import { colors } from '../theme/colors';
 import CheckboxNotes from '../components/CheckboxNotes';
 import { downloadFullImage } from '../services/syncService';
 import { getImageUrl } from '../services/api';
-import { addToDeleteQueue, updateRecentPhotoMetadata } from '../services/database';
-import { reportImageChanges } from '../services/api';
+import { addToDeleteQueue, updateRecentPhotoMetadata, addToImageChangeQueue } from '../services/database';
 import { processDeleteQueue } from '../services/deleteQueue';
+import { processUploadQueue } from '../services/uploadQueue';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const HEADER_HEIGHT = 60;
@@ -334,6 +334,8 @@ export default function ImageViewScreen({ route, navigation }) {
   // Editing state
   const [editingField, setEditingField] = useState(null); // 'title' | 'notes' | null
   const [editFieldValue, setEditFieldValue] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [committedMeta, setCommittedMeta] = useState({}); // { [id]: {customTitle, notes} } — last saved values
 
   // Single image mode (no images array), filter out deleted
   const allImages = images || [{ id: imageId, name: imageName, localUri }];
@@ -381,44 +383,64 @@ export default function ImageViewScreen({ route, navigation }) {
     setEditingField(field);
   };
 
-  const saveEditField = async () => {
+  // Close the edit modal and update local state only – no API call yet
+  const saveEditField = () => {
     if (!editingField || !currentImage) {
       setEditingField(null);
       return;
     }
-
     const newMeta = { ...(imageMetadata[currentImage.id] || {}) };
     if (editingField === 'title') {
       newMeta.customTitle = editFieldValue.trim() || null;
     } else {
       newMeta.notes = editFieldValue.trim() || null;
     }
-
     setImageMetadata(prev => ({ ...prev, [currentImage.id]: newMeta }));
-
-    if (currentImage.isLocal) {
-      // Persist to database for local photos
-      try {
-        const title = newMeta.customTitle !== undefined ? newMeta.customTitle : (currentImage.customTitle || null);
-        const notes = newMeta.notes !== undefined ? newMeta.notes : (currentImage.notes || null);
-        await updateRecentPhotoMetadata(currentImage.id, title, notes);
-      } catch (e) {
-        console.warn('Failed to save metadata:', e);
-      }
-    } else {
-      // Send change request to backend for project images
-      try {
-        const changes = {};
-        if (editingField === 'title') changes.custom_title = newMeta.customTitle ?? null;
-        if (editingField === 'notes') changes.notes = newMeta.notes ?? null;
-        await reportImageChanges(currentImage.id, currentImage.name, changes);
-      } catch (e) {
-        console.warn('Failed to report image changes:', e);
-      }
-    }
-
     setEditingField(null);
     setEditFieldValue('');
+  };
+
+  // Whether the current image has unsaved changes
+  // Compares live edits against last-committed state (or original image values if never saved)
+  const hasPendingChanges = (() => {
+    if (!currentImage) return false;
+    const overrides = imageMetadata[currentImage.id] || {};
+    const baseline = committedMeta[currentImage.id] ?? {
+      customTitle: currentImage.customTitle ?? null,
+      notes: currentImage.notes ?? null,
+    };
+    const curTitle = overrides.customTitle !== undefined ? overrides.customTitle : baseline.customTitle;
+    const curNotes = overrides.notes !== undefined ? overrides.notes : baseline.notes;
+    return curTitle !== baseline.customTitle || curNotes !== baseline.notes;
+  })();
+
+  // Persist all pending changes for the current image in one request, in background
+  const handleSaveChanges = async () => {
+    if (!currentImage || !hasPendingChanges || saving) return;
+    setSaving(true);
+    try {
+      const overrides = imageMetadata[currentImage.id] || {};
+      const baseline = committedMeta[currentImage.id] ?? {
+        customTitle: currentImage.customTitle ?? null,
+        notes: currentImage.notes ?? null,
+      };
+      const title = overrides.customTitle !== undefined ? overrides.customTitle : baseline.customTitle;
+      const notes = overrides.notes !== undefined ? overrides.notes : baseline.notes;
+
+      if (currentImage.isLocal) {
+        await updateRecentPhotoMetadata(currentImage.id, title, notes);
+      } else {
+        await addToImageChangeQueue(currentImage.id, currentImage.name, title, notes);
+        processUploadQueue(); // fire and forget – respects WiFi-only + queues when offline
+      }
+
+      // Record committed state so hasPendingChanges → false
+      setCommittedMeta(prev => ({ ...prev, [currentImage.id]: { customTitle: title, notes } }));
+    } catch (e) {
+      console.warn('Failed to save changes:', e);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const openGoogleMaps = () => {
@@ -554,7 +576,7 @@ export default function ImageViewScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* Editable buttons row */}
+        {/* Editable buttons row + Speichern */}
         <View style={styles.editRow}>
           <TouchableOpacity
             style={[styles.editBtn, meta.customTitle && styles.editBtnActive]}
@@ -575,6 +597,20 @@ export default function ImageViewScreen({ route, navigation }) {
               Notizen
             </Text>
           </TouchableOpacity>
+
+          {hasPendingChanges && (
+            <TouchableOpacity
+              style={[styles.editBtn, styles.saveBtn]}
+              onPress={handleSaveChanges}
+              disabled={saving}
+            >
+              {saving
+                ? <ActivityIndicator size="small" color="white" />
+                : <Ionicons name="checkmark-circle" size={16} color="white" />
+              }
+              <Text style={styles.saveBtnText}>Speichern</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
@@ -757,6 +793,17 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textTertiary,
     fontWeight: '500',
+  },
+  saveBtn: {
+    flex: 0,
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+    paddingHorizontal: 14,
+  },
+  saveBtnText: {
+    fontSize: 12,
+    color: 'white',
+    fontWeight: '600',
   },
 
   // Notes fullscreen

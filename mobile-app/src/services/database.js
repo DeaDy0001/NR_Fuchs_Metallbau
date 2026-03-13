@@ -153,6 +153,19 @@ const initTables = async () => {
       created_at TEXT DEFAULT (datetime('now')),
       uploaded_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS image_change_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      image_id TEXT NOT NULL,
+      image_name TEXT NOT NULL,
+      custom_title TEXT,
+      notes TEXT,
+      status TEXT DEFAULT 'queued',
+      retry_count INTEGER DEFAULT 0,
+      error TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      uploaded_at TEXT
+    );
   `);
 
   // Migrate: add columns that may be missing from older DB versions
@@ -264,10 +277,13 @@ export const updateUploadStatus = async (id, status, error = null) => {
 
 export const getUploadQueueCount = async () => {
   const db = await getDb();
-  const result = await db.getFirstAsync(
-    'SELECT COUNT(*) as count FROM upload_queue WHERE status IN (\'queued\', \'failed\')'
+  const uploads = await db.getFirstAsync(
+    "SELECT COUNT(*) as count FROM upload_queue WHERE status IN ('queued', 'failed')"
   );
-  return result?.count || 0;
+  const imageChanges = await db.getFirstAsync(
+    "SELECT COUNT(*) as count FROM image_change_queue WHERE status IN ('queued', 'failed')"
+  );
+  return (uploads?.count || 0) + (imageChanges?.count || 0);
 };
 
 /**
@@ -631,6 +647,70 @@ export const cleanupOldMetaChangeQueueItems = async () => {
     WHERE status = 'uploaded'
     AND id NOT IN (
       SELECT id FROM meta_change_queue
+      WHERE status = 'uploaded'
+      ORDER BY uploaded_at DESC
+      LIMIT 30
+    )
+  `);
+};
+
+// ============================================================
+// Image change queue (title/notes edits for already-uploaded images)
+// ============================================================
+
+export const addToImageChangeQueue = async (imageId, imageName, customTitle, notes) => {
+  const db = await getDb();
+  // Merge into any existing pending entry for this image (one request per image)
+  await db.runAsync(
+    "DELETE FROM image_change_queue WHERE image_id = ? AND status IN ('queued', 'failed')",
+    [imageId]
+  );
+  await db.runAsync(
+    'INSERT INTO image_change_queue (image_id, image_name, custom_title, notes) VALUES (?, ?, ?, ?)',
+    [imageId, imageName, customTitle ?? null, notes ?? null]
+  );
+};
+
+export const getQueuedImageChanges = async () => {
+  const db = await getDb();
+  return db.getAllAsync(
+    "SELECT * FROM image_change_queue WHERE status IN ('queued', 'failed') ORDER BY created_at ASC"
+  );
+};
+
+export const updateImageChangeStatus = async (id, status, error = null) => {
+  const db = await getDb();
+  if (status === 'uploaded') {
+    await db.runAsync(
+      "UPDATE image_change_queue SET status = ?, uploaded_at = datetime('now') WHERE id = ?",
+      [status, id]
+    );
+  } else {
+    await db.runAsync(
+      'UPDATE image_change_queue SET status = ?, error = ?, retry_count = retry_count + 1 WHERE id = ?',
+      [status, error, id]
+    );
+  }
+};
+
+export const getImageChangeQueueDisplayItems = async () => {
+  const db = await getDb();
+  const pending = await db.getAllAsync(
+    "SELECT * FROM image_change_queue WHERE status IN ('queued', 'failed') ORDER BY created_at ASC"
+  );
+  const completed = await db.getAllAsync(
+    "SELECT * FROM image_change_queue WHERE status = 'uploaded' ORDER BY uploaded_at DESC LIMIT 30"
+  );
+  return { pending, completed };
+};
+
+export const cleanupOldImageChangeQueueItems = async () => {
+  const db = await getDb();
+  await db.runAsync(`
+    DELETE FROM image_change_queue
+    WHERE status = 'uploaded'
+    AND id NOT IN (
+      SELECT id FROM image_change_queue
       WHERE status = 'uploaded'
       ORDER BY uploaded_at DESC
       LIMIT 30

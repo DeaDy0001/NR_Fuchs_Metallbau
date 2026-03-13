@@ -1,6 +1,6 @@
 import * as Network from 'expo-network';
-import { getSetting, getQueuedUploads, updateUploadStatus, getQueuedMetaChanges, updateMetaChangeStatus } from './database';
-import { uploadImage, flushImageRequests, saveProjectMetadata } from './api';
+import { getSetting, getQueuedUploads, updateUploadStatus, getQueuedMetaChanges, updateMetaChangeStatus, getQueuedImageChanges, updateImageChangeStatus } from './database';
+import { uploadImage, flushImageRequests, saveProjectMetadata, reportImageChanges } from './api';
 import { processImageForUpload } from './imageProcessor';
 import { sendUploadCompleteNotification } from './backgroundSync';
 
@@ -93,10 +93,11 @@ export const processUploadQueue = async () => {
       return;
     }
 
-    // Get queued uploads and meta changes
+    // Get queued uploads, meta changes and image changes
     const queue = await getQueuedUploads();
     const metaChanges = await getQueuedMetaChanges();
-    if (queue.length === 0 && metaChanges.length === 0) {
+    const imageChanges = await getQueuedImageChanges();
+    if (queue.length === 0 && metaChanges.length === 0 && imageChanges.length === 0) {
       notifyListeners({ type: 'idle' });
       return;
     }
@@ -104,7 +105,7 @@ export const processUploadQueue = async () => {
     // We're online with items to process - use fast interval
     switchInterval(30000);
 
-    uploadProgress = { current: 0, total: queue.length + metaChanges.length };
+    uploadProgress = { current: 0, total: queue.length + metaChanges.length + imageChanges.length };
     notifyListeners({ type: 'processing', count: queue.length });
 
     let uploadedCount = 0;
@@ -206,6 +207,29 @@ export const processUploadQueue = async () => {
         notifyListeners({ type: 'uploaded', item: displayItem, progress: { ...uploadProgress } });
       } catch (e) {
         await updateMetaChangeStatus(item.id, 'failed', e.message);
+        notifyListeners({ type: 'error', item: displayItem, error: e.message });
+      }
+    }
+
+    // Process image change queue (title/notes edits for already-uploaded images)
+    for (const item of imageChanges) {
+      if (item.retry_count >= 3) {
+        await updateImageChangeStatus(item.id, 'permanently_failed', 'Maximale Versuche erreicht');
+        continue;
+      }
+      uploadProgress.current++;
+      const displayItem = { ...item, file_name: item.image_name };
+      notifyListeners({ type: 'uploading', item: displayItem, progress: { ...uploadProgress } });
+      try {
+        const changes = {};
+        if (item.custom_title !== null) changes.custom_title = item.custom_title;
+        if (item.notes !== null) changes.notes = item.notes;
+        await reportImageChanges(item.image_id, item.image_name, changes);
+        await updateImageChangeStatus(item.id, 'uploaded');
+        uploadedCount++;
+        notifyListeners({ type: 'uploaded', item: displayItem, progress: { ...uploadProgress } });
+      } catch (e) {
+        await updateImageChangeStatus(item.id, 'failed', e.message);
         notifyListeners({ type: 'error', item: displayItem, error: e.message });
       }
     }
