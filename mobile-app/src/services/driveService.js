@@ -40,7 +40,7 @@ export const listFiles = async (folderId, options = {}) => {
     orderBy: options.orderBy || 'name',
   });
 
-  const response = await fetch(`${DRIVE_API}/files?${params}`, { headers });
+  const response = await fetchWithTimeout(`${DRIVE_API}/files?${params}`, { headers }, 15000);
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));

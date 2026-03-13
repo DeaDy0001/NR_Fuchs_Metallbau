@@ -406,7 +406,7 @@ export default function CameraScreen({ navigation, route }) {
     const currentImage = capturedImages[selectedPreviewIndex];
     if (!currentImage) return;
     if (field === 'title') {
-      setEditFieldValue(currentImage.customTitle || path.basename(currentImage.fileName, path.extname(currentImage.fileName)));
+      setEditFieldValue(currentImage.customTitle || currentImage.fileName.replace(/\.[^.]+$/, ''));
     } else {
       setEditFieldValue(currentImage.notes || '');
     }

@@ -29,9 +29,7 @@ const {
   uploadFileToDrive,
   upsertJsonFileToDrive,
 } = require('./googleDriveService');
-const { triggerManualUpload } = require('./appUpdateService');
 
-const APK_PATH    = path.join(__dirname, '../../../mobile-app/android/app.apk');
 const META_FOLDER = 'NR_Fuchs_Meta';
 
 let structureInterval = null;
@@ -60,34 +58,6 @@ const getDriveFileNames = async (folderId) => {
 
 // ── checks ────────────────────────────────────────────────────────────────────
 
-/**
- * 1. APK: ensure NR_Fuchs_Meta/src/app update/app.apk is on Drive.
- *    Delegates to appUpdateService.triggerManualUpload() which handles
- *    uploading the local APK + version.json.
- */
-const checkApkUpdate = async (metaFolderId) => {
-  try {
-    // Verify the app update folder + files via appUpdateService
-    if (fs.existsSync(APK_PATH)) {
-      // Check if app.apk already exists in Drive
-      const srcFolder = await findSubfolder(metaFolderId, 'src');
-      if (srcFolder) {
-        const updateFolder = await findSubfolder(srcFolder.id, 'app update');
-        if (updateFolder) {
-          const files = await getDriveFileNames(updateFolder.id);
-          if (files.has('app.apk')) {
-            return; // already there, appUpdateService handles changes
-          }
-        }
-      }
-      // Missing – force upload
-      console.log('[DriveStructure] APK fehlt auf Drive – lade hoch …');
-      await triggerManualUpload();
-    }
-  } catch (e) {
-    console.error('[DriveStructure] APK-Check fehlgeschlagen:', e.message);
-  }
-};
 
 /**
  * 2. Projekte: ensure NR_Fuchs_Meta/Projekte/{name}/ exists and all local
@@ -210,7 +180,6 @@ const runStructureCheck = async () => {
     const metaFolder = await findOrCreateSubfolder(rootFolderId, META_FOLDER);
 
     // Run all checks in order
-    await checkApkUpdate(metaFolder.id);
     await checkInbox(metaFolder.id);
     await checkProjects(metaFolder.id);
 

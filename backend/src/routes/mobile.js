@@ -132,17 +132,6 @@ router.get('/app.apk', (req, res) => {
   }
 });
 
-// Manually trigger APK upload to Google Drive (called from web frontend)
-router.post('/release-apk', async (req, res) => {
-  try {
-    const { triggerManualUpload } = require('../services/appUpdateService');
-    await triggerManualUpload();
-    res.json({ success: true, message: 'APK wurde zu Google Drive hochgeladen' });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
 // ---- Authenticated routes (mobile app) ----
 
 // All routes below require mobile auth token

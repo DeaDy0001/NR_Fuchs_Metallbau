@@ -3,6 +3,9 @@ import { getSetting, setSetting } from './database';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const USERINFO_ENDPOINT = 'https://www.googleapis.com/oauth2/v3/userinfo';
 
+// Prevent concurrent token refresh attempts
+let _refreshPromise = null;
+
 // Wrapper with timeout so auth calls never block the loading screen forever
 const fetchWithTimeout = (url, options = {}, timeoutMs = 8000) => {
   const controller = new AbortController();
@@ -56,38 +59,49 @@ export const getAccessToken = async () => {
 
   // Check if expired (with 5 min buffer)
   if (expiry && Date.now() > parseInt(expiry) - 300000) {
-    const refreshToken = await getSetting('googleRefreshToken');
+    // Deduplicate concurrent refresh calls
+    if (_refreshPromise) return _refreshPromise;
 
-    // Try refreshing via backend proxy (preferred - has client_secret)
-    if (refreshToken) {
-      const serverUrl = await getSetting('serverUrl');
-      if (serverUrl) {
-        try {
-          const response = await fetchWithTimeout(`${serverUrl}/api/mobile/auth/refresh`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refresh_token: refreshToken }),
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            await storeTokens(data.access_token, refreshToken, data.expires_in);
-            return data.access_token;
-          }
-        } catch (e) {
-          console.log('[Fuchs] Backend token refresh failed (server unreachable?):', e.message);
-        }
-      }
-
-      // Fallback: try direct refresh (only works with non-Web client types)
+    _refreshPromise = (async () => {
       try {
-        const result = await refreshAccessToken(refreshToken);
-        return result.accessToken;
-      } catch (e) {
-        console.error('[Fuchs] Direct token refresh failed:', e.message);
+        const refreshToken = await getSetting('googleRefreshToken');
+
+        // Try refreshing via backend proxy (preferred - has client_secret)
+        if (refreshToken) {
+          const serverUrl = await getSetting('serverUrl');
+          if (serverUrl) {
+            try {
+              const response = await fetchWithTimeout(`${serverUrl}/api/mobile/auth/refresh`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ refresh_token: refreshToken }),
+              });
+
+              if (response.ok) {
+                const data = await response.json();
+                await storeTokens(data.access_token, refreshToken, data.expires_in);
+                return data.access_token;
+              }
+            } catch (e) {
+              console.log('[Fuchs] Backend token refresh failed (server unreachable?):', e.message);
+            }
+          }
+
+          // Fallback: try direct refresh (only works with non-Web client types)
+          try {
+            const result = await refreshAccessToken(refreshToken);
+            return result.accessToken;
+          } catch (e) {
+            console.error('[Fuchs] Direct token refresh failed:', e.message);
+          }
+        }
+        return null;
+      } finally {
+        _refreshPromise = null;
       }
-    }
-    return null;
+    })();
+
+    return _refreshPromise;
   }
 
   return token;

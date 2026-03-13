@@ -387,7 +387,7 @@ const getImages = (req, res) => {
     const sortField = validSortFields.includes(sortBy) ? sortBy : 'created_at';
     const order = sortOrder.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
     query += ` ORDER BY di.${sortField} ${order} LIMIT ? OFFSET ?`;
-    params.push(parseInt(limit), parseInt(offset));
+    params.push(Math.min(Math.max(parseInt(limit) || 100, 1), 500), Math.max(parseInt(offset) || 0, 0));
 
     const stmt = db.prepare(query);
     const images = stmt.all(...params);

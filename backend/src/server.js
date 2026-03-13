@@ -110,7 +110,7 @@ const startServer = async () => {
     const { syncSettingsToDrive } = require('./controllers/driveController');
     syncSettingsToDrive().catch(e => console.error('[Settings Sync] Startup sync failed:', e.message));
 
-    app.listen(PORT, '0.0.0.0', () => {
+    const server = app.listen(PORT, '0.0.0.0', () => {
       console.log(`
 ╔═══════════════════════════════════════════╗
 ║   Fuchs Metallbau Server                  ║
@@ -122,6 +122,18 @@ const startServer = async () => {
 ╚═══════════════════════════════════════════╝
       `);
     });
+
+    // Graceful shutdown
+    const shutdown = (signal) => {
+      console.log(`${signal} received, shutting down gracefully...`);
+      const { stopAutoSync } = require('./services/driveSyncService');
+      stopAutoSync();
+      server.close(() => process.exit(0));
+      // Force exit after 5s if server doesn't close
+      setTimeout(() => process.exit(1), 5000).unref();
+    };
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);
@@ -129,14 +141,3 @@ const startServer = async () => {
 };
 
 startServer();
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully...');
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully...');
-  process.exit(0);
-});

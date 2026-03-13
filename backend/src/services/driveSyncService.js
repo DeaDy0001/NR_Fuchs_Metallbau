@@ -104,7 +104,7 @@ const syncDrivePath = async (drivePathId) => {
         // Download file
         const fileExt = path.extname(file.name);
         const fileBaseName = path.basename(file.name, fileExt);
-        const tempFilePath = path.join(drivePathDir, `temp_${Date.now()}_${sanitizeFilename(file.name)}`);
+        const tempFilePath = path.join(drivePathDir, `temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${sanitizeFilename(file.name)}`);
 
         console.log(`Downloading: ${file.name}`);
         await downloadFile(file.id, tempFilePath);

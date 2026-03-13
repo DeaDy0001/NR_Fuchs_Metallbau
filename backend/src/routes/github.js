@@ -25,14 +25,12 @@ router.post('/token', async (req, res) => {
     db.prepare('UPDATE settings SET github_token = ? WHERE id = 1').run(token);
 
     // Also save to .env file for persistence
-    const fs = require('fs');
+    const fsPromises = require('fs').promises;
     const path = require('path');
     const envPath = path.join(__dirname, '../../../.env');
 
     let envContent = '';
-    if (fs.existsSync(envPath)) {
-      envContent = fs.readFileSync(envPath, 'utf8');
-    }
+    try { envContent = await fsPromises.readFile(envPath, 'utf8'); } catch {}
 
     // Update or add GITHUB_TOKEN
     const envLines = envContent.split('\n');
@@ -44,7 +42,7 @@ router.post('/token', async (req, res) => {
       envLines.push(`GITHUB_TOKEN=${token}`);
     }
 
-    fs.writeFileSync(envPath, envLines.join('\n'));
+    await fsPromises.writeFile(envPath, envLines.join('\n'));
 
     res.json({
       success: true,
@@ -83,15 +81,15 @@ router.delete('/token', async (req, res) => {
     db.prepare('UPDATE settings SET github_token = NULL WHERE id = 1').run();
 
     // Also remove from .env file
-    const fs = require('fs');
-    const path = require('path');
-    const envPath = path.join(__dirname, '../../../.env');
+    const fsPromises2 = require('fs').promises;
+    const path2 = require('path');
+    const envPath = path2.join(__dirname, '../../../.env');
 
-    if (fs.existsSync(envPath)) {
-      let envContent = fs.readFileSync(envPath, 'utf8');
+    try {
+      const envContent = await fsPromises2.readFile(envPath, 'utf8');
       const envLines = envContent.split('\n').filter(line => !line.startsWith('GITHUB_TOKEN='));
-      fs.writeFileSync(envPath, envLines.join('\n'));
-    }
+      await fsPromises2.writeFile(envPath, envLines.join('\n'));
+    } catch {}
 
     res.json({
       success: true,

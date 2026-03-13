@@ -9,6 +9,9 @@ const { getDriveClient, isAuthenticated } = require('./authService');
  * Handles syncing images from Google Drive folders using OAuth 2.0
  */
 
+// Escape single quotes for Google Drive API query strings
+const escQ = (str) => String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
 // Extract folder ID from Google Drive URL
 const extractFolderId = (url) => {
   try {
@@ -170,10 +173,14 @@ const downloadFile = async (fileId, destinationPath) => {
 
     await new Promise((resolve, reject) => {
       const dest = fs.createWriteStream(destinationPath);
+      const cleanup = (err) => {
+        dest.destroy();
+        reject(err);
+      };
       response.data
-        .on('error', reject)
+        .on('error', cleanup)
         .pipe(dest)
-        .on('error', reject)
+        .on('error', cleanup)
         .on('finish', resolve);
     });
 
@@ -369,7 +376,7 @@ const findSubfolder = async (parentFolderId, folderName) => {
 
     const drive = await getDriveClient();
     const response = await drive.files.list({
-      q: `'${parentFolderId}' in parents and name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed=false`,
+      q: `'${escQ(parentFolderId)}' in parents and name = '${escQ(folderName)}' and mimeType = 'application/vnd.google-apps.folder' and trashed=false`,
       fields: 'files(id,name)',
       pageSize: 1
     });
@@ -484,7 +491,7 @@ const findFileByName = async (parentFolderId, fileName) => {
   try {
     const drive = await getDriveClient();
     const res = await drive.files.list({
-      q: `'${parentFolderId}' in parents and name = '${fileName}' and trashed = false`,
+      q: `'${escQ(parentFolderId)}' in parents and name = '${escQ(fileName)}' and trashed = false`,
       fields: 'files(id,name,mimeType)',
       pageSize: 1,
     });
@@ -594,7 +601,7 @@ const upsertJsonFileToDrive = async (parentFolderId, fileName, data) => {
 
     // Check if file already exists
     const listResponse = await drive.files.list({
-      q: `'${parentFolderId}' in parents and name = '${fileName}' and trashed = false`,
+      q: `'${escQ(parentFolderId)}' in parents and name = '${escQ(fileName)}' and trashed = false`,
       fields: 'files(id)',
       pageSize: 1,
     });

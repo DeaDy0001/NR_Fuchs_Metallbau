@@ -120,12 +120,11 @@ export default function LoginScreen() {
     }
     await storeUserInfo(userInfo);
 
-    if (isMountedRef.current) {
-      setAuthLoading(false);
-      setUserCode(null);
-      setWebViewAuth(null);
-      onGoogleLogin(userInfo);
-    }
+    if (!isMountedRef.current) return;
+    setAuthLoading(false);
+    setUserCode(null);
+    setWebViewAuth(null);
+    onGoogleLogin(userInfo);
   };
 
   // ---- Device Authorization Flow (fallback when server not reachable) ----

@@ -14,9 +14,9 @@ const getAnnotations = (req, res) => {
       return res.json({ annotations: null });
     }
 
-    res.json({
-      annotations: JSON.parse(result.annotations)
-    });
+    let parsed = null;
+    try { parsed = JSON.parse(result.annotations); } catch {}
+    res.json({ annotations: parsed });
   } catch (error) {
     console.error('Error getting annotations:', error);
     res.status(500).json({ error: 'Failed to get annotations' });
@@ -73,8 +73,12 @@ const exportImageOverwrite = async (req, res) => {
     const base64Data = dataURL.replace(/^data:image\/\w+;base64,/, '');
     const buffer = Buffer.from(base64Data, 'base64');
 
-    // Get original file path
-    const originalPath = path.join(__dirname, '../../../', image.local_path);
+    // Get original file path (with path traversal protection)
+    const projectRoot = path.resolve(__dirname, '../../../');
+    const originalPath = path.resolve(path.join(projectRoot, image.local_path));
+    if (!originalPath.startsWith(projectRoot)) {
+      return res.status(400).json({ error: 'Invalid image path' });
+    }
 
     // Backup original (optional)
     const backupPath = originalPath.replace(/(\.\w+)$/, '_backup$1');
@@ -161,8 +165,12 @@ const exportImageNew = async (req, res) => {
       // Construct real file path
       originalPath = path.join(projectSettings.project_path, project.folder_name, 'Bilder', fileName);
     } else {
-      // Regular Drive image
-      originalPath = path.join(__dirname, '../../../', image.local_path);
+      // Regular Drive image (with path traversal protection)
+      const projectRoot = path.resolve(__dirname, '../../../');
+      originalPath = path.resolve(path.join(projectRoot, image.local_path));
+      if (!originalPath.startsWith(projectRoot)) {
+        return res.status(400).json({ error: 'Invalid image path' });
+      }
     }
 
     // Generate new filename with _e1, _e2, etc. suffix
