@@ -17,11 +17,19 @@ const THUMBNAILS_DIR = path.join(UPLOADS_DIR, 'thumbnails');
 const mobileLoginSessions = new Map();
 const MOBILE_LOGIN_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
 
-// Cleanup expired sessions every 5 minutes
+// Cleanup expired sessions every 5 minutes + cap at 1000 entries
 setInterval(() => {
   const now = Date.now();
   for (const [id, session] of mobileLoginSessions) {
     if (now > session.expiresAt) mobileLoginSessions.delete(id);
+  }
+  // Hard cap to prevent unbounded growth
+  if (mobileLoginSessions.size > 1000) {
+    const entries = [...mobileLoginSessions.entries()];
+    entries.sort((a, b) => a[1].expiresAt - b[1].expiresAt);
+    for (let i = 0; i < entries.length - 1000; i++) {
+      mobileLoginSessions.delete(entries[i][0]);
+    }
   }
 }, 5 * 60 * 1000);
 

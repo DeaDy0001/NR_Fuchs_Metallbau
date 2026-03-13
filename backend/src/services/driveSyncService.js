@@ -343,16 +343,18 @@ const startAutoSync = (drivePathId, intervalMinutes = 5) => {
 
   console.log(`Starting auto-sync for drive path ${drivePathId} (every ${intervalMinutes} minutes)`);
 
-  // Initial sync
-  syncDrivePath(drivePathId).catch(err =>
-    console.error(`Initial sync failed for drive path ${drivePathId}:`, err)
-  );
+  // Initial sync (delayed by 10s to let server finish startup)
+  setTimeout(() => {
+    syncDrivePath(drivePathId).catch(err =>
+      console.error(`Initial sync failed for drive path ${drivePathId}:`, err.message)
+    );
+  }, 10000);
 
   // Schedule recurring syncs
   const intervalMs = intervalMinutes * 60 * 1000;
   const interval = setInterval(() => {
     syncDrivePath(drivePathId).catch(err =>
-      console.error(`Auto-sync failed for drive path ${drivePathId}:`, err)
+      console.error(`Auto-sync failed for drive path ${drivePathId}:`, err.message)
     );
   }, intervalMs);
 

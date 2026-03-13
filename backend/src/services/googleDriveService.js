@@ -215,11 +215,11 @@ const compressImage = async (inputPath, outputPath, options = {}) => {
     // Get image metadata
     const metadata = await image.metadata();
 
-    // Resize if needed
+    // Resize if needed (validate dimensions are positive integers)
     if (maxWidth || maxHeight) {
       const resizeOptions = {};
-      if (maxWidth) resizeOptions.width = maxWidth;
-      if (maxHeight) resizeOptions.height = maxHeight;
+      if (maxWidth && Number.isFinite(maxWidth) && maxWidth > 0) resizeOptions.width = Math.round(maxWidth);
+      if (maxHeight && Number.isFinite(maxHeight) && maxHeight > 0) resizeOptions.height = Math.round(maxHeight);
       resizeOptions.fit = 'inside';
       resizeOptions.withoutEnlargement = true;
 
@@ -227,7 +227,12 @@ const compressImage = async (inputPath, outputPath, options = {}) => {
     }
 
     // Convert and compress
-    switch (format.toLowerCase()) {
+    const validFormats = ['webp', 'jpeg', 'jpg', 'png'];
+    const fmt = format.toLowerCase();
+    if (!validFormats.includes(fmt)) {
+      console.warn(`[Compress] Unknown format "${format}", defaulting to webp`);
+    }
+    switch (fmt) {
       case 'webp':
         image = image.webp({ quality });
         break;

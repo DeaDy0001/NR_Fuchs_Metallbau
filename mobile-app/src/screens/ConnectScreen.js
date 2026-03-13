@@ -46,17 +46,22 @@ export default function ConnectScreen() {
     }
   };
 
+  const isValidDriveId = (id) => typeof id === 'string' && /^[a-zA-Z0-9_-]{10,}$/.test(id);
+
   const parseQrData = (data) => {
-    const extractFields = (obj) => ({
-      name: obj.name || 'Drive-Verbindung',
-      rootFolderId: obj.rootFolderId,
-      googleClientId: obj.googleClientId || null,
-      googleClientSecret: obj.googleClientSecret || null,
-      serverUrl: obj.serverUrl || null,
-      webClientId: obj.webClientId || null,
-      webClientSecret: obj.webClientSecret || null,
-      webRedirectUri: obj.webRedirectUri || null,
-    });
+    const extractFields = (obj) => {
+      if (!isValidDriveId(obj.rootFolderId)) return null;
+      return {
+        name: obj.name || 'Drive-Verbindung',
+        rootFolderId: obj.rootFolderId,
+        googleClientId: obj.googleClientId || null,
+        googleClientSecret: obj.googleClientSecret || null,
+        serverUrl: obj.serverUrl || null,
+        webClientId: obj.webClientId || null,
+        webClientSecret: obj.webClientSecret || null,
+        webRedirectUri: obj.webRedirectUri || null,
+      };
+    };
 
     // Format 1: Setup URL (dual-purpose QR code - works in browser AND in app)
     try {

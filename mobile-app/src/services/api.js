@@ -93,9 +93,9 @@ export const fetchProjects = async (onProject = null) => {
       if (metaFile) {
         try {
           meta = await readJsonFile(metaFile.id) || {};
-        } catch {}
+        } catch (e) { console.log('[Fuchs] Failed to read project.json:', e.message); }
       }
-    } catch {}
+    } catch (e) { console.log('[Fuchs] Failed to list project files:', e.message); }
 
     const project = {
       id: folder.id,
@@ -272,7 +272,7 @@ const _appendToInboxJson = async (inboxFolderId, fileName, entry) => {
   try {
     const data = await readJsonFileByName(inboxFolderId, fileName);
     if (Array.isArray(data)) existing = data;
-  } catch {}
+  } catch (e) { console.log('[Fuchs] appendToInbox read error:', e.message); }
 
   const merged = [...existing, entry];
 
@@ -409,7 +409,7 @@ export const flushImageRequests = async (uploadedItems) => {
   try {
     const data = await readJsonFileByName(inboxFolderId, 'image_requests.json');
     if (Array.isArray(data)) existing = data;
-  } catch {}
+  } catch (e) { console.log('[Fuchs] flushImageRequests read error:', e.message); }
 
   // Add one entry per project group
   const now = new Date().toISOString();
@@ -550,7 +550,7 @@ export const fetchSyncData = async (tagsOnly = false) => {
   try {
     const tagsData = await readJsonFileByName(connection.meta_folder_id, 'tags.json');
     tags = tagsData?.tags || [];
-  } catch {}
+  } catch (e) { console.log('[Fuchs] fetchSyncData tags error:', e.message); }
 
   return {
     projects,
@@ -590,7 +590,7 @@ export const requestDeleteFromSoftware = async (photos) => {
   try {
     const data = await readJsonFileByName(inboxFolderId, 'delete_requests.json');
     if (Array.isArray(data)) existing = data;
-  } catch {}
+  } catch (e) { console.log('[Fuchs] requestDelete read error:', e.message); }
 
   const merged = [...existing, ...newRequests];
 
@@ -684,7 +684,7 @@ export const downloadAppUpdateApk = async (apkFileId, onProgress, onResumableCre
   try {
     const info = await FileSystem.getInfoAsync(destPath);
     if (info.exists) await FileSystem.deleteAsync(destPath, { idempotent: true });
-  } catch {}
+  } catch (e) { console.log('[Fuchs] APK cleanup error:', e.message); }
 
   const token = await getAccessToken();
   if (!token) throw new Error('Nicht mit Google angemeldet');
@@ -719,7 +719,7 @@ export const downloadDevApk = async (onProgress, onResumableCreated) => {
   try {
     const info = await FileSystem.getInfoAsync(destPath);
     if (info.exists) await FileSystem.deleteAsync(destPath, { idempotent: true });
-  } catch {}
+  } catch (e) { console.log('[Fuchs] Dev APK cleanup error:', e.message); }
 
   const updateFolder = await findFolder(PUBLIC_UPDATE_FOLDER_ID, 'NR_company_app_update');
   if (!updateFolder) throw new Error('Update-Ordner nicht gefunden');

@@ -9,7 +9,7 @@ export function DialogProvider({ children }) {
 
   const showDialog = useCallback(({ title, message, buttons = [{ text: 'OK' }], type = 'default' }) => {
     return new Promise((resolve) => {
-      const id = Date.now() + Math.random();
+      const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
       setDialogs(prev => [...prev, { id, title, message, buttons, type, resolve }]);
     });
   }, []);
@@ -23,7 +23,7 @@ export function DialogProvider({ children }) {
     const type = buttons.some(b => b.style === 'destructive') ? 'destructive' : 'default';
 
     return new Promise((resolve) => {
-      const id = Date.now() + Math.random();
+      const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
       const wrappedButtons = buttons.map(btn => ({
         ...btn,
         onPress: () => {

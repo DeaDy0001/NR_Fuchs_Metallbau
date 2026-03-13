@@ -713,7 +713,9 @@ const deleteImage = async (req, res) => {
       }
     }
 
-    // Delete from database
+    // Delete from database first to prevent other requests from referencing this image
+    db.prepare('DELETE FROM image_annotations WHERE image_id = ?').run(id);
+    db.prepare('DELETE FROM image_tags WHERE image_id = ?').run(id);
     db.prepare('DELETE FROM drive_images WHERE id = ?').run(id);
 
     // Build response message
@@ -846,19 +848,25 @@ const assignImageToProject = async (req, res) => {
     const fileName = path.basename(sourcePath);
     const destPath = path.join(imagesFolderPath, fileName);
 
-    // Copy file to project folder
+    // Copy file to project folder then create DB assignment
+    // If DB insert fails, clean up the copied file
     await fs.copy(sourcePath, destPath, { overwrite: false });
 
-    // Check if assignment already exists
-    const existing = db.prepare(
-      'SELECT id FROM image_project_assignments WHERE image_id = ? AND project_id = ?'
-    ).get(imageId, projectId);
+    try {
+      // Check if assignment already exists
+      const existing = db.prepare(
+        'SELECT id FROM image_project_assignments WHERE image_id = ? AND project_id = ?'
+      ).get(imageId, projectId);
 
-    if (!existing) {
-      // Create assignment record
-      db.prepare(
-        'INSERT INTO image_project_assignments (image_id, project_id) VALUES (?, ?)'
-      ).run(imageId, projectId);
+      if (!existing) {
+        db.prepare(
+          'INSERT INTO image_project_assignments (image_id, project_id) VALUES (?, ?)'
+        ).run(imageId, projectId);
+      }
+    } catch (dbErr) {
+      // Rollback: remove copied file since DB assignment failed
+      await fs.remove(destPath).catch(() => {});
+      throw dbErr;
     }
 
     // Move file on Google Drive if it has a drive_file_id

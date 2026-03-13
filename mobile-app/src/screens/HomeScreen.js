@@ -271,20 +271,26 @@ export default function HomeScreen({ navigation }) {
       let queuedCount = 0;
 
       for (const photo of selectedPhotos) {
+        const folderId = project.folder_id || project.id;
+        if (!folderId) {
+          console.warn('[Fuchs] Skipping photo - no folder_id for project:', project.folder_name);
+          continue;
+        }
+
         // Add to upload queue with project assignment (skip recent_photos insert to avoid duplicates)
         await addToUploadQueue(
           photo.file_uri,
           photo.file_name,
           photo.mime_type || 'image/jpeg',
-          project.folder_id || project.id,
+          folderId,
           project.folder_name,
-          project.folder_id || project.id,
+          folderId,
           photo.gps_data,
           true // skipRecentPhotos - photo already exists in recent_photos
         );
 
         // Update the existing recent photos entry to show project badge
-        await updateRecentPhotoProject(photo.id, project.folder_id || project.id, project.folder_name);
+        await updateRecentPhotoProject(photo.id, folderId, project.folder_name);
         queuedCount++;
       }
 

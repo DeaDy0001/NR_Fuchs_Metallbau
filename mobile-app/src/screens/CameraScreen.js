@@ -303,13 +303,14 @@ export default function CameraScreen({ navigation, route }) {
         accuracy: Location.Accuracy.High,
         timeout: 5000,
       });
-      return {
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-        altitude: location.coords.altitude,
-        accuracy: location.coords.accuracy,
-      };
-    } catch {
+      const { latitude, longitude, altitude, accuracy } = location.coords;
+      if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+        console.warn('[Fuchs] Invalid GPS coordinates:', latitude, longitude);
+        return null;
+      }
+      return { latitude, longitude, altitude, accuracy };
+    } catch (e) {
+      console.log('[Fuchs] GPS error:', e.message);
       return null;
     }
   };
