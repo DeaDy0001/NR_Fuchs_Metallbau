@@ -2982,7 +2982,9 @@ const previewDeleteRequestImage = async (req, res) => {
       } catch { /* folder may not exist */ }
     }
 
-    // 2. Search drive_images DB – exact or suffix match on name/original_name
+    // 2. Search drive_images DB – exact match on original_name, then suffix match
+    // Also match when extension differs (jpg uploaded as webp): strip extension for LIKE
+    const fileBaseName = fileName.replace(/\.[^/.]+$/, ''); // e.g. "photo_1773401755237"
     const dbImage = db.prepare(`
       SELECT di.*, p.folder_name as project_folder
       FROM drive_images di
@@ -2991,10 +2993,18 @@ const previewDeleteRequestImage = async (req, res) => {
       WHERE di.original_name = @fileName
          OR di.name = @fileName
          OR di.name LIKE '%_' || @fileName
+         OR di.name LIKE '%_' || @fileBaseName || '.%'
       ORDER BY di.created_at DESC LIMIT 1
-    `).get({ fileName });
+    `).get({ fileName, fileBaseName });
 
     if (dbImage) {
+      // Try local_path first (direct file reference, works for all images incl. no-project)
+      if (dbImage.local_path && dbImage.local_path.startsWith('/uploads/')) {
+        const localFilePath = path.join(__dirname, '../../../', dbImage.local_path);
+        if (await fs.pathExists(localFilePath)) {
+          return res.sendFile(path.resolve(localFilePath));
+        }
+      }
       // Try thumbnail (typically /uploads/thumbnails/...)
       if (dbImage.thumbnail_url && dbImage.thumbnail_url.startsWith('/uploads/')) {
         const thumbPath = path.join(__dirname, '../../../', dbImage.thumbnail_url);
@@ -3009,12 +3019,33 @@ const previewDeleteRequestImage = async (req, res) => {
         if (await fs.pathExists(exactPath)) {
           return res.sendFile(path.resolve(exactPath));
         }
-        // Also try with original fileName in case name differs
         const origPath = path.join(bilderDir, fileName);
         if (await fs.pathExists(origPath)) {
           return res.sendFile(path.resolve(origPath));
         }
       }
+    }
+
+    // 3. Filesystem fallback: scan uploads/drive/ for suffix match (extension-agnostic)
+    const uploadsDir = path.join(__dirname, '../../../uploads/drive');
+    if (await fs.pathExists(uploadsDir)) {
+      const found = await (async function scanDir(dir) {
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            const sub = await scanDir(fullPath);
+            if (sub) return sub;
+          } else {
+            const stem = entry.name.replace(/\.[^/.]+$/, '');
+            if (entry.name.endsWith('_' + fileName) || stem.endsWith('_' + fileBaseName)) {
+              return fullPath;
+            }
+          }
+        }
+        return null;
+      })(uploadsDir);
+      if (found) return res.sendFile(path.resolve(found));
     }
 
     res.status(404).json({ error: 'Bild nicht gefunden' });
