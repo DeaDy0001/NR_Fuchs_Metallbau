@@ -180,8 +180,9 @@ function InboxLightbox({ images, startIndex, onClose, entry }) {
     return () => window.removeEventListener('keydown', handler);
   }, [index, images.length, onClose]);
 
-  // Fetch Drive file metadata when image changes
+  // Fetch Drive file metadata when image changes (only if drive_file_id is available)
   useEffect(() => {
+    if (!img.drive_file_id) { setMeta(null); setMetaLoading(false); return; }
     setMeta(null);
     setMetaLoading(true);
     fetch(`/api/mobile/inbox/image-meta/${img.drive_file_id}`)
@@ -239,7 +240,7 @@ function InboxLightbox({ images, startIndex, onClose, entry }) {
       <div className="inbox-lightbox-content" onClick={e => e.stopPropagation()}>
         <div className="inbox-lightbox-image-area">
           <img
-            src={`/api/mobile/inbox/image-proxy/${img.drive_file_id}`}
+            src={img.previewUrl || `/api/mobile/inbox/image-proxy/${img.drive_file_id}`}
             alt={displayTitle || img.file_name}
             className="inbox-lightbox-img"
           />
@@ -891,8 +892,13 @@ function DeleteRequestRow({ req, canManage, onRemove, onActivity }) {
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [imgError, setImgError] = useState(false);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   const previewSrc = `/api/mobile/inbox/delete-preview/${encodeURIComponent(req.file_name)}${req.project_name ? `?project=${encodeURIComponent(req.project_name)}` : ''}`;
+
+  // Shape for InboxLightbox: use previewUrl since we have no drive_file_id
+  const lightboxImages = [{ file_name: req.file_name, drive_file_id: null, previewUrl: previewSrc }];
+  const lightboxEntry = { created_at: req.requested_at, user_name: req.requested_by, project_name: req.project_name };
 
   const handleProcess = async () => {
     if (!confirm(`Datei „${req.file_name}" wirklich löschen?`)) return;
@@ -959,13 +965,26 @@ function DeleteRequestRow({ req, canManage, onRemove, onActivity }) {
             <p className="inbox-entry-no-images">Bild nicht lokal verfügbar</p>
           ) : (
             <div className="inbox-image-grid">
-              <div className="inbox-image-thumb">
+              <div
+                className="inbox-image-thumb inbox-image-thumb-clickable"
+                onClick={() => setLightboxOpen(true)}
+                title={req.file_name}
+              >
                 <img src={previewSrc} alt={req.file_name} loading="lazy" onError={() => setImgError(true)} />
                 <span className="inbox-image-name">{req.file_name}</span>
               </div>
             </div>
           )}
         </div>
+      )}
+
+      {lightboxOpen && (
+        <InboxLightbox
+          images={lightboxImages}
+          startIndex={0}
+          onClose={() => setLightboxOpen(false)}
+          entry={lightboxEntry}
+        />
       )}
     </div>
   );
