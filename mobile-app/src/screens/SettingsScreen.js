@@ -267,14 +267,17 @@ export default function SettingsScreen({ navigation }) {
     setDownloadProgress('Starte...');
 
     try {
-      const downloaded = await syncAllThumbnails((projectIndex, total, projectName) => {
+      const { downloaded, deleted } = await syncAllThumbnails((projectIndex, total, projectName) => {
         setDownloadProgress(`Projekt ${projectIndex + 1}/${total}:\n${projectName}`);
       });
 
       const size = await getCacheSize();
       setCacheSize(size);
 
-      alert('Fertig', `${downloaded} neue Thumbnails heruntergeladen.`);
+      const parts = [];
+      if (downloaded > 0) parts.push(`${downloaded} neue Thumbnails heruntergeladen`);
+      if (deleted > 0) parts.push(`${deleted} gelöschte Bilder entfernt`);
+      alert('Fertig', parts.length > 0 ? parts.join(', ') + '.' : 'Alles bereits aktuell.');
     } catch (error) {
       alert('Fehler', 'Download fehlgeschlagen: ' + error.message);
     } finally {

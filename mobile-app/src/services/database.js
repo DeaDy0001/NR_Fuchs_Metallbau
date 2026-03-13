@@ -447,6 +447,25 @@ export const getCachedProjectImages = async (projectFolderId) => {
   );
 };
 
+/** Delete a single cached image entry by Drive file ID */
+export const deleteCachedImage = async (driveFileId) => {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM cached_images WHERE id = ?', [driveFileId]);
+};
+
+/** Return all cached image entries whose project_id is NOT in the given list */
+export const getOrphanedCachedImages = async (validProjectFolderIds) => {
+  const db = await getDb();
+  if (!validProjectFolderIds || validProjectFolderIds.length === 0) {
+    return await db.getAllAsync('SELECT * FROM cached_images');
+  }
+  const placeholders = validProjectFolderIds.map(() => '?').join(',');
+  return await db.getAllAsync(
+    `SELECT * FROM cached_images WHERE project_id NOT IN (${placeholders})`,
+    validProjectFolderIds
+  );
+};
+
 // ============================================================
 // Drive connection helpers
 // ============================================================

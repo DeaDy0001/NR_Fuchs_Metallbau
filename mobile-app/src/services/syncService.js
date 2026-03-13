@@ -1,5 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { getSetting, setSetting, cacheProjects, cacheTags, cacheProject, clearCachedProjects, getCachedProjects, cacheProjectImages, updateCachedImagePaths, getCachedImageByDriveId } from './database';
+import { getSetting, setSetting, cacheProjects, cacheTags, cacheProject, clearCachedProjects, getCachedProjects, cacheProjectImages, updateCachedImagePaths, getCachedImageByDriveId, getCachedProjectImages, deleteCachedImage, getOrphanedCachedImages } from './database';
 import { fetchSyncData, fetchProjects, fetchProjectImages, downloadImageFile } from './api';
 
 const IMAGE_CACHE_DIR = FileSystem.documentDirectory + 'image_cache/';
@@ -112,15 +112,22 @@ export const getLocalThumbnailPath = async (driveFileId) => {
 
 /**
  * Sync ALL thumbnails for all cached projects.
- * Also caches the image list (with dates) to the local DB for offline cleanup.
+ * - Downloads missing thumbnails
+ * - Caches image metadata (dates) in local DB
+ * - Deletes local files (thumbnail + full) for images removed from Drive
+ * - Cleans up images from projects that no longer exist on Drive
  * @param {function} onProgress - optional: called with (projectIndex, totalProjects, projectName)
+ * @returns {{ downloaded: number, deleted: number }}
  */
 export const syncAllThumbnails = async (onProgress) => {
   await ensureCacheDirs();
 
   const projects = await getCachedProjects();
+  const validProjectFolderIds = projects.map(p => p.folder_id).filter(Boolean);
   let totalDownloaded = 0;
+  let totalDeleted = 0;
 
+  // Step 1: per-project sync
   for (let i = 0; i < projects.length; i++) {
     const project = projects[i];
     if (!project.folder_id) continue;
@@ -128,15 +135,37 @@ export const syncAllThumbnails = async (onProgress) => {
     if (onProgress) onProgress(i, projects.length, project.folder_name);
 
     try {
-      const images = await fetchProjectImages(project.folder_id);
+      const driveImages = await fetchProjectImages(project.folder_id);
+      const driveIds = new Set(driveImages.map(img => img.id));
 
       // Cache image metadata (dates) to DB for offline cleanup
-      if (images.length > 0) {
-        await cacheProjectImages(project.folder_id, images);
+      if (driveImages.length > 0) {
+        await cacheProjectImages(project.folder_id, driveImages);
+      }
+
+      // Remove local files for images deleted from Drive
+      const cachedImages = await getCachedProjectImages(project.folder_id);
+      for (const cached of cachedImages) {
+        if (!driveIds.has(cached.id)) {
+          // Delete thumbnail file
+          if (cached.local_thumbnail_path) {
+            await FileSystem.deleteAsync(cached.local_thumbnail_path, { idempotent: true });
+          }
+          // Delete full image file
+          if (cached.local_full_path) {
+            await FileSystem.deleteAsync(cached.local_full_path, { idempotent: true });
+          } else {
+            // Also try the default full image path by convention
+            const defaultFull = IMAGE_CACHE_DIR + `full_${cached.id}.jpg`;
+            await FileSystem.deleteAsync(defaultFull, { idempotent: true });
+          }
+          await deleteCachedImage(cached.id);
+          totalDeleted++;
+        }
       }
 
       // Download missing thumbnails
-      for (const img of images) {
+      for (const img of driveImages) {
         try {
           const localPath = THUMBNAIL_CACHE_DIR + `thumb_${img.id}.jpg`;
           const existing = await FileSystem.getInfoAsync(localPath);
@@ -150,11 +179,33 @@ export const syncAllThumbnails = async (onProgress) => {
         }
       }
     } catch {
-      // Skip failed project
+      // Skip failed project (network error etc.)
     }
   }
 
-  return totalDownloaded;
+  // Step 2: clean up images from projects deleted on Drive
+  // (their project_id is no longer in the current project list)
+  try {
+    const orphaned = await getOrphanedCachedImages(validProjectFolderIds);
+    for (const cached of orphaned) {
+      if (cached.local_thumbnail_path) {
+        await FileSystem.deleteAsync(cached.local_thumbnail_path, { idempotent: true });
+      }
+      const defaultThumb = THUMBNAIL_CACHE_DIR + `thumb_${cached.id}.jpg`;
+      await FileSystem.deleteAsync(defaultThumb, { idempotent: true });
+      if (cached.local_full_path) {
+        await FileSystem.deleteAsync(cached.local_full_path, { idempotent: true });
+      }
+      const defaultFull = IMAGE_CACHE_DIR + `full_${cached.id}.jpg`;
+      await FileSystem.deleteAsync(defaultFull, { idempotent: true });
+      await deleteCachedImage(cached.id);
+      totalDeleted++;
+    }
+  } catch {
+    // ignore cleanup errors
+  }
+
+  return { downloaded: totalDownloaded, deleted: totalDeleted };
 };
 
 /**
