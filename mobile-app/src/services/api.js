@@ -649,10 +649,9 @@ export const checkAppUpdate = async () => {
     const data = await readJsonFile(versionFile.id);
     if (!data?.version) return null;
 
-    // 2. Navigate to NR_company_app_update/released/<version>/app.apk
-    const updateFolder = await findFolder(PUBLIC_UPDATE_FOLDER_ID, 'NR_company_app_update');
-    if (!updateFolder) return null;
-    const releasedFolder = await findFolder(updateFolder.id, 'released');
+    // 2. Navigate to released/<version>/app.apk
+    // PUBLIC_UPDATE_FOLDER_ID points directly to NR_company_app_update
+    const releasedFolder = await findFolder(PUBLIC_UPDATE_FOLDER_ID, 'released');
     if (!releasedFolder) return null;
     const versionFolder = await findFolder(releasedFolder.id, data.version);
     if (!versionFolder) return null;
