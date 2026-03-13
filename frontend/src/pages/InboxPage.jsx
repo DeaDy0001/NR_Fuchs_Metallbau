@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Inbox, Upload, FolderPlus, Trash2, Camera,
   UserCheck, ChevronDown, ChevronUp, Check, X,
@@ -82,6 +83,8 @@ function Badge({ label, color = '#3b82f6' }) {
 function ProjectPicker({ projects, value, onChange, placeholder = 'Projekt suchen…', allowNone = true }) {
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 220 });
+  const triggerRef = useRef(null);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
@@ -90,8 +93,60 @@ function ProjectPicker({ projects, value, onChange, placeholder = 'Projekt suche
 
   const selected = projects.find(p => p.id === value);
 
+  // Recalculate dropdown position whenever it opens
+  useEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    setDropPos({ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 220) });
+  }, [open]);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (!triggerRef.current?.contains(e.target)) { setOpen(false); setSearch(''); }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const dropdown = open && createPortal(
+    <div
+      className="project-picker-dropdown"
+      style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, minWidth: dropPos.width, zIndex: 9999 }}
+      onMouseDown={e => e.stopPropagation()}
+    >
+      <input
+        className="project-picker-search"
+        autoFocus
+        placeholder="Suchen…"
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+      />
+      {allowNone && (
+        <div
+          className={`project-picker-option${!value ? ' selected' : ''}`}
+          onClick={() => { onChange(null); setOpen(false); setSearch(''); }}
+        >
+          <em>Ohne Projekt (Bibliothek)</em>
+        </div>
+      )}
+      {filtered.slice(0, 50).map(p => (
+        <div
+          key={p.id}
+          className={`project-picker-option${value === p.id ? ' selected' : ''}`}
+          onClick={() => { onChange(p.id); setOpen(false); setSearch(''); }}
+        >
+          {p.folder_name}
+        </div>
+      ))}
+      {filtered.length === 0 && <div className="project-picker-empty">Kein Ergebnis</div>}
+    </div>,
+    document.body
+  );
+
   return (
-    <div className="project-picker" style={{ position: 'relative' }}>
+    <div className="project-picker" ref={triggerRef}>
       <div
         className="inbox-action-input project-picker-trigger"
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', minWidth: 180 }}
@@ -102,36 +157,7 @@ function ProjectPicker({ projects, value, onChange, placeholder = 'Projekt suche
         </span>
         <ChevronDown size={14} style={{ flexShrink: 0, marginLeft: 4 }} />
       </div>
-      {open && (
-        <div className="project-picker-dropdown">
-          <input
-            className="project-picker-search"
-            autoFocus
-            placeholder="Suchen…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            onClick={e => e.stopPropagation()}
-          />
-          {allowNone && (
-            <div
-              className={`project-picker-option${!value ? ' selected' : ''}`}
-              onClick={() => { onChange(null); setOpen(false); setSearch(''); }}
-            >
-              <em>Ohne Projekt (Bibliothek)</em>
-            </div>
-          )}
-          {filtered.slice(0, 50).map(p => (
-            <div
-              key={p.id}
-              className={`project-picker-option${value === p.id ? ' selected' : ''}`}
-              onClick={() => { onChange(p.id); setOpen(false); setSearch(''); }}
-            >
-              {p.folder_name}
-            </div>
-          ))}
-          {filtered.length === 0 && <div className="project-picker-empty">Kein Ergebnis</div>}
-        </div>
-      )}
+      {dropdown}
     </div>
   );
 }
@@ -141,6 +167,7 @@ function InboxLightbox({ images, startIndex, onClose, entry }) {
   const [index, setIndex] = useState(startIndex);
   const [meta, setMeta] = useState(null);
   const [metaLoading, setMetaLoading] = useState(false);
+  const [locationName, setLocationName] = useState(null);
   const img = images[index];
 
   useEffect(() => {
@@ -181,6 +208,20 @@ function InboxLightbox({ images, startIndex, onClose, entry }) {
   const displayTitle = img.custom_title || meta?.customTitle || null;
   const displayNotes = img.notes || meta?.notes || null;
   const gps = meta?.gps || null;
+
+  // Reverse-geocode GPS coordinates to a human-readable location name
+  useEffect(() => {
+    if (!gps?.latitude || !gps?.longitude) { setLocationName(null); return; }
+    let cancelled = false;
+    fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${gps.latitude}&lon=${gps.longitude}&format=json&accept-language=de`,
+      { headers: { 'Accept-Language': 'de' } }
+    )
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (!cancelled && data?.display_name) setLocationName(data.display_name); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [gps?.latitude, gps?.longitude]);
 
   return (
     <div className="inbox-lightbox-overlay" onClick={onClose}>
@@ -251,10 +292,20 @@ function InboxLightbox({ images, startIndex, onClose, entry }) {
 
           {gps && (
             <div className="inbox-lightbox-section">
-              <div className="inbox-lightbox-label">GPS</div>
+              <div className="inbox-lightbox-label">Standort</div>
               <div className="inbox-lightbox-value">
-                {parseFloat(gps.latitude).toFixed(6)}, {parseFloat(gps.longitude).toFixed(6)}
-                {gps.altitude != null && <span style={{ opacity: 0.6 }}> ({parseFloat(gps.altitude).toFixed(0)} m)</span>}
+                <a
+                  href={`https://www.google.com/maps?q=${gps.latitude},${gps.longitude}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`${parseFloat(gps.latitude).toFixed(6)}, ${parseFloat(gps.longitude).toFixed(6)} – In Google Maps öffnen`}
+                  style={{ color: 'var(--accent, #4f8ef7)', textDecoration: 'underline', cursor: 'pointer', wordBreak: 'break-word' }}
+                >
+                  {locationName || `${parseFloat(gps.latitude).toFixed(6)}, ${parseFloat(gps.longitude).toFixed(6)}`}
+                </a>
+                {gps.altitude != null && (
+                  <span style={{ opacity: 0.6, marginLeft: 6 }}>({parseFloat(gps.altitude).toFixed(0)} m)</span>
+                )}
               </div>
             </div>
           )}
@@ -354,6 +405,7 @@ function PendingUsersSection() {
 
 // ─── Image Request Row ────────────────────────────────────────────────────────
 function ImageRequestRow({ entry, projects, canManage, onRemove, onActivity }) {
+  const { user: currentUser } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [selectedIds, setSelectedIds] = useState(null); // null = all
   const [targetProjectId, setTargetProjectId] = useState(null);
@@ -418,7 +470,7 @@ function ImageRequestRow({ entry, projects, canManage, onRemove, onActivity }) {
         type: 'image_upload',
         title: `${actualCount} Bild${actualCount !== 1 ? 'er' : ''} hinzugefügt`,
         description: `Zu „${projName}" – von ${entry.user_name || entry.device_name}`,
-        device_name: entry.device_name,
+        confirmed_by: currentUser?.name || null,
         created_at: new Date().toISOString(),
       });
       if (data.remaining === 0) {
@@ -545,6 +597,7 @@ function ImageRequestRow({ entry, projects, canManage, onRemove, onActivity }) {
 
 // ─── Projekt Request Row ──────────────────────────────────────────────────────
 function ProjektRequestRow({ entry, canManage, onRemove, onActivity }) {
+  const { user: currentUser } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [projectName, setProjectName] = useState(entry.project_name);
   const [busy, setBusy] = useState(false);
@@ -563,7 +616,7 @@ function ProjektRequestRow({ entry, canManage, onRemove, onActivity }) {
         type: 'project_create',
         title: `Projekt angelegt: „${projectName.trim()}"`,
         description: `Anfrage von ${entry.user_name || entry.device_name}`,
-        device_name: entry.device_name,
+        confirmed_by: currentUser?.name || null,
         created_at: new Date().toISOString(),
       });
       onRemove(entry.id);
@@ -643,6 +696,7 @@ function ProjektRequestRow({ entry, canManage, onRemove, onActivity }) {
 
 // ─── Projekt Change Row ───────────────────────────────────────────────────────
 function ProjektChangeRow({ entry, canManage, onRemove, onActivity }) {
+  const { user: currentUser } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -659,7 +713,7 @@ function ProjektChangeRow({ entry, canManage, onRemove, onActivity }) {
         type: 'project_notes',
         title: `Projektnotiz zu „${entry.project_name}"`,
         description: `Von ${entry.user_name || entry.device_name}`,
-        device_name: entry.device_name,
+        confirmed_by: currentUser?.name || null,
         created_at: new Date().toISOString(),
       });
       onRemove(entry.id);
@@ -742,6 +796,7 @@ function ProjektChangeRow({ entry, canManage, onRemove, onActivity }) {
 
 // ─── Image Change Row ─────────────────────────────────────────────────────────
 function ImageChangeRow({ entry, canManage, onRemove, onActivity }) {
+  const { user: currentUser } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -758,7 +813,7 @@ function ImageChangeRow({ entry, canManage, onRemove, onActivity }) {
         type: 'image_change',
         title: `Bildinfo geändert: „${entry.file_name}"`,
         description: `Von ${entry.user_name || entry.device_name}`,
-        device_name: entry.device_name,
+        confirmed_by: currentUser?.name || null,
         created_at: new Date().toISOString(),
       });
       onRemove(entry.id);
@@ -832,6 +887,7 @@ function ImageChangeRow({ entry, canManage, onRemove, onActivity }) {
 
 // ─── Delete Request Row ───────────────────────────────────────────────────────
 function DeleteRequestRow({ req, canManage, onRemove, onActivity }) {
+  const { user: currentUser } = useAuth();
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [imgError, setImgError] = useState(false);
@@ -847,7 +903,7 @@ function DeleteRequestRow({ req, canManage, onRemove, onActivity }) {
       type: 'delete_request',
       title: 'Löschanfrage ausgeführt',
       description: `„${req.file_name}"${req.project_name ? ` aus „${req.project_name}"` : ''} gelöscht`,
-      device_name: req.requested_by || null,
+      confirmed_by: currentUser?.name || null,
       created_at: new Date().toISOString(),
     });
     fetch('/api/mobile/inbox/process-delete', {
@@ -1087,7 +1143,7 @@ export default function PostfachPage() {
                       <div className="inbox-activity-body">
                         <div className="inbox-activity-title">{a.title}</div>
                         {a.description && <div className="inbox-activity-desc">{a.description}</div>}
-                        {a.device_name && <div className="inbox-activity-meta">von {a.device_name}</div>}
+                        {a.confirmed_by && <div className="inbox-activity-meta">Bestätigt von {a.confirmed_by}</div>}
                       </div>
                       <div className="inbox-activity-time">{formatTime(a.created_at)}</div>
                     </div>

@@ -50,16 +50,16 @@ const getNetworkAddresses = () => {
  * Log a new activity entry. source_id is used for deduplication:
  * same source_id will not be inserted twice.
  */
-const logActivity = (type, title, description, deviceName, sourceId) => {
+const logActivity = (type, title, description, deviceName, sourceId, confirmedBy) => {
   try {
     if (sourceId) {
       const existing = db.prepare('SELECT id FROM inbox_activities WHERE source_id = ?').get(sourceId);
       if (existing) return;
     }
     db.prepare(`
-      INSERT INTO inbox_activities (type, title, description, device_name, source_id)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(type, title, description || null, deviceName || null, sourceId || null);
+      INSERT INTO inbox_activities (type, title, description, device_name, source_id, confirmed_by)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(type, title, description || null, deviceName || null, sourceId || null, confirmedBy || null);
   } catch (e) {
     console.error('Error logging activity:', e.message);
   }
@@ -2872,10 +2872,11 @@ const processDeleteRequests = async (req, res) => {
     }
 
     // Log activity for each processed delete request
-    for (const req of requestsToProcess) {
-      const reqName = req.file_name || req.fileName || '';
-      const reqBy = req.requested_by || null;
-      logActivity('delete_request', 'Löschanfrage ausgeführt', `„${reqName}"${req.project_name ? ` aus „${req.project_name}"` : ''} gelöscht`, reqBy, `delete_done_${req.id}`);
+    const confirmedByName = req.user?.name || null;
+    for (const delReq of requestsToProcess) {
+      const reqName = delReq.file_name || delReq.fileName || '';
+      const reqBy = delReq.requested_by || null;
+      logActivity('delete_request', 'Löschanfrage ausgeführt', `„${reqName}"${delReq.project_name ? ` aus „${delReq.project_name}"` : ''} gelöscht`, reqBy, `delete_done_${delReq.id}`, confirmedByName);
     }
 
     res.json({
@@ -3798,7 +3799,8 @@ const processImageRequest = async (req, res) => {
         `${downloaded} Bild${downloaded !== 1 ? 'er' : ''} hinzugefügt`,
         `Zu „${projName}" – von ${entry.user_name || entry.device_name}`,
         entry.device_name,
-        `img_req_${requestId}`
+        `img_req_${requestId}`,
+        req.user?.name || null
       );
     }
 
@@ -3912,7 +3914,8 @@ const processProjektRequest = async (req, res) => {
       `Projekt angelegt: „${projectName}"`,
       `Anfrage von ${entry.user_name || entry.device_name}`,
       entry.device_name,
-      `proj_req_${requestId}`
+      `proj_req_${requestId}`,
+      req.user?.name || null
     );
 
     res.json({ success: true, projectId, projectName });
@@ -4031,7 +4034,8 @@ const processProjektChangeRequest = async (req, res) => {
       `Projekt „${project.folder_name}" aktualisiert`,
       `${changeDesc.join(', ')} – von ${entry.user_name || entry.device_name}`,
       entry.device_name,
-      `proj_chg_${requestId}`
+      `proj_chg_${requestId}`,
+      req.user?.name || null
     );
 
     res.json({ success: true });
@@ -4124,7 +4128,8 @@ const processImageChangeRequest = async (req, res) => {
       `Bildinfo geändert: „${entry.file_name}"`,
       `Von ${entry.user_name || entry.device_name}`,
       entry.device_name,
-      `img_chg_${requestId}`
+      `img_chg_${requestId}`,
+      req.user?.name || null
     );
 
     res.json({ success: true });
