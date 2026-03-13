@@ -12,6 +12,7 @@ import CheckboxNotes from '../components/CheckboxNotes';
 import { downloadFullImage } from '../services/syncService';
 import { getImageUrl } from '../services/api';
 import { addToDeleteQueue, updateRecentPhotoMetadata } from '../services/database';
+import { reportImageChanges } from '../services/api';
 import { processDeleteQueue } from '../services/deleteQueue';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -395,14 +396,24 @@ export default function ImageViewScreen({ route, navigation }) {
 
     setImageMetadata(prev => ({ ...prev, [currentImage.id]: newMeta }));
 
-    // Persist to database for local photos
     if (currentImage.isLocal) {
+      // Persist to database for local photos
       try {
         const title = newMeta.customTitle !== undefined ? newMeta.customTitle : (currentImage.customTitle || null);
         const notes = newMeta.notes !== undefined ? newMeta.notes : (currentImage.notes || null);
         await updateRecentPhotoMetadata(currentImage.id, title, notes);
       } catch (e) {
         console.warn('Failed to save metadata:', e);
+      }
+    } else {
+      // Send change request to backend for project images
+      try {
+        const changes = {};
+        if (editingField === 'title') changes.custom_title = newMeta.customTitle ?? null;
+        if (editingField === 'notes') changes.notes = newMeta.notes ?? null;
+        await reportImageChanges(currentImage.id, currentImage.name, changes);
+      } catch (e) {
+        console.warn('Failed to report image changes:', e);
       }
     }
 
@@ -544,29 +555,27 @@ export default function ImageViewScreen({ route, navigation }) {
         )}
 
         {/* Editable buttons row */}
-        {meta.isLocal && (
-          <View style={styles.editRow}>
-            <TouchableOpacity
-              style={[styles.editBtn, meta.customTitle && styles.editBtnActive]}
-              onPress={() => openEditField('title')}
-            >
-              <Ionicons name="pencil-outline" size={14} color={meta.customTitle ? colors.accent : colors.textTertiary} />
-              <Text style={[styles.editBtnText, meta.customTitle && { color: colors.accent }]} numberOfLines={1}>
-                Titel
-              </Text>
-            </TouchableOpacity>
+        <View style={styles.editRow}>
+          <TouchableOpacity
+            style={[styles.editBtn, meta.customTitle && styles.editBtnActive]}
+            onPress={() => openEditField('title')}
+          >
+            <Ionicons name="pencil-outline" size={14} color={meta.customTitle ? colors.accent : colors.textTertiary} />
+            <Text style={[styles.editBtnText, meta.customTitle && { color: colors.accent }]} numberOfLines={1}>
+              Titel
+            </Text>
+          </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.editBtn, meta.notes && styles.editBtnActive]}
-              onPress={() => openEditField('notes')}
-            >
-              <Ionicons name="create-outline" size={14} color={meta.notes ? colors.accent : colors.textTertiary} />
-              <Text style={[styles.editBtnText, meta.notes && { color: colors.accent }]} numberOfLines={1}>
-                Notizen
-              </Text>
-            </TouchableOpacity>
-          </View>
-        )}
+          <TouchableOpacity
+            style={[styles.editBtn, meta.notes && styles.editBtnActive]}
+            onPress={() => openEditField('notes')}
+          >
+            <Ionicons name="create-outline" size={14} color={meta.notes ? colors.accent : colors.textTertiary} />
+            <Text style={[styles.editBtnText, meta.notes && { color: colors.accent }]} numberOfLines={1}>
+              Notizen
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Notes editing - fullscreen modal so keyboard never overlaps */}

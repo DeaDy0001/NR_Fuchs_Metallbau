@@ -32,10 +32,6 @@ export default function ProjectDetailScreen({ navigation, route }) {
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState('');
 
-  // Notes FAB state
-  const [showNotesModal, setShowNotesModal] = useState(false);
-  const [notesText, setNotesText] = useState('');
-  const [sendingNotes, setSendingNotes] = useState(false);
 
   // Metadata state
   const [meta, setMeta] = useState({ color: null, notes: null, tags: [] });
@@ -92,40 +88,6 @@ export default function ProjectDetailScreen({ navigation, route }) {
     await loadImages();
     await loadMeta();
     setRefreshing(false);
-  };
-
-  const handleSendNotes = async () => {
-    const text = notesText.trim();
-    setSendingNotes(true);
-    try {
-      const folderId = projectFolderId;
-      if (!folderId) throw new Error('Kein Ordner-ID');
-
-      const newMeta = {
-        color: meta.color || null,
-        notes: text || null,
-        tags: meta.tags || [],
-        is_starred: false,
-      };
-
-      // 1. Update local cache immediately
-      const cached = await getCachedProjectByFolderId(folderId);
-      if (cached) {
-        await cacheProject({ ...cached, notes: newMeta.notes });
-      }
-
-      // 2. Close modal immediately
-      setMeta(prev => ({ ...prev, notes: newMeta.notes }));
-      setShowNotesModal(false);
-
-      // 3. Queue background upload to Drive
-      await addToMetaChangeQueue(folderId, projectName, newMeta);
-      forceProcessQueue();
-    } catch (e) {
-      alert('Fehler', 'Notiz konnte nicht gespeichert werden: ' + e.message);
-    } finally {
-      setSendingNotes(false);
-    }
   };
 
   const openEditModal = () => {
@@ -264,10 +226,6 @@ export default function ProjectDetailScreen({ navigation, route }) {
               <View style={styles.metaCardHeader}>
                 <View style={[styles.colorDot, { backgroundColor: projectColor }]} />
                 <Text style={styles.metaCardTitle}>{projectName}</Text>
-                <TouchableOpacity onPress={openEditModal} style={styles.editMetaBtn}>
-                  <Ionicons name="pencil-outline" size={16} color={colors.accent} />
-                  <Text style={styles.editMetaBtnText}>Bearbeiten</Text>
-                </TouchableOpacity>
               </View>
               {meta.notes ? (
                 <Text style={styles.notesText} numberOfLines={3}>{meta.notes}</Text>
@@ -316,12 +274,12 @@ export default function ProjectDetailScreen({ navigation, route }) {
         }
       />
 
-      {/* FAB - Notes (left of camera) */}
+      {/* FAB - Edit project (left of camera) */}
       <TouchableOpacity
         style={styles.fabNotes}
-        onPress={() => { setNotesText(meta.notes || ''); setShowNotesModal(true); }}
+        onPress={openEditModal}
       >
-        <Ionicons name="document-text-outline" size={26} color="white" />
+        <Ionicons name="create-outline" size={26} color="white" />
       </TouchableOpacity>
 
       {/* FAB - Take photo */}
@@ -331,45 +289,6 @@ export default function ProjectDetailScreen({ navigation, route }) {
       >
         <Ionicons name="camera" size={28} color="white" />
       </TouchableOpacity>
-
-      {/* Notes Modal */}
-      <Modal
-        visible={showNotesModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowNotesModal(false)}
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowNotesModal(false)}>
-              <Ionicons name="close" size={24} color={colors.textSecondary} />
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>Notizen</Text>
-            <TouchableOpacity
-              onPress={handleSendNotes}
-              disabled={sendingNotes}
-              style={[styles.saveBtn, sendingNotes && styles.saveBtnDisabled]}
-            >
-              {sendingNotes
-                ? <ActivityIndicator size="small" color="white" />
-                : <Text style={styles.saveBtnText}>Speichern</Text>
-              }
-            </TouchableOpacity>
-          </View>
-          <View style={styles.notesModalBody}>
-            <Text style={styles.notesModalHint}>
-              Notizen für „{projectName}":
-            </Text>
-            <CheckboxNotes
-              value={notesText}
-              onChange={setNotesText}
-              placeholder="Notiz eingeben..."
-              autoFocus
-              minHeight={200}
-            />
-          </View>
-        </View>
-      </Modal>
 
       {/* Edit Metadata Modal */}
       <Modal

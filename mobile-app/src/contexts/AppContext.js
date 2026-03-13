@@ -89,13 +89,7 @@ export const AppProvider = ({ children }) => {
     // login screen instead of cryptic "Nicht angemeldet" errors mid-upload.
     const refreshTokenSilently = async () => {
       try {
-        const token = await getAccessToken();
-        if (!token) {
-          console.log('[Fuchs] Token refresh failed - logging out');
-          setIsGoogleAuthed(false);
-          setIsConnected(false);
-          setActiveConnection(null);
-        }
+        await getAccessToken(); // Refreshes if expired; ignore result - don't change auth state
       } catch (e) {
         console.log('[Fuchs] Silent token refresh error:', e.message);
       }

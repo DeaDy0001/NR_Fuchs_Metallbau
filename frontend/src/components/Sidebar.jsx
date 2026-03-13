@@ -1,40 +1,28 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Image, FolderKanban, Inbox, User, LogOut, Users } from 'lucide-react';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import './Sidebar.css';
 
 function Sidebar({ collapsed, moduleMitarbeiter }) {
   const location = useLocation();
   const { user, logout } = useAuth();
-  const [inboxUnread, setInboxUnread] = useState(0);
+  const [inboxPending, setInboxPending] = useState(() => {
+    const stored = localStorage.getItem('inboxPendingCount');
+    return stored ? parseInt(stored, 10) : 0;
+  });
   const [showUserMenu, setShowUserMenu] = useState(false);
   const viewTabs = user?.permissions?.view_tabs || ['inbox', 'images', 'projects'];
 
-  const checkUnread = useCallback(async () => {
-    try {
-      const res = await fetch('/api/mobile/activities?unread_count=1');
-      if (res.ok) {
-        const data = await res.json();
-        setInboxUnread(data.unread_count || 0);
-      }
-    } catch {
-      // ignore
-    }
+  useEffect(() => {
+    const handler = (e) => {
+      const count = e.detail?.count ?? 0;
+      setInboxPending(count);
+      localStorage.setItem('inboxPendingCount', String(count));
+    };
+    window.addEventListener('inbox-count-update', handler);
+    return () => window.removeEventListener('inbox-count-update', handler);
   }, []);
-
-  useEffect(() => {
-    checkUnread();
-    const interval = setInterval(checkUnread, 60000);
-    return () => clearInterval(interval);
-  }, [checkUnread]);
-
-  // Re-check when navigating away from /inbox (badge might need to refresh)
-  useEffect(() => {
-    if (location.pathname !== '/inbox') {
-      checkUnread();
-    }
-  }, [location.pathname, checkUnread]);
 
   const isActive = (path) => location.pathname === path;
 
@@ -51,7 +39,7 @@ function Sidebar({ collapsed, moduleMitarbeiter }) {
             <div className="menu-item-content">
               <div className="menu-item-icon-wrap">
                 <Inbox size={20} />
-                {inboxUnread > 0 && <span className="inbox-badge" />}
+                {inboxPending > 0 && <span className="inbox-badge" />}
               </div>
               {!collapsed && <span className="menu-item-label">Postfach</span>}
             </div>
