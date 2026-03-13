@@ -401,6 +401,7 @@ export default function SettingsScreen({ navigation }) {
   ];
 
   return (
+    <>
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* App Update */}
       <View style={styles.section}>
@@ -830,6 +831,7 @@ export default function SettingsScreen({ navigation }) {
         </View>
       </KeyboardAvoidingView>
     </Modal>
+    </>
   );
 }
 
