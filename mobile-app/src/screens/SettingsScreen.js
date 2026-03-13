@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator, Linking } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator, Linking, AppState, Modal, KeyboardAvoidingView, Platform } from 'react-native';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { useDialog } from '../components/CustomDialog';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { getSetting, setSetting, getCachedProjects } from '../services/database';
-import { getCacheSize, clearCache, cleanupCache, downloadProjectImages } from '../services/syncService';
-import { fetchProjectImages, downloadAppUpdateApk, checkAppUpdate } from '../services/api';
+import { getSetting, setSetting } from '../services/database';
+import { getCacheSize, clearCache, syncAllThumbnails, cleanupFullImages } from '../services/syncService';
+import { downloadAppUpdateApk, downloadDevApk } from '../services/api';
 import Slider from '../components/Slider';
 import * as FileSystem from 'expo-file-system/legacy';
 import Constants from 'expo-constants';
@@ -26,18 +26,15 @@ export default function SettingsScreen({ navigation }) {
   const [maxResolution, setMaxResolution] = useState(1920);
   const [maxImageSizeKB, setMaxImageSizeKB] = useState(1024);
   const [keepOriginal, setKeepOriginal] = useState(true);
-  const [cacheMaxAgeDays, setCacheMaxAgeDays] = useState(30);
   const [lazyLoadImages, setLazyLoadImages] = useState(true);
   const [autoDeleteOld, setAutoDeleteOld] = useState(false);
-  const [autoDeleteDays, setAutoDeleteDays] = useState(60);
+  const [autoDeleteUnit, setAutoDeleteUnit] = useState('monate');   // 'tage' | 'monate' | 'jahre'
+  const [autoDeleteValue, setAutoDeleteValue] = useState(10);
+  const [autoDeleteDateType, setAutoDeleteDateType] = useState('upload'); // 'upload' | 'erstellung'
 
-  // GPS settings
-  const [gpsDefault, setGpsDefault] = useState(true);
-
-  // Bulk download
+  // Bulk download / thumbnail sync
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState('');
-  const [downloadMaxDays, setDownloadMaxDays] = useState(60);
 
   // Server-defined image format (read-only, synced from Drive on startup)
   const [serverImageFormat, setServerImageFormat] = useState('');
@@ -46,14 +43,87 @@ export default function SettingsScreen({ navigation }) {
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateDownloading, setUpdateDownloading] = useState(false);
   const [updateDownloadProgress, setUpdateDownloadProgress] = useState(0);
-  const [reinstalling, setReinstalling] = useState(false);
-  const [reinstallProgress, setReinstallProgress] = useState(0);
+
+  // Dev/admin install state
+  const [devInstalling, setDevInstalling] = useState(false);
+  const [devInstallProgress, setDevInstallProgress] = useState(0);
+
+  // Admin password modal
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
 
   const installedVersion = Constants.expoConfig?.version || '0.0.0';
+
+  // Refs for pause/resume of APK download when screen turns off
+  const downloadResumableRef = useRef(null);
+  const isDownloadPausedRef = useRef(false);
 
   useEffect(() => {
     loadSettings();
   }, []);
+
+  // Cleanup download on unmount (e.g. user navigates away)
+  useEffect(() => {
+    return () => {
+      downloadResumableRef.current = null;
+      isDownloadPausedRef.current = false;
+    };
+  }, []);
+
+  /**
+   * Wraps downloadAppUpdateApk with AppState-aware pause/resume:
+   * - Screen turns off (background/inactive) → download is paused
+   * - App comes back to foreground (active) → download resumes automatically
+   */
+  const doDownloadWithResume = (apkFileId, onProgress) => {
+    return new Promise((resolve, reject) => {
+      let sub = null;
+      isDownloadPausedRef.current = false;
+
+      const done = (uri) => {
+        sub?.remove();
+        downloadResumableRef.current = null;
+        resolve(uri);
+      };
+
+      const fail = (e) => {
+        sub?.remove();
+        downloadResumableRef.current = null;
+        reject(e);
+      };
+
+      const tryResume = async () => {
+        const dl = downloadResumableRef.current;
+        if (!dl) return;
+        isDownloadPausedRef.current = false;
+        try {
+          const result = await dl.resumeAsync();
+          if (result?.uri) done(result.uri);
+          // else: paused again immediately — next AppState event will retry
+        } catch (e) {
+          fail(e);
+        }
+      };
+
+      sub = AppState.addEventListener('change', (nextState) => {
+        const dl = downloadResumableRef.current;
+        if (!dl) return;
+        if ((nextState === 'background' || nextState === 'inactive') && !isDownloadPausedRef.current) {
+          isDownloadPausedRef.current = true;
+          dl.pauseAsync().catch(() => {});
+        } else if (nextState === 'active' && isDownloadPausedRef.current) {
+          tryResume();
+        }
+      });
+
+      downloadAppUpdateApk(apkFileId, onProgress, (dl) => {
+        downloadResumableRef.current = dl;
+      }).then(done).catch((e) => {
+        if (isDownloadPausedRef.current) return; // download was paused, will resume via AppState
+        fail(e);
+      });
+    });
+  };
 
   const loadSettings = async () => {
     setWifiOnly((await getSetting('wifiOnly', 'true')) === 'true');
@@ -61,12 +131,11 @@ export default function SettingsScreen({ navigation }) {
     setMaxResolution(parseInt(await getSetting('maxImageResolution', '1920')));
     setMaxImageSizeKB(parseInt(await getSetting('maxImageSizeKB', '1024')));
     setKeepOriginal((await getSetting('keepOriginal', 'true')) === 'true');
-    setCacheMaxAgeDays(parseInt(await getSetting('cacheMaxAgeDays', '30')));
     setLazyLoadImages((await getSetting('lazyLoadImages', 'true')) === 'true');
     setAutoDeleteOld((await getSetting('autoDeleteOld', 'false')) === 'true');
-    setAutoDeleteDays(parseInt(await getSetting('autoDeleteDays', '60')));
-    setGpsDefault((await getSetting('gpsDefault', 'true')) === 'true');
-    setDownloadMaxDays(parseInt(await getSetting('downloadMaxDays', '60')));
+    setAutoDeleteUnit(await getSetting('autoDeleteUnit', 'monate'));
+    setAutoDeleteValue(parseInt(await getSetting('autoDeleteValue', '10')));
+    setAutoDeleteDateType(await getSetting('autoDeleteDateType', 'upload'));
     setServerImageFormat((await getSetting('serverImageFormat', 'jpeg')).toUpperCase());
 
     const size = await getCacheSize();
@@ -86,20 +155,34 @@ export default function SettingsScreen({ navigation }) {
     }
   };
 
+  /**
+   * Launch the APK installer and delete the local APK file once the app
+   * returns to the foreground (i.e. after the user finishes/cancels the install).
+   */
+  const launchAndCleanup = async (localUri) => {
+    const contentUri = await FileSystem.getContentUriAsync(localUri);
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        sub.remove();
+        FileSystem.deleteAsync(localUri, { idempotent: true }).catch(() => {});
+      }
+    });
+    await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+      data: contentUri,
+      flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+      type: 'application/vnd.android.package-archive',
+    });
+  };
+
   const handleDownloadAndInstall = async () => {
     if (!updateInfo?.apkFileId) return;
     setUpdateDownloading(true);
     setUpdateDownloadProgress(0);
     try {
-      const uri = await downloadAppUpdateApk(updateInfo.apkFileId, (pct) => {
+      const uri = await doDownloadWithResume(updateInfo.apkFileId, (pct) => {
         setUpdateDownloadProgress(pct);
       });
-      const contentUri = await FileSystem.getContentUriAsync(uri);
-      await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-        data: contentUri,
-        flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
-        type: 'application/vnd.android.package-archive',
-      });
+      await launchAndCleanup(uri);
     } catch (e) {
       alert('Update-Fehler', 'Download fehlgeschlagen: ' + (e.message || 'Unbekannter Fehler'));
     } finally {
@@ -108,29 +191,32 @@ export default function SettingsScreen({ navigation }) {
     }
   };
 
-  const handleReinstall = async () => {
-    setReinstalling(true);
-    setReinstallProgress(0);
+  const handleAdminIconPress = () => {
+    setPasswordInput('');
+    setShowPasswordModal(true);
+  };
+
+  const handleDevInstall = async () => {
+    if (passwordInput !== 'netrock!"§$%&') {
+      alert('Fehler', 'Falsches Passwort.');
+      return;
+    }
+    setShowPasswordModal(false);
+    setPasswordInput('');
+    setDevInstalling(true);
+    setDevInstallProgress(0);
     try {
-      const update = await checkAppUpdate();
-      if (!update?.apkFileId) {
-        alert('Fehler', 'APK nicht auf Google Drive gefunden.');
-        return;
-      }
-      const uri = await downloadAppUpdateApk(update.apkFileId, (pct) => {
-        setReinstallProgress(pct);
-      });
-      const contentUri = await FileSystem.getContentUriAsync(uri);
-      await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-        data: contentUri,
-        flags: 1,
-        type: 'application/vnd.android.package-archive',
-      });
+      const uri = await downloadDevApk(
+        (pct) => setDevInstallProgress(pct),
+        (dl)  => { downloadResumableRef.current = dl; }
+      );
+      await launchAndCleanup(uri);
     } catch (e) {
-      alert('Fehler', 'Download fehlgeschlagen: ' + (e.message || 'Unbekannter Fehler'));
+      alert('Dev-Install Fehler', e.message || 'Unbekannter Fehler');
     } finally {
-      setReinstalling(false);
-      setReinstallProgress(0);
+      setDevInstalling(false);
+      setDevInstallProgress(0);
+      downloadResumableRef.current = null;
     }
   };
 
@@ -144,6 +230,8 @@ export default function SettingsScreen({ navigation }) {
   const handleToggleWifi = async (value) => {
     setWifiOnly(value);
     await saveSetting('wifiOnly', value);
+    // Reset banner dismissal so it can reappear when re-enabled
+    if (value) await saveSetting('wifiBannerDismissed', 'false');
   };
 
   const handleClearCache = () => {
@@ -165,8 +253,8 @@ export default function SettingsScreen({ navigation }) {
 
   const handleBulkDownload = () => {
     alert(
-      'Bilder herunterladen',
-      `Alle Projektbilder der letzten ${downloadMaxDays} Tage werden heruntergeladen.\n\nDies kann je nach Menge einige Zeit dauern.`,
+      'Thumbnails synchronisieren',
+      'Alle Vorschaubilder aller Projekte werden heruntergeladen.\n\nDies kann je nach Menge einige Zeit dauern.',
       [
         { text: 'Abbrechen', style: 'cancel' },
         { text: 'Herunterladen', onPress: startBulkDownload },
@@ -176,56 +264,20 @@ export default function SettingsScreen({ navigation }) {
 
   const startBulkDownload = async () => {
     setDownloading(true);
-    setDownloadProgress('Projekte laden...');
+    setDownloadProgress('Starte...');
 
     try {
-      const projects = await getCachedProjects();
-      let totalDownloaded = 0;
-      let totalImages = 0;
-
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - downloadMaxDays);
-
-      for (let i = 0; i < projects.length; i++) {
-        const project = projects[i];
-        if (!project.folder_id) continue;
-
-        setDownloadProgress(`Projekt ${i + 1}/${projects.length}: ${project.folder_name}`);
-
-        try {
-          const images = await fetchProjectImages(project.folder_id);
-
-          // Filter by date
-          const filteredImages = downloadMaxDays > 0
-            ? images.filter(img => new Date(img.modified_time) >= cutoffDate)
-            : images;
-
-          totalImages += filteredImages.length;
-
-          if (filteredImages.length > 0) {
-            const downloaded = await downloadProjectImages(
-              project.id,
-              filteredImages,
-              (done, total) => {
-                setDownloadProgress(
-                  `${project.folder_name}: ${done}/${total} Bilder\n(Projekt ${i + 1}/${projects.length})`
-                );
-              }
-            );
-            totalDownloaded += downloaded;
-          }
-        } catch (error) {
-          console.error(`Failed to download images for project ${project.folder_name}:`, error);
-        }
-      }
+      const { downloaded, deleted } = await syncAllThumbnails((projectIndex, total, projectName) => {
+        setDownloadProgress(`Projekt ${projectIndex + 1}/${total}:\n${projectName}`);
+      });
 
       const size = await getCacheSize();
       setCacheSize(size);
 
-      alert(
-        'Download abgeschlossen',
-        `${totalDownloaded} von ${totalImages} Bildern heruntergeladen.`
-      );
+      const parts = [];
+      if (downloaded > 0) parts.push(`${downloaded} neue Thumbnails heruntergeladen`);
+      if (deleted > 0) parts.push(`${deleted} gelöschte Bilder entfernt`);
+      alert('Fertig', parts.length > 0 ? parts.join(', ') + '.' : 'Alles bereits aktuell.');
     } catch (error) {
       alert('Fehler', 'Download fehlgeschlagen: ' + error.message);
     } finally {
@@ -293,26 +345,8 @@ export default function SettingsScreen({ navigation }) {
     { label: 'Kein Limit', value: 0 },
   ];
 
-  const ageDayOptions = [
-    { label: '7 Tage', value: 7 },
-    { label: '14 Tage', value: 14 },
-    { label: '30 Tage', value: 30 },
-    { label: '60 Tage', value: 60 },
-    { label: '90 Tage', value: 90 },
-    { label: 'Nie', value: 0 },
-  ];
-
-  const downloadDayOptions = [
-    { label: '7 Tage', value: 7 },
-    { label: '14 Tage', value: 14 },
-    { label: '30 Tage', value: 30 },
-    { label: '60 Tage', value: 60 },
-    { label: '90 Tage', value: 90 },
-    { label: '180 Tage', value: 180 },
-    { label: 'Alle', value: 0 },
-  ];
-
   return (
+    <>
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* App Update */}
       <View style={styles.section}>
@@ -323,11 +357,12 @@ export default function SettingsScreen({ navigation }) {
             <Text style={styles.settingLabel}>Installierte Version</Text>
             <Text style={styles.settingDesc}>v{installedVersion}</Text>
           </View>
-          <TouchableOpacity onPress={handleCheckForUpdate} disabled={updateChecking}>
+          {/* Admin icon – password-protected dev installer */}
+          <TouchableOpacity onPress={handleAdminIconPress} disabled={devInstalling}>
             <Ionicons
-              name="refresh-outline"
+              name="construct-outline"
               size={20}
-              color={updateChecking ? colors.textTertiary : colors.accent}
+              color={devInstalling ? colors.textTertiary : colors.textTertiary}
             />
           </TouchableOpacity>
         </View>
@@ -347,6 +382,9 @@ export default function SettingsScreen({ navigation }) {
                 Update verfügbar: v{updateInfo.version}
               </Text>
             </View>
+            {updateInfo.changelog ? (
+              <Text style={styles.updateChangelog}>{updateInfo.changelog}</Text>
+            ) : null}
 
             {updateDownloading ? (
               <View style={styles.updateProgressBox}>
@@ -366,19 +404,24 @@ export default function SettingsScreen({ navigation }) {
           <Text style={styles.updateUpToDate}>App ist aktuell</Text>
         )}
 
-        {/* Reinstall button — always visible */}
+        {/* Dev install progress */}
+        {devInstalling && (
+          <View style={styles.updateProgressBox}>
+            <View style={[styles.updateProgressBar, { width: `${devInstallProgress}%` }]} />
+            <Text style={styles.updateProgressText}>{devInstallProgress}% heruntergeladen (Dev)…</Text>
+          </View>
+        )}
+
+        {/* Nach Updates suchen button (formerly "App erneut installieren") */}
         <View style={styles.reinstallBox}>
-          {reinstalling ? (
-            <View style={styles.updateProgressBox}>
-              <View style={[styles.updateProgressBar, { width: `${reinstallProgress}%` }]} />
-              <Text style={styles.updateProgressText}>{reinstallProgress}% heruntergeladen…</Text>
-            </View>
-          ) : (
-            <TouchableOpacity style={styles.reinstallButton} onPress={handleReinstall}>
-              <Ionicons name="refresh-circle-outline" size={18} color={colors.textSecondary} />
-              <Text style={styles.reinstallButtonText}>App erneut installieren</Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity
+            style={styles.reinstallButton}
+            onPress={handleCheckForUpdate}
+            disabled={updateChecking || devInstalling}
+          >
+            <Ionicons name="search-outline" size={18} color={colors.textSecondary} />
+            <Text style={styles.reinstallButtonText}>Nach Updates suchen</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -447,24 +490,11 @@ export default function SettingsScreen({ navigation }) {
 
         <View style={styles.settingRow}>
           <View style={styles.settingInfo}>
-            <Text style={styles.settingLabel}>GPS standardmäßig aktiv</Text>
-            <Text style={styles.settingDesc}>Standortdaten bei jedem Foto speichern</Text>
-          </View>
-          <Switch
-            value={gpsDefault}
-            onValueChange={async (v) => { setGpsDefault(v); await saveSetting('gpsDefault', v); }}
-            trackColor={{ false: colors.bgTertiary, true: colors.accent }}
-            thumbColor="white"
-          />
-        </View>
-
-        <View style={styles.settingRow}>
-          <View style={styles.settingInfo}>
             <Text style={styles.settingLabel}>Original behalten</Text>
             <Text style={styles.settingDesc}>
               {keepOriginal
-                ? 'Originalfoto wird in der Galerie gespeichert, komprimierte Version wird hochgeladen'
-                : 'Nur die komprimierte Version bleibt in der App'}
+                ? 'Originalfoto wird beim Hochladen einmalig in der Galerie gespeichert'
+                : 'Kein Foto wird in der Galerie gespeichert'}
             </Text>
           </View>
           <Switch
@@ -534,27 +564,14 @@ export default function SettingsScreen({ navigation }) {
         </View>
       </View>
 
-      {/* Bilder herunterladen */}
+      {/* Thumbnails herunterladen */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Bilder herunterladen</Text>
+        <Text style={styles.sectionTitle}>Vorschaubilder</Text>
 
-        <View style={styles.settingBlock}>
-          <Text style={styles.settingLabel}>Zeitraum für Bilder-Download</Text>
-          <Text style={styles.settingDesc}>Nur Bilder herunterladen, die nicht älter sind als:</Text>
-          <View style={styles.optionGrid}>
-            {downloadDayOptions.map(opt => (
-              <TouchableOpacity
-                key={opt.value}
-                style={[styles.optionChip, downloadMaxDays === opt.value && styles.optionChipActive]}
-                onPress={async () => { setDownloadMaxDays(opt.value); await saveSetting('downloadMaxDays', opt.value); }}
-              >
-                <Text style={[styles.optionChipText, downloadMaxDays === opt.value && styles.optionChipTextActive]}>
-                  {opt.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
+        <Text style={styles.settingDesc}>
+          Alle Vorschaubilder aller Projekte werden lokal gespeichert, damit sie auch ohne Internet verfügbar sind.
+          Dabei werden auch Datum-Informationen der Bilder gespeichert (für die automatische Bereinigung).
+        </Text>
 
         <TouchableOpacity
           style={[styles.downloadButton, downloading && styles.buttonDisabled]}
@@ -569,7 +586,7 @@ export default function SettingsScreen({ navigation }) {
           ) : (
             <>
               <Ionicons name="download-outline" size={20} color={colors.accent} />
-              <Text style={styles.downloadButtonText}>Alle Projektbilder herunterladen</Text>
+              <Text style={styles.downloadButtonText}>Alle Vorschaubilder synchronisieren</Text>
             </>
           )}
         </TouchableOpacity>
@@ -597,56 +614,109 @@ export default function SettingsScreen({ navigation }) {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Speicher</Text>
 
+        {/* Auto-delete toggle */}
         <View style={styles.settingRow}>
           <View style={styles.settingInfo}>
             <Text style={styles.settingLabel}>Alte Bilder automatisch löschen</Text>
-            <Text style={styles.settingDesc}>Nur vom Gerät, nicht von Google Drive</Text>
+            <Text style={styles.settingDesc}>Vollbilder ab einem bestimmten Alter vom Gerät entfernen (Nur Vollbilder – Vorschaubilder bleiben erhalten)</Text>
           </View>
           <Switch
             value={autoDeleteOld}
-            onValueChange={async (v) => { setAutoDeleteOld(v); await saveSetting('autoDeleteOld', v); }}
+            onValueChange={async (v) => {
+              setAutoDeleteOld(v);
+              await saveSetting('autoDeleteOld', v);
+              if (!v) return;
+              try { await cleanupFullImages(); } catch {}
+              const size = await getCacheSize();
+              setCacheSize(size);
+            }}
             trackColor={{ false: colors.bgTertiary, true: colors.accent }}
             thumbColor="white"
           />
         </View>
 
+        {/* Cache-Lebensdauer – nur sichtbar wenn Toggle aktiv */}
         {autoDeleteOld && (
-          <View style={styles.settingBlock}>
-            <Text style={styles.settingLabel}>Bilder löschen, die älter sind als:</Text>
+          <View style={[styles.settingBlock, styles.autoDeleteBox]}>
+            <Text style={styles.settingLabel}>Cache-Lebensdauer</Text>
+
+            {/* Unit selector */}
+            <Text style={[styles.settingDesc, { marginTop: 8 }]}>Einheit</Text>
             <View style={styles.optionGrid}>
-              {ageDayOptions.filter(o => o.value > 0).map(opt => (
+              {[{ label: 'Tage', value: 'tage' }, { label: 'Monate', value: 'monate' }, { label: 'Jahre', value: 'jahre' }].map(opt => (
                 <TouchableOpacity
                   key={opt.value}
-                  style={[styles.optionChip, autoDeleteDays === opt.value && styles.optionChipActive]}
-                  onPress={async () => { setAutoDeleteDays(opt.value); await saveSetting('autoDeleteDays', opt.value); }}
+                  style={[styles.optionChip, autoDeleteUnit === opt.value && styles.optionChipActive]}
+                  onPress={async () => {
+                    const defaults = { tage: 30, monate: 10, jahre: 2 };
+                    const newVal = defaults[opt.value];
+                    setAutoDeleteUnit(opt.value);
+                    setAutoDeleteValue(newVal);
+                    await saveSetting('autoDeleteUnit', opt.value);
+                    await saveSetting('autoDeleteValue', newVal);
+                    try { await cleanupFullImages(); } catch {}
+                    const size = await getCacheSize();
+                    setCacheSize(size);
+                  }}
                 >
-                  <Text style={[styles.optionChipText, autoDeleteDays === opt.value && styles.optionChipTextActive]}>
+                  <Text style={[styles.optionChipText, autoDeleteUnit === opt.value && styles.optionChipTextActive]}>
                     {opt.label}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
+
+            {/* Value slider */}
+            <Text style={[styles.settingDesc, { marginTop: 12 }]}>
+              Vollbilder löschen, die älter sind als: <Text style={{ color: colors.accent, fontWeight: '700' }}>{autoDeleteValue} {autoDeleteUnit === 'tage' ? 'Tage' : autoDeleteUnit === 'monate' ? 'Monate' : 'Jahre'}</Text>
+            </Text>
+            <Slider
+              value={autoDeleteValue}
+              min={1}
+              max={autoDeleteUnit === 'tage' ? 365 : autoDeleteUnit === 'monate' ? 36 : 10}
+              step={1}
+              onValueChange={async (v) => {
+                setAutoDeleteValue(v);
+                await saveSetting('autoDeleteValue', v);
+                try { await cleanupFullImages(); } catch {}
+                const size = await getCacheSize();
+                setCacheSize(size);
+              }}
+              leftLabel="1"
+              rightLabel={autoDeleteUnit === 'tage' ? '365' : autoDeleteUnit === 'monate' ? '36' : '10'}
+            />
+
+            {/* Date type selector */}
+            <Text style={[styles.settingDesc, { marginTop: 12 }]}>Datum verwenden</Text>
+            <View style={styles.optionGrid}>
+              {[
+                { label: 'Upload-Datum', value: 'upload', desc: 'Wann das Bild hochgeladen wurde' },
+                { label: 'Erstellungsdatum', value: 'erstellung', desc: 'EXIF-Datum der Aufnahme' },
+              ].map(opt => (
+                <TouchableOpacity
+                  key={opt.value}
+                  style={[styles.optionChip, autoDeleteDateType === opt.value && styles.optionChipActive]}
+                  onPress={async () => {
+                    setAutoDeleteDateType(opt.value);
+                    await saveSetting('autoDeleteDateType', opt.value);
+                    try { await cleanupFullImages(); } catch {}
+                    const size = await getCacheSize();
+                    setCacheSize(size);
+                  }}
+                >
+                  <Text style={[styles.optionChipText, autoDeleteDateType === opt.value && styles.optionChipTextActive]}>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={[styles.settingDesc, { marginTop: 6 }]}>
+              {autoDeleteDateType === 'erstellung'
+                ? 'Bilder ohne Erstellungsdatum werden nicht gelöscht.'
+                : 'Bilder ohne Upload-Datum werden nicht gelöscht.'}
+            </Text>
           </View>
         )}
-
-        {/* Cache Max Age */}
-        <View style={styles.settingBlock}>
-          <Text style={styles.settingLabel}>Cache-Lebensdauer</Text>
-          <Text style={styles.settingDesc}>Wie lange heruntergeladene Bilder gespeichert bleiben</Text>
-          <View style={styles.optionGrid}>
-            {ageDayOptions.map(opt => (
-              <TouchableOpacity
-                key={opt.value}
-                style={[styles.optionChip, cacheMaxAgeDays === opt.value && styles.optionChipActive]}
-                onPress={async () => { setCacheMaxAgeDays(opt.value); await saveSetting('cacheMaxAgeDays', opt.value); }}
-              >
-                <Text style={[styles.optionChipText, cacheMaxAgeDays === opt.value && styles.optionChipTextActive]}>
-                  {opt.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
 
         {/* Cache info */}
         <View style={styles.cacheInfo}>
@@ -691,6 +761,62 @@ export default function SettingsScreen({ navigation }) {
 
       <View style={{ height: 40 }} />
     </ScrollView>
+
+    {/* Admin / Dev-Install password modal */}
+    <Modal
+      visible={showPasswordModal}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setShowPasswordModal(false)}
+    >
+      <KeyboardAvoidingView
+        style={styles.modalOverlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={() => setShowPasswordModal(false)}
+        />
+        <View style={styles.passwordDialog}>
+          <View style={styles.passwordDialogAccent} />
+          <View style={styles.passwordDialogContent}>
+            <View style={styles.passwordDialogHeader}>
+              <Ionicons name="construct-outline" size={20} color={colors.textSecondary} />
+              <Text style={styles.passwordDialogTitle}>Dev-Install</Text>
+            </View>
+            <Text style={styles.passwordDialogDesc}>
+              Bitte Passwort eingeben um die aktuelle Dev-Version zu installieren.
+            </Text>
+            <TextInput
+              style={styles.passwordInput}
+              value={passwordInput}
+              onChangeText={setPasswordInput}
+              placeholder="Passwort"
+              placeholderTextColor={colors.textTertiary}
+              secureTextEntry
+              autoFocus
+              onSubmitEditing={handleDevInstall}
+            />
+          </View>
+          <View style={styles.passwordDialogButtons}>
+            <TouchableOpacity
+              style={[styles.passwordDialogBtn, styles.passwordDialogBtnCancel]}
+              onPress={() => { setShowPasswordModal(false); setPasswordInput(''); }}
+            >
+              <Text style={styles.passwordDialogBtnTextCancel}>Abbrechen</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.passwordDialogBtn, styles.passwordDialogBtnPrimary]}
+              onPress={handleDevInstall}
+            >
+              <Text style={styles.passwordDialogBtnTextPrimary}>Installieren</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+    </>
   );
 }
 
@@ -715,6 +841,14 @@ const styles = StyleSheet.create({
   settingValue: { fontSize: 15, color: colors.accent },
   settingValueSmall: { fontSize: 13, color: colors.textSecondary },
   settingBlock: { paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.border },
+  autoDeleteBox: {
+    backgroundColor: 'rgba(59,130,246,0.06)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(59,130,246,0.2)',
+    paddingHorizontal: 12,
+    marginTop: 4,
+  },
   editRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   nameInput: {
     backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.border,
@@ -793,6 +927,39 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.05)',
   },
   reinstallButtonText: { fontSize: 13, color: colors.textSecondary },
+
+  // Password modal
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  passwordDialog: {
+    width: 320, backgroundColor: colors.bgSecondary,
+    borderRadius: 16, overflow: 'hidden',
+    borderWidth: 1, borderColor: colors.border,
+    elevation: 24,
+  },
+  passwordDialogAccent: { height: 3, backgroundColor: colors.textTertiary },
+  passwordDialogContent: { padding: 20, paddingBottom: 12 },
+  passwordDialogHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  passwordDialogTitle: { fontSize: 16, fontWeight: '700', color: colors.textPrimary },
+  passwordDialogDesc: { fontSize: 13, color: colors.textSecondary, marginBottom: 14, lineHeight: 18 },
+  passwordInput: {
+    borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 10,
+    fontSize: 15, color: colors.textPrimary,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  passwordDialogButtons: {
+    flexDirection: 'row', gap: 8, padding: 12, paddingTop: 0,
+  },
+  passwordDialogBtn: {
+    flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center',
+  },
+  passwordDialogBtnCancel: { backgroundColor: colors.bgTertiary },
+  passwordDialogBtnPrimary: { backgroundColor: colors.accent },
+  passwordDialogBtnTextCancel: { fontSize: 14, fontWeight: '600', color: colors.textSecondary },
+  passwordDialogBtnTextPrimary: { fontSize: 14, fontWeight: '600', color: '#ffffff' },
 
   // Download section
   downloadButton: {

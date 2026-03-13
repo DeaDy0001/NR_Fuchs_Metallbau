@@ -4,6 +4,7 @@ import {
   ActivityIndicator, FlatList, Dimensions, Modal, ScrollView, TextInput, Animated,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useDialog } from '../components/CustomDialog';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
@@ -12,7 +13,7 @@ import * as MediaLibrary from 'expo-media-library';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { addToUploadQueue, getCachedProjects, getPendingProjects, addPendingProject } from '../services/database';
+import { addToUploadQueue, getCachedProjects, getPendingProjects, addPendingProject, getSetting } from '../services/database';
 import { createProject } from '../services/api';
 import { processUploadQueue } from '../services/uploadQueue';
 
@@ -32,6 +33,13 @@ export default function CameraScreen({ navigation, route }) {
   const cameraRef = useRef(null);
   const metadataInputRef = useRef(null);
 
+  // Zoom & tap-to-focus
+  const [zoom, setZoom] = useState(0);
+  const baseZoomRef = useRef(0);
+  const [focusPoint, setFocusPoint] = useState(null); // {x, y} screen coords
+  const [autoFocusMode, setAutoFocusMode] = useState('off');
+  const focusAnim = useRef(new Animated.Value(0)).current;
+
   // Project assignment
   const [projectId, setProjectId] = useState(route.params?.projectId || null);
   const [projectName, setProjectName] = useState(route.params?.projectName || null);
@@ -50,6 +58,33 @@ export default function CameraScreen({ navigation, route }) {
   // Per-image metadata editing
   const [editingField, setEditingField] = useState(null); // 'title' | 'notes' | null
   const [editFieldValue, setEditFieldValue] = useState('');
+
+  // Pinch-to-zoom gesture
+  const pinchGesture = Gesture.Pinch()
+    .onStart(() => {
+      baseZoomRef.current = zoom;
+    })
+    .onUpdate((e) => {
+      const next = Math.min(1, Math.max(0, baseZoomRef.current + (e.scale - 1) * 0.3));
+      setZoom(next);
+    })
+    .runOnJS(true);
+
+  // Tap-to-focus: show ring and toggle autofocus
+  const tapGesture = Gesture.Tap()
+    .onEnd((e) => {
+      setFocusPoint({ x: e.x, y: e.y });
+      focusAnim.setValue(1);
+      Animated.timing(focusAnim, { toValue: 0, duration: 900, delay: 600, useNativeDriver: true }).start(() => {
+        setFocusPoint(null);
+      });
+      // Toggle autofocus to trigger refocus (works on iOS; visual feedback on Android)
+      setAutoFocusMode('on');
+      setTimeout(() => setAutoFocusMode('off'), 500);
+    })
+    .runOnJS(true);
+
+  const cameraGesture = Gesture.Simultaneous(pinchGesture, tapGesture);
 
   // Load projects for picker
   const loadProjects = async () => {
@@ -314,6 +349,20 @@ export default function CameraScreen({ navigation, route }) {
 
       const gpsData = await getCurrentLocation();
 
+      // Extract capture date from EXIF (will be lost during compression)
+      let capturedAt = null;
+      if (photo.exif) {
+        const dateStr = photo.exif.DateTimeOriginal || photo.exif.DateTime || photo.exif.DateTimeDigitized;
+        if (dateStr) {
+          try {
+            // EXIF format: "2024:03:15 14:30:00" → ISO
+            const iso = dateStr.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3').replace(' ', 'T');
+            capturedAt = new Date(iso).toISOString();
+          } catch {}
+        }
+      }
+      if (!capturedAt) capturedAt = new Date().toISOString();
+
       const newImage = {
         uri: photo.uri,
         fileName: `photo_${Date.now()}.jpg`,
@@ -322,6 +371,7 @@ export default function CameraScreen({ navigation, route }) {
         height: photo.height,
         exif: photo.exif,
         gps: gpsData,
+        capturedAt,
       };
 
       setCapturedImages(prev => [...prev, newImage]);
@@ -408,6 +458,24 @@ export default function CameraScreen({ navigation, route }) {
     const count = capturedImages.length;
 
     try {
+      // Save original to gallery for camera photos (only once, before queuing)
+      // Gallery picks already exist in the gallery so we skip them.
+      const keepOriginal = (await getSetting('keepOriginal', 'true')) === 'true';
+      if (keepOriginal) {
+        let { status } = await MediaLibrary.getPermissionsAsync();
+        if (status !== 'granted') {
+          const result = await MediaLibrary.requestPermissionsAsync();
+          status = result.status;
+        }
+        if (status === 'granted') {
+          for (const img of capturedImages) {
+            if (img.fileName && img.fileName.startsWith('photo_')) {
+              try { await MediaLibrary.saveToLibraryAsync(img.uri); } catch {}
+            }
+          }
+        }
+      }
+
       // Always add to queue - non-blocking
       for (const img of capturedImages) {
         await addToUploadQueue(
@@ -416,7 +484,8 @@ export default function CameraScreen({ navigation, route }) {
           img.gps ? JSON.stringify(img.gps) : null,
           false,
           img.customTitle || null,
-          img.notes || null
+          img.notes || null,
+          img.capturedAt || new Date().toISOString()
         );
       }
 
@@ -522,7 +591,7 @@ export default function CameraScreen({ navigation, route }) {
         {editingField === 'notes' && (
           <Modal
             animationType="slide"
-            onShow={() => { setTimeout(() => metadataInputRef.current?.focus(), 100); }}
+            onShow={() => { setTimeout(() => metadataInputRef.current?.focus(), 300); }}
           >
             <View style={styles.notesFullScreen}>
               <View style={styles.notesFullScreenHeader}>
@@ -550,7 +619,7 @@ export default function CameraScreen({ navigation, route }) {
           <Modal
             transparent
             animationType="slide"
-            onShow={() => { setTimeout(() => metadataInputRef.current?.focus(), 100); }}
+            onShow={() => { setTimeout(() => metadataInputRef.current?.focus(), 300); }}
           >
             <KeyboardAvoidingView
               style={{ flex: 1 }}
@@ -572,6 +641,7 @@ export default function CameraScreen({ navigation, route }) {
                     placeholder="Bildname eingeben..."
                     placeholderTextColor={colors.textTertiary}
                     autoFocus
+                    selectTextOnFocus
                     returnKeyType="done"
                     onSubmitEditing={saveEditField}
                   />
@@ -679,22 +749,42 @@ export default function CameraScreen({ navigation, route }) {
 
   return (
     <View style={styles.cameraContainer}>
+      {/* Native camera – no gesture handler directly on native views */}
       <CameraView
         ref={cameraRef}
         style={styles.camera}
         facing={facing}
         flash={flash}
         shutterSound={false}
+        zoom={zoom}
+        autofocus={autoFocusMode}
       />
 
-      {/* Overlay on top of camera */}
-      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-        {/* Top bar */}
-        <View style={styles.topBar}>
-          <TouchableOpacity style={styles.topButton} onPress={() => navigation.goBack()}>
-            <Ionicons name="close" size={28} color="white" />
-          </TouchableOpacity>
+      {/* Transparent gesture capture layer (sits above camera, below buttons) */}
+      <GestureDetector gesture={cameraGesture}>
+        <View style={StyleSheet.absoluteFill} />
+      </GestureDetector>
 
+      {/* Tap-to-focus ring */}
+      {focusPoint && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.focusRing,
+            {
+              left: focusPoint.x - 32,
+              top:  focusPoint.y - 32,
+              opacity: focusAnim,
+            },
+          ]}
+        />
+      )}
+
+      {/* Overlay on top of camera – buttons with pointerEvents="box-none" so
+          taps on empty areas pass through to the gesture layer below */}
+      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+        {/* Top bar – only controls, no close button */}
+        <View style={styles.topBar}>
           <View style={styles.topRight}>
             {/* GPS toggle */}
             <TouchableOpacity
@@ -757,6 +847,12 @@ export default function CameraScreen({ navigation, route }) {
             <Ionicons name="camera-reverse" size={28} color="white" />
           </TouchableOpacity>
         </View>
+
+        {/* Back button – at the very bottom for thumb reach */}
+        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+          <Ionicons name="chevron-back" size={26} color="white" />
+          <Text style={styles.backButtonText}>Zurück</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Project Picker Modal */}
@@ -784,11 +880,26 @@ const styles = StyleSheet.create({
   cameraContainer: { flex: 1, backgroundColor: 'black' },
   camera: { flex: 1 },
 
+  // Focus ring overlay
+  focusRing: {
+    position: 'absolute', width: 64, height: 64, borderRadius: 32,
+    borderWidth: 2, borderColor: '#ffd700',
+  },
+
   // Top bar
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 48, paddingHorizontal: 20 },
+  topBar: { flexDirection: 'row', justifyContent: 'flex-end', paddingTop: 48, paddingHorizontal: 20 },
   topRight: { flexDirection: 'row', gap: 10 },
   topButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   topButtonActive: { backgroundColor: 'rgba(34, 197, 94, 0.3)' },
+
+  // Back button at bottom
+  backButton: {
+    position: 'absolute', bottom: 10, alignSelf: 'center',
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingVertical: 8, paddingHorizontal: 20,
+    backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 20,
+  },
+  backButtonText: { color: 'white', fontSize: 15, fontWeight: '500' },
 
   // Project indicator
   projectIndicator: { flexDirection: 'row', alignItems: 'center', alignSelf: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, marginTop: 12 },
@@ -796,7 +907,7 @@ const styles = StyleSheet.create({
 
   // Captured images bar
   capturedBar: {
-    position: 'absolute', bottom: 100, left: 16, right: 16,
+    position: 'absolute', bottom: 165, left: 16, right: 16,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: 'rgba(0,0,0,0.75)', borderRadius: 12, padding: 10,
   },
@@ -807,8 +918,8 @@ const styles = StyleSheet.create({
   capturedBarAction: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   capturedBarActionText: { color: colors.accent, fontSize: 14, fontWeight: '500' },
 
-  // Bottom bar
-  bottomBar: { position: 'absolute', bottom: 40, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 40 },
+  // Bottom bar (moved up to leave room for back button)
+  bottomBar: { position: 'absolute', bottom: 70, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 40 },
   captureButton: { width: 76, height: 76, borderRadius: 38, borderWidth: 4, borderColor: 'white', padding: 4 },
   captureInner: { flex: 1, borderRadius: 34, backgroundColor: 'white' },
   galleryButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },

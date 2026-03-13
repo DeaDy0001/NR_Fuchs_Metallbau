@@ -66,11 +66,16 @@ export const AppProvider = ({ children }) => {
   // Start upload queue processing and heartbeat when connected to Drive
   // Also check for app updates and register background sync
   const appStateRef = useRef(AppState.currentState);
+  const lastUpdateCheckRef = useRef(0); // timestamp of last update check
+  const UPDATE_CHECK_INTERVAL = 60 * 60 * 1000; // 1 hour
+
   useEffect(() => {
     let updateInterval = null;
+    let tokenRefreshInterval = null;
     let appStateSub = null;
 
     const runUpdateCheck = () => {
+      lastUpdateCheckRef.current = Date.now();
       checkAppUpdate()
         .then((update) => {
           if (!update?.version || !update?.apkFileId) return;
@@ -83,21 +88,39 @@ export const AppProvider = ({ children }) => {
         .catch(() => {}); // silently ignore network errors
     };
 
+    // Proactively refresh the access token. If it can no longer be refreshed
+    // (all retries exhausted), mark the user as logged out so they see the
+    // login screen instead of cryptic "Nicht angemeldet" errors mid-upload.
+    const refreshTokenSilently = async () => {
+      try {
+        await getAccessToken(); // Refreshes if expired; ignore result - don't change auth state
+      } catch (e) {
+        console.log('[Fuchs] Silent token refresh error:', e.message);
+      }
+    };
+
     if (isConnected && activeConnection) {
       startQueueProcessing();
       startHeartbeat();
-      // Initial update check on connect
+      // Initial update check on startup / connect
       runUpdateCheck();
-      // Periodic re-check every 6 hours
-      updateInterval = setInterval(runUpdateCheck, 6 * 60 * 60 * 1000);
+      // Periodic re-check every hour
+      updateInterval = setInterval(runUpdateCheck, UPDATE_CHECK_INTERVAL);
+
+      // Refresh token every 50 minutes so it never expires mid-session
+      tokenRefreshInterval = setInterval(refreshTokenSilently, 50 * 60 * 1000);
 
       // Register background sync task so uploads run even when app is suspended
       registerBackgroundSync().catch(() => {});
 
-      // When app comes back to foreground, immediately try to sync the queue
+      // When app comes back to foreground: refresh token + sync queue,
+      // and also run an update check if 1 hour has passed since the last one.
       appStateSub = AppState.addEventListener('change', (nextState) => {
         if (appStateRef.current !== 'active' && nextState === 'active') {
-          forceProcessQueue().catch(() => {});
+          refreshTokenSilently().then(() => forceProcessQueue().catch(() => {}));
+          if (Date.now() - lastUpdateCheckRef.current >= UPDATE_CHECK_INTERVAL) {
+            runUpdateCheck();
+          }
         }
         appStateRef.current = nextState;
       });
@@ -109,6 +132,7 @@ export const AppProvider = ({ children }) => {
       stopQueueProcessing();
       stopHeartbeat();
       if (updateInterval) clearInterval(updateInterval);
+      if (tokenRefreshInterval) clearInterval(tokenRefreshInterval);
       if (appStateSub) appStateSub.remove();
     };
   }, [isConnected]);
@@ -141,7 +165,16 @@ export const AppProvider = ({ children }) => {
       }
 
       // Step 2: Check Google authentication
-      const authed = await isAuthenticated();
+      // If first attempt fails (e.g. transient network on app cold-start) but a
+      // refresh token is stored, wait 2 s and try once more before showing login.
+      let authed = await isAuthenticated();
+      if (!authed) {
+        const storedRefreshToken = await getSetting('googleRefreshToken');
+        if (storedRefreshToken) {
+          await new Promise(r => setTimeout(r, 2000));
+          authed = await isAuthenticated();
+        }
+      }
       console.log('[Fuchs] loadState - google authed:', authed);
       setIsGoogleAuthed(authed);
 

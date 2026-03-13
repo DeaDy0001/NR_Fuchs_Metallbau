@@ -4,6 +4,7 @@ import { Search, Plus, Edit2, Save, X, CheckSquare, Square, ChevronLeft, Chevron
 import ImageEditor from '../components/ImageEditor';
 import DeleteProjectModal from '../components/DeleteProjectModal';
 import DeleteImageDialog from '../components/DeleteImageDialog';
+import CheckboxNotes from '../components/CheckboxNotes';
 import './ProjectsList.css';
 
 // Helper function to format SQLite timestamps (which are in UTC)
@@ -858,12 +859,12 @@ function ProjectsList() {
                 <div className="form-column">
                   <div className="form-group">
                     <label>Notizen</label>
-                    <textarea
+                    <CheckboxNotes
                       value={editForm.notes}
-                      onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
-                      onBlur={(e) => handleSaveProject({ ...editForm, notes: e.target.value })}
-                      className="textarea"
-                      rows="5"
+                      onChange={(val) => {
+                        setEditForm(f => ({ ...f, notes: val }));
+                        handleSaveProject({ ...editForm, notes: val });
+                      }}
                       placeholder="Fügen Sie Notizen zum Projekt hinzu..."
                     />
                   </div>
@@ -1172,45 +1173,26 @@ function ProjectsList() {
 
                   {/* Notes */}
                   <div className="modal-section">
-                    <div className="notes-header">
-                      <label>Notizen</label>
-                      {!editingNotes ? (
-                        <button
-                          className="notes-edit-btn"
-                          onClick={() => { setEditingNotes(true); setNotesValue(selectedImage.image_notes || ''); }}
-                          title="Notizen bearbeiten"
-                        >
-                          <Pencil size={12} />
-                        </button>
-                      ) : (
-                        <div style={{ display: 'flex', gap: '4px' }}>
-                          <button className="notes-edit-btn notes-save-btn" onClick={handleSaveNotes} title="Speichern">
-                            <Save size={12} />
-                          </button>
-                          <button className="notes-edit-btn" onClick={() => setEditingNotes(false)} title="Abbrechen">
-                            <X size={12} />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                    {editingNotes ? (
-                      <textarea
-                        className="notes-edit-textarea"
-                        value={notesValue}
-                        onChange={(e) => setNotesValue(e.target.value)}
-                        placeholder="Notizen eingeben..."
-                        rows={3}
-                        autoFocus
-                      />
-                    ) : selectedImage.image_notes ? (
-                      <div className="image-notes-display">
-                        {selectedImage.image_notes}
-                      </div>
-                    ) : (
-                      <div className="detail-text" style={{ color: 'var(--text-tertiary)', fontStyle: 'italic', fontSize: '0.8125rem' }}>
-                        Keine Notizen
-                      </div>
-                    )}
+                    <label>Notizen</label>
+                    <CheckboxNotes
+                      value={selectedImage.image_notes || ''}
+                      onChange={async (val) => {
+                        setNotesValue(val);
+                        try {
+                          const response = await fetch(`/api/drive/images/${selectedImage.id}/notes`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ notes: val.trim() })
+                          });
+                          if (response.ok) {
+                            const updatedImage = await response.json();
+                            setSelectedImage(updatedImage);
+                            if (viewingProject) loadProjectFiles(viewingProject.id);
+                          }
+                        } catch {}
+                      }}
+                      placeholder="Notizen eingeben..."
+                    />
                   </div>
                 </div>
 

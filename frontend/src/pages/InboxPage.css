@@ -774,6 +774,32 @@
   border: 1px solid var(--border-color, #2a2d3e);
 }
 
+.inbox-lightbox-filename {
+  font-size: 0.75rem;
+  opacity: 0.6;
+  word-break: break-all;
+}
+
+.inbox-change-detail {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 0.85rem;
+}
+.inbox-change-label {
+  font-weight: 600;
+  color: var(--text-secondary, #94a3b8);
+  flex-shrink: 0;
+}
+.inbox-color-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color, #2a2d3e);
+  flex-shrink: 0;
+}
+
 /* ── Postfach: Badge pills ───────────────────────────────────────────────────── */
 .inbox-entry-badges {
   display: flex;

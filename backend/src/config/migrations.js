@@ -992,7 +992,20 @@ const migrations = [
       ins.run('krankenstand',  'Krankenstand',  getUnit('krankenstand'),  0, '#ef4444', 4);
       console.log('✓ Migration create_employee_time_types_table completed');
     }
-  }
+  },
+  {
+    id: 41,
+    name: 'add_confirmed_by_to_inbox_activities',
+    up: () => {
+      console.log('Running migration: add_confirmed_by_to_inbox_activities');
+      try {
+        db.exec(`ALTER TABLE inbox_activities ADD COLUMN confirmed_by TEXT`);
+      } catch (e) {
+        if (!e.message.includes('duplicate column')) throw e;
+      }
+      console.log('✓ Migration add_confirmed_by_to_inbox_activities completed');
+    }
+  },
 ];
 
 // Create migrations table

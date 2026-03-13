@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Inbox, Upload, FolderPlus, Trash2, Camera,
   UserCheck, ChevronDown, ChevronUp, Check, X,
@@ -82,6 +83,8 @@ function Badge({ label, color = '#3b82f6' }) {
 function ProjectPicker({ projects, value, onChange, placeholder = 'Projekt suchen…', allowNone = true }) {
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 220 });
+  const triggerRef = useRef(null);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
@@ -90,8 +93,60 @@ function ProjectPicker({ projects, value, onChange, placeholder = 'Projekt suche
 
   const selected = projects.find(p => p.id === value);
 
+  // Recalculate dropdown position whenever it opens
+  useEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    setDropPos({ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 220) });
+  }, [open]);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (!triggerRef.current?.contains(e.target)) { setOpen(false); setSearch(''); }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const dropdown = open && createPortal(
+    <div
+      className="project-picker-dropdown"
+      style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, minWidth: dropPos.width, zIndex: 9999 }}
+      onMouseDown={e => e.stopPropagation()}
+    >
+      <input
+        className="project-picker-search"
+        autoFocus
+        placeholder="Suchen…"
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+      />
+      {allowNone && (
+        <div
+          className={`project-picker-option${!value ? ' selected' : ''}`}
+          onClick={() => { onChange(null); setOpen(false); setSearch(''); }}
+        >
+          <em>Ohne Projekt (Bibliothek)</em>
+        </div>
+      )}
+      {filtered.slice(0, 50).map(p => (
+        <div
+          key={p.id}
+          className={`project-picker-option${value === p.id ? ' selected' : ''}`}
+          onClick={() => { onChange(p.id); setOpen(false); setSearch(''); }}
+        >
+          {p.folder_name}
+        </div>
+      ))}
+      {filtered.length === 0 && <div className="project-picker-empty">Kein Ergebnis</div>}
+    </div>,
+    document.body
+  );
+
   return (
-    <div className="project-picker" style={{ position: 'relative' }}>
+    <div className="project-picker" ref={triggerRef}>
       <div
         className="inbox-action-input project-picker-trigger"
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', minWidth: 180 }}
@@ -102,43 +157,17 @@ function ProjectPicker({ projects, value, onChange, placeholder = 'Projekt suche
         </span>
         <ChevronDown size={14} style={{ flexShrink: 0, marginLeft: 4 }} />
       </div>
-      {open && (
-        <div className="project-picker-dropdown">
-          <input
-            className="project-picker-search"
-            autoFocus
-            placeholder="Suchen…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            onClick={e => e.stopPropagation()}
-          />
-          {allowNone && (
-            <div
-              className={`project-picker-option${!value ? ' selected' : ''}`}
-              onClick={() => { onChange(null); setOpen(false); setSearch(''); }}
-            >
-              <em>Ohne Projekt (Bibliothek)</em>
-            </div>
-          )}
-          {filtered.slice(0, 50).map(p => (
-            <div
-              key={p.id}
-              className={`project-picker-option${value === p.id ? ' selected' : ''}`}
-              onClick={() => { onChange(p.id); setOpen(false); setSearch(''); }}
-            >
-              {p.folder_name}
-            </div>
-          ))}
-          {filtered.length === 0 && <div className="project-picker-empty">Kein Ergebnis</div>}
-        </div>
-      )}
+      {dropdown}
     </div>
   );
 }
 
 // ─── Lightbox ─────────────────────────────────────────────────────────────────
-function InboxLightbox({ images, startIndex, onClose }) {
+function InboxLightbox({ images, startIndex, onClose, entry }) {
   const [index, setIndex] = useState(startIndex);
+  const [meta, setMeta] = useState(null);
+  const [metaLoading, setMetaLoading] = useState(false);
+  const [locationName, setLocationName] = useState(null);
   const img = images[index];
 
   useEffect(() => {
@@ -150,6 +179,50 @@ function InboxLightbox({ images, startIndex, onClose }) {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [index, images.length, onClose]);
+
+  // Fetch Drive file metadata when image changes (only if drive_file_id is available)
+  useEffect(() => {
+    if (!img.drive_file_id) { setMeta(null); setMetaLoading(false); return; }
+    setMeta(null);
+    setMetaLoading(true);
+    fetch(`/api/mobile/inbox/image-meta/${img.drive_file_id}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => setMeta(data))
+      .catch(() => {})
+      .finally(() => setMetaLoading(false));
+  }, [img.drive_file_id]);
+
+  const formatSize = (bytes) => {
+    if (!bytes) return '–';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  const formatDateTime = (iso) => {
+    if (!iso) return null;
+    const d = new Date(iso.endsWith('Z') ? iso : iso + 'Z');
+    return d.toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric' })
+      + '  ' + d.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const displayTitle = img.custom_title || meta?.customTitle || null;
+  const displayNotes = img.notes || meta?.notes || null;
+  const gps = meta?.gps || null;
+
+  // Reverse-geocode GPS coordinates to a human-readable location name
+  useEffect(() => {
+    if (!gps?.latitude || !gps?.longitude) { setLocationName(null); return; }
+    let cancelled = false;
+    fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${gps.latitude}&lon=${gps.longitude}&format=json&accept-language=de`,
+      { headers: { 'Accept-Language': 'de' } }
+    )
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (!cancelled && data?.display_name) setLocationName(data.display_name); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [gps?.latitude, gps?.longitude]);
 
   return (
     <div className="inbox-lightbox-overlay" onClick={onClose}>
@@ -167,21 +240,88 @@ function InboxLightbox({ images, startIndex, onClose }) {
       <div className="inbox-lightbox-content" onClick={e => e.stopPropagation()}>
         <div className="inbox-lightbox-image-area">
           <img
-            src={`/api/mobile/inbox/image-proxy/${img.drive_file_id}`}
-            alt={img.custom_title || img.file_name}
+            src={img.previewUrl || `/api/mobile/inbox/image-proxy/${img.drive_file_id}`}
+            alt={displayTitle || img.file_name}
             className="inbox-lightbox-img"
           />
         </div>
         <div className="inbox-lightbox-sidebar">
           <div className="inbox-lightbox-counter">{index + 1} / {images.length}</div>
+
+          {displayTitle && (
+            <div className="inbox-lightbox-section">
+              <div className="inbox-lightbox-label">Name</div>
+              <div className="inbox-lightbox-value">{displayTitle}</div>
+            </div>
+          )}
+
           <div className="inbox-lightbox-section">
             <div className="inbox-lightbox-label">Dateiname</div>
-            <div className="inbox-lightbox-value">{img.custom_title || img.file_name}</div>
+            <div className="inbox-lightbox-value inbox-lightbox-filename">{img.file_name}</div>
           </div>
-          {img.notes && (
+
+          <div className="inbox-lightbox-section">
+            <div className="inbox-lightbox-label">Notizen</div>
+            <div className="inbox-lightbox-notes">{displayNotes || 'Keine Notizen vorhanden'}</div>
+          </div>
+
+          {entry?.created_at && (
             <div className="inbox-lightbox-section">
-              <div className="inbox-lightbox-label">Notizen</div>
-              <div className="inbox-lightbox-notes">{img.notes}</div>
+              <div className="inbox-lightbox-label">Hochgeladen am</div>
+              <div className="inbox-lightbox-value">{formatDateTime(entry.created_at)}</div>
+            </div>
+          )}
+
+          {meta?.photoTakenAt && (
+            <div className="inbox-lightbox-section">
+              <div className="inbox-lightbox-label">Aufgenommen am</div>
+              <div className="inbox-lightbox-value">{formatDateTime(meta.photoTakenAt)}</div>
+            </div>
+          )}
+
+          <div className="inbox-lightbox-section">
+            <div className="inbox-lightbox-label">Größe</div>
+            <div className="inbox-lightbox-value">{metaLoading ? '…' : formatSize(meta?.size)}</div>
+          </div>
+
+          {meta?.width && meta?.height && (
+            <div className="inbox-lightbox-section">
+              <div className="inbox-lightbox-label">Auflösung</div>
+              <div className="inbox-lightbox-value">{meta.width} × {meta.height} px</div>
+            </div>
+          )}
+
+          {gps && (
+            <div className="inbox-lightbox-section">
+              <div className="inbox-lightbox-label">Standort</div>
+              <div className="inbox-lightbox-value">
+                <a
+                  href={`https://www.google.com/maps?q=${gps.latitude},${gps.longitude}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`${parseFloat(gps.latitude).toFixed(6)}, ${parseFloat(gps.longitude).toFixed(6)} – In Google Maps öffnen`}
+                  style={{ color: 'var(--accent, #4f8ef7)', textDecoration: 'underline', cursor: 'pointer', wordBreak: 'break-word' }}
+                >
+                  {locationName || `${parseFloat(gps.latitude).toFixed(6)}, ${parseFloat(gps.longitude).toFixed(6)}`}
+                </a>
+                {gps.altitude != null && (
+                  <span style={{ opacity: 0.6, marginLeft: 6 }}>({parseFloat(gps.altitude).toFixed(0)} m)</span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {entry?.user_name && (
+            <div className="inbox-lightbox-section">
+              <div className="inbox-lightbox-label">Hochgeladen von</div>
+              <div className="inbox-lightbox-value">{entry.user_name}</div>
+            </div>
+          )}
+
+          {entry?.device_name && (
+            <div className="inbox-lightbox-section">
+              <div className="inbox-lightbox-label">Gerät</div>
+              <div className="inbox-lightbox-value">{entry.device_name}</div>
             </div>
           )}
         </div>
@@ -266,6 +406,7 @@ function PendingUsersSection() {
 
 // ─── Image Request Row ────────────────────────────────────────────────────────
 function ImageRequestRow({ entry, projects, canManage, onRemove, onActivity }) {
+  const { user: currentUser } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [selectedIds, setSelectedIds] = useState(null); // null = all
   const [targetProjectId, setTargetProjectId] = useState(null);
@@ -310,24 +451,33 @@ function ImageRequestRow({ entry, projects, canManage, onRemove, onActivity }) {
     const count = ids ? ids.length : entry.images.length;
 
     try {
-      await fetch('/api/mobile/inbox/process-image', {
+      const res = await fetch('/api/mobile/inbox/process-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requestId: entry.id, selectedImageIds: ids, projectId: targetProjectId }),
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(`Fehler: ${data.error || 'Unbekannter Fehler'}`);
+        setBusy(false);
+        return;
+      }
       const projName = targetProjectId
         ? (projects.find(p => p.id === targetProjectId)?.folder_name || entry.project_name)
         : 'Bibliothek';
+      const actualCount = data.downloaded ?? count;
       onActivity({
         id: `local_${Date.now()}`,
         type: 'image_upload',
-        title: `${count} Bild${count !== 1 ? 'er' : ''} hinzugefügt`,
+        title: `${actualCount} Bild${actualCount !== 1 ? 'er' : ''} hinzugefügt`,
         description: `Zu „${projName}" – von ${entry.user_name || entry.device_name}`,
-        device_name: entry.device_name,
+        confirmed_by: currentUser?.name || null,
         created_at: new Date().toISOString(),
       });
-      onRemove(entry.id);
-    } catch { /* ignore */ }
+      if (data.remaining === 0) {
+        onRemove(entry.id);
+      }
+    } catch { /* ignore network errors */ }
     setBusy(false);
   };
 
@@ -439,6 +589,7 @@ function ImageRequestRow({ entry, projects, canManage, onRemove, onActivity }) {
           images={entry.images}
           startIndex={lightboxIndex}
           onClose={() => setLightboxIndex(null)}
+          entry={entry}
         />
       )}
     </div>
@@ -447,6 +598,7 @@ function ImageRequestRow({ entry, projects, canManage, onRemove, onActivity }) {
 
 // ─── Projekt Request Row ──────────────────────────────────────────────────────
 function ProjektRequestRow({ entry, canManage, onRemove, onActivity }) {
+  const { user: currentUser } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [projectName, setProjectName] = useState(entry.project_name);
   const [busy, setBusy] = useState(false);
@@ -465,7 +617,7 @@ function ProjektRequestRow({ entry, canManage, onRemove, onActivity }) {
         type: 'project_create',
         title: `Projekt angelegt: „${projectName.trim()}"`,
         description: `Anfrage von ${entry.user_name || entry.device_name}`,
-        device_name: entry.device_name,
+        confirmed_by: currentUser?.name || null,
         created_at: new Date().toISOString(),
       });
       onRemove(entry.id);
@@ -545,6 +697,7 @@ function ProjektRequestRow({ entry, canManage, onRemove, onActivity }) {
 
 // ─── Projekt Change Row ───────────────────────────────────────────────────────
 function ProjektChangeRow({ entry, canManage, onRemove, onActivity }) {
+  const { user: currentUser } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -561,7 +714,7 @@ function ProjektChangeRow({ entry, canManage, onRemove, onActivity }) {
         type: 'project_notes',
         title: `Projektnotiz zu „${entry.project_name}"`,
         description: `Von ${entry.user_name || entry.device_name}`,
-        device_name: entry.device_name,
+        confirmed_by: currentUser?.name || null,
         created_at: new Date().toISOString(),
       });
       onRemove(entry.id);
@@ -587,7 +740,7 @@ function ProjektChangeRow({ entry, canManage, onRemove, onActivity }) {
           <EntryIconGroup icons={[{ Icon: FileText, color: '#8b5cf6' }, { Icon: FolderPlus, color: '#10b981' }]} />
           <div>
             <div className="inbox-entry-badges">
-              <Badge label="Projektnotiz" color="#8b5cf6" />
+              <Badge label="Projektänderung" color="#8b5cf6" />
               <Badge label={entry.project_name} color="#6b7280" />
             </div>
             <div className="inbox-entry-meta">
@@ -605,8 +758,26 @@ function ProjektChangeRow({ entry, canManage, onRemove, onActivity }) {
 
       {expanded && (
         <div className="inbox-entry-body">
-          {entry.notes && (
-            <p className="inbox-entry-notes">{entry.notes}</p>
+          {entry.color && (
+            <div className="inbox-change-detail">
+              <span className="inbox-change-label">Farbe:</span>
+              <span className="inbox-color-swatch" style={{ background: entry.color }} />
+            </div>
+          )}
+          {entry.tags && entry.tags.length > 0 && (
+            <div className="inbox-change-detail">
+              <span className="inbox-change-label">Tags:</span>
+              <span>{entry.tags.join(', ')}</span>
+            </div>
+          )}
+          {entry.notes != null && (
+            <div className="inbox-change-detail">
+              <span className="inbox-change-label">Notizen:</span>
+              <p className="inbox-entry-notes" style={{ margin: '4px 0 0' }}>{entry.notes || '(leer)'}</p>
+            </div>
+          )}
+          {!entry.notes && !entry.color && (!entry.tags || entry.tags.length === 0) && (
+            <p className="inbox-entry-notes" style={{ opacity: 0.5 }}>Keine Änderungen</p>
           )}
           {canManage && (
             <div className="inbox-entry-actions">
@@ -626,6 +797,7 @@ function ProjektChangeRow({ entry, canManage, onRemove, onActivity }) {
 
 // ─── Image Change Row ─────────────────────────────────────────────────────────
 function ImageChangeRow({ entry, canManage, onRemove, onActivity }) {
+  const { user: currentUser } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -642,7 +814,7 @@ function ImageChangeRow({ entry, canManage, onRemove, onActivity }) {
         type: 'image_change',
         title: `Bildinfo geändert: „${entry.file_name}"`,
         description: `Von ${entry.user_name || entry.device_name}`,
-        device_name: entry.device_name,
+        confirmed_by: currentUser?.name || null,
         created_at: new Date().toISOString(),
       });
       onRemove(entry.id);
@@ -716,11 +888,17 @@ function ImageChangeRow({ entry, canManage, onRemove, onActivity }) {
 
 // ─── Delete Request Row ───────────────────────────────────────────────────────
 function DeleteRequestRow({ req, canManage, onRemove, onActivity }) {
+  const { user: currentUser } = useAuth();
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [imgError, setImgError] = useState(false);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   const previewSrc = `/api/mobile/inbox/delete-preview/${encodeURIComponent(req.file_name)}${req.project_name ? `?project=${encodeURIComponent(req.project_name)}` : ''}`;
+
+  // Shape for InboxLightbox: use previewUrl since we have no drive_file_id
+  const lightboxImages = [{ file_name: req.file_name, drive_file_id: null, previewUrl: previewSrc }];
+  const lightboxEntry = { created_at: req.requested_at, user_name: req.requested_by, project_name: req.project_name };
 
   const handleProcess = async () => {
     if (!confirm(`Datei „${req.file_name}" wirklich löschen?`)) return;
@@ -731,7 +909,7 @@ function DeleteRequestRow({ req, canManage, onRemove, onActivity }) {
       type: 'delete_request',
       title: 'Löschanfrage ausgeführt',
       description: `„${req.file_name}"${req.project_name ? ` aus „${req.project_name}"` : ''} gelöscht`,
-      device_name: req.requested_by || null,
+      confirmed_by: currentUser?.name || null,
       created_at: new Date().toISOString(),
     });
     fetch('/api/mobile/inbox/process-delete', {
@@ -787,13 +965,26 @@ function DeleteRequestRow({ req, canManage, onRemove, onActivity }) {
             <p className="inbox-entry-no-images">Bild nicht lokal verfügbar</p>
           ) : (
             <div className="inbox-image-grid">
-              <div className="inbox-image-thumb">
+              <div
+                className="inbox-image-thumb inbox-image-thumb-clickable"
+                onClick={() => setLightboxOpen(true)}
+                title={req.file_name}
+              >
                 <img src={previewSrc} alt={req.file_name} loading="lazy" onError={() => setImgError(true)} />
                 <span className="inbox-image-name">{req.file_name}</span>
               </div>
             </div>
           )}
         </div>
+      )}
+
+      {lightboxOpen && (
+        <InboxLightbox
+          images={lightboxImages}
+          startIndex={0}
+          onClose={() => setLightboxOpen(false)}
+          entry={lightboxEntry}
+        />
       )}
     </div>
   );
@@ -836,6 +1027,7 @@ export default function PostfachPage() {
       }
     } catch { /* ignore */ }
     setSyncing(false);
+    window.dispatchEvent(new Event('inbox-sync-done'));
   }, []);
 
   const loadActivities = useCallback(async () => {
@@ -864,6 +1056,11 @@ export default function PostfachPage() {
   }, []);
 
   const totalPending = imageRequests.length + projektRequests.length + imageChangeRequests.length + projektChangeRequests.length + deleteRequests.length;
+
+  // Keep InboxBanner in sync immediately when items are added/removed
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('inbox-count-update', { detail: { count: totalPending } }));
+  }, [totalPending]);
 
   const grouped = groupByDate(activities);
 
@@ -900,56 +1097,38 @@ export default function PostfachPage() {
             <div className="inbox-entry-loading">Lade Daten von Google Drive…</div>
           )}
 
-          {imageRequests.map(entry => (
-            <ImageRequestRow
-              key={entry.id}
-              entry={entry}
-              projects={projects}
-              canManage={canManageInbox}
-              onRemove={removeRequest(setImageRequests)}
-              onActivity={addActivity}
-            />
-          ))}
-
-          {projektRequests.map(entry => (
-            <ProjektRequestRow
-              key={entry.id}
-              entry={entry}
-              canManage={canManageInbox}
-              onRemove={removeRequest(setProjektRequests)}
-              onActivity={addActivity}
-            />
-          ))}
-
-          {projektChangeRequests.map(entry => (
-            <ProjektChangeRow
-              key={entry.id}
-              entry={entry}
-              canManage={canManageInbox}
-              onRemove={removeRequest(setProjektChangeRequests)}
-              onActivity={addActivity}
-            />
-          ))}
-
-          {imageChangeRequests.map(entry => (
-            <ImageChangeRow
-              key={entry.id}
-              entry={entry}
-              canManage={canManageInbox}
-              onRemove={removeRequest(setImageChangeRequests)}
-              onActivity={addActivity}
-            />
-          ))}
-
-          {deleteRequests.map(req => (
-            <DeleteRequestRow
-              key={req.id}
-              req={req}
-              canManage={canManageInbox}
-              onRemove={removeRequest(setDeleteRequests)}
-              onActivity={addActivity}
-            />
-          ))}
+          {[
+            ...imageRequests.map(e => ({ ...e, _type: 'image',          _sortDate: e.created_at || '' })),
+            ...projektRequests.map(e => ({ ...e, _type: 'projekt',        _sortDate: e.created_at || '' })),
+            ...projektChangeRequests.map(e => ({ ...e, _type: 'projekt_change', _sortDate: e.created_at || '' })),
+            ...imageChangeRequests.map(e => ({ ...e, _type: 'image_change',  _sortDate: e.created_at || '' })),
+            ...deleteRequests.map(e => ({ ...e, _type: 'delete',         _sortDate: e.requested_at || e.created_at || '' })),
+          ]
+            .sort((a, b) => b._sortDate.localeCompare(a._sortDate))
+            .map(item => {
+              if (item._type === 'image') return (
+                <ImageRequestRow key={item.id} entry={item} projects={projects} canManage={canManageInbox}
+                  onRemove={removeRequest(setImageRequests)} onActivity={addActivity} />
+              );
+              if (item._type === 'projekt') return (
+                <ProjektRequestRow key={item.id} entry={item} canManage={canManageInbox}
+                  onRemove={removeRequest(setProjektRequests)} onActivity={addActivity} />
+              );
+              if (item._type === 'projekt_change') return (
+                <ProjektChangeRow key={item.id} entry={item} canManage={canManageInbox}
+                  onRemove={removeRequest(setProjektChangeRequests)} onActivity={addActivity} />
+              );
+              if (item._type === 'image_change') return (
+                <ImageChangeRow key={item.id} entry={item} canManage={canManageInbox}
+                  onRemove={removeRequest(setImageChangeRequests)} onActivity={addActivity} />
+              );
+              if (item._type === 'delete') return (
+                <DeleteRequestRow key={item.id} req={item} canManage={canManageInbox}
+                  onRemove={removeRequest(setDeleteRequests)} onActivity={addActivity} />
+              );
+              return null;
+            })
+          }
         </div>
       )}
 
@@ -983,7 +1162,7 @@ export default function PostfachPage() {
                       <div className="inbox-activity-body">
                         <div className="inbox-activity-title">{a.title}</div>
                         {a.description && <div className="inbox-activity-desc">{a.description}</div>}
-                        {a.device_name && <div className="inbox-activity-meta">von {a.device_name}</div>}
+                        {a.confirmed_by && <div className="inbox-activity-meta">Bestätigt von {a.confirmed_by}</div>}
                       </div>
                       <div className="inbox-activity-time">{formatTime(a.created_at)}</div>
                     </div>

@@ -7,9 +7,11 @@ import { useDialog } from '../components/CustomDialog';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
-import { fetchProjectImages, getImageUrl, saveProjectMetadata, reportProjectNotes } from '../services/api';
+import CheckboxNotes from '../components/CheckboxNotes';
+import { fetchProjectImages, getImageUrl } from '../services/api';
 import { downloadProjectImages } from '../services/syncService';
-import { getCachedProjectByFolderId, cacheProject } from '../services/database';
+import { getCachedProjectByFolderId, cacheProject, addToMetaChangeQueue } from '../services/database';
+import { forceProcessQueue } from '../services/uploadQueue';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const NUM_COLUMNS = 3;
@@ -30,10 +32,6 @@ export default function ProjectDetailScreen({ navigation, route }) {
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState('');
 
-  // Notes FAB state
-  const [showNotesModal, setShowNotesModal] = useState(false);
-  const [notesText, setNotesText] = useState('');
-  const [sendingNotes, setSendingNotes] = useState(false);
 
   // Metadata state
   const [meta, setMeta] = useState({ color: null, notes: null, tags: [] });
@@ -92,22 +90,6 @@ export default function ProjectDetailScreen({ navigation, route }) {
     setRefreshing(false);
   };
 
-  const handleSendNotes = async () => {
-    const text = notesText.trim();
-    if (!text) return;
-    setSendingNotes(true);
-    try {
-      await reportProjectNotes(projectId, projectFolderId, projectName, text);
-      setNotesText('');
-      setShowNotesModal(false);
-      alert('Gesendet', 'Ihre Notiz wurde an die Desktop-Software übermittelt.');
-    } catch (e) {
-      alert('Fehler', 'Notiz konnte nicht gesendet werden: ' + e.message);
-    } finally {
-      setSendingNotes(false);
-    }
-  };
-
   const openEditModal = () => {
     setEditColor(meta.color || COLOR_PALETTE[0]);
     setEditNotes(meta.notes || '');
@@ -138,9 +120,7 @@ export default function ProjectDetailScreen({ navigation, route }) {
         is_starred: false,
       };
 
-      await saveProjectMetadata(folderId, newMeta);
-
-      // Update local cache
+      // 1. Update local cache immediately
       const cached = await getCachedProjectByFolderId(folderId);
       if (cached) {
         await cacheProject({
@@ -151,8 +131,13 @@ export default function ProjectDetailScreen({ navigation, route }) {
         });
       }
 
+      // 2. Update UI and close modal immediately
       setMeta({ color: newMeta.color, notes: newMeta.notes, tags: newMeta.tags });
       setShowEditModal(false);
+
+      // 3. Queue background upload to Drive
+      await addToMetaChangeQueue(folderId, projectName, newMeta);
+      forceProcessQueue();
     } catch (e) {
       alert('Fehler', 'Speichern fehlgeschlagen: ' + e.message);
     } finally {
@@ -241,10 +226,6 @@ export default function ProjectDetailScreen({ navigation, route }) {
               <View style={styles.metaCardHeader}>
                 <View style={[styles.colorDot, { backgroundColor: projectColor }]} />
                 <Text style={styles.metaCardTitle}>{projectName}</Text>
-                <TouchableOpacity onPress={openEditModal} style={styles.editMetaBtn}>
-                  <Ionicons name="pencil-outline" size={16} color={colors.accent} />
-                  <Text style={styles.editMetaBtnText}>Bearbeiten</Text>
-                </TouchableOpacity>
               </View>
               {meta.notes ? (
                 <Text style={styles.notesText} numberOfLines={3}>{meta.notes}</Text>
@@ -293,12 +274,12 @@ export default function ProjectDetailScreen({ navigation, route }) {
         }
       />
 
-      {/* FAB - Notes (left of camera) */}
+      {/* FAB - Edit project (left of camera) */}
       <TouchableOpacity
         style={styles.fabNotes}
-        onPress={() => { setNotesText(''); setShowNotesModal(true); }}
+        onPress={openEditModal}
       >
-        <Ionicons name="document-text-outline" size={26} color="white" />
+        <Ionicons name="create-outline" size={26} color="white" />
       </TouchableOpacity>
 
       {/* FAB - Take photo */}
@@ -308,48 +289,6 @@ export default function ProjectDetailScreen({ navigation, route }) {
       >
         <Ionicons name="camera" size={28} color="white" />
       </TouchableOpacity>
-
-      {/* Notes Modal */}
-      <Modal
-        visible={showNotesModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowNotesModal(false)}
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setShowNotesModal(false)}>
-              <Ionicons name="close" size={24} color={colors.textSecondary} />
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>Notiz senden</Text>
-            <TouchableOpacity
-              onPress={handleSendNotes}
-              disabled={sendingNotes || !notesText.trim()}
-              style={[styles.saveBtn, (sendingNotes || !notesText.trim()) && styles.saveBtnDisabled]}
-            >
-              {sendingNotes
-                ? <ActivityIndicator size="small" color="white" />
-                : <Text style={styles.saveBtnText}>Senden</Text>
-              }
-            </TouchableOpacity>
-          </View>
-          <View style={styles.notesModalBody}>
-            <Text style={styles.notesModalHint}>
-              Notiz zu „{projectName}" an die Desktop-Software senden:
-            </Text>
-            <TextInput
-              style={styles.notesModalInput}
-              value={notesText}
-              onChangeText={setNotesText}
-              placeholder="Notiz eingeben..."
-              placeholderTextColor={colors.textTertiary}
-              multiline
-              autoFocus
-              textAlignVertical="top"
-            />
-          </View>
-        </View>
-      </Modal>
 
       {/* Edit Metadata Modal */}
       <Modal
@@ -393,15 +332,11 @@ export default function ProjectDetailScreen({ navigation, route }) {
 
             {/* Notes */}
             <Text style={styles.fieldLabel}>Notizen</Text>
-            <TextInput
-              style={styles.notesInput}
+            <CheckboxNotes
               value={editNotes}
-              onChangeText={setEditNotes}
+              onChange={setEditNotes}
               placeholder="Notizen zum Projekt..."
-              placeholderTextColor={colors.textTertiary}
-              multiline
-              numberOfLines={4}
-              textAlignVertical="top"
+              minHeight={100}
             />
 
             {/* Tags */}

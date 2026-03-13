@@ -1,6 +1,6 @@
 import * as Network from 'expo-network';
-import { getSetting, getQueuedUploads, updateUploadStatus } from './database';
-import { uploadImage, flushImageRequests } from './api';
+import { getSetting, getQueuedUploads, updateUploadStatus, getQueuedMetaChanges, updateMetaChangeStatus, getQueuedImageChanges, updateImageChangeStatus, updateRecentPhotoDriveInfo } from './database';
+import { uploadImage, flushImageRequests, saveProjectMetadata, reportImageChanges } from './api';
 import { processImageForUpload } from './imageProcessor';
 import { sendUploadCompleteNotification } from './backgroundSync';
 
@@ -93,9 +93,11 @@ export const processUploadQueue = async () => {
       return;
     }
 
-    // Get queued uploads
+    // Get queued uploads, meta changes and image changes
     const queue = await getQueuedUploads();
-    if (queue.length === 0) {
+    const metaChanges = await getQueuedMetaChanges();
+    const imageChanges = await getQueuedImageChanges();
+    if (queue.length === 0 && metaChanges.length === 0 && imageChanges.length === 0) {
       notifyListeners({ type: 'idle' });
       return;
     }
@@ -103,7 +105,7 @@ export const processUploadQueue = async () => {
     // We're online with items to process - use fast interval
     switchInterval(30000);
 
-    uploadProgress = { current: 0, total: queue.length };
+    uploadProgress = { current: 0, total: queue.length + metaChanges.length + imageChanges.length };
     notifyListeners({ type: 'processing', count: queue.length });
 
     let uploadedCount = 0;
@@ -155,7 +157,8 @@ export const processUploadQueue = async () => {
           item.project_name || null,
           item.gps_data || null,
           item.custom_title || null,
-          item.notes || null
+          item.notes || null,
+          item.photo_taken_at || null
         );
 
         // Step 3: Report metadata to desktop server (best-effort, legacy endpoint)
@@ -164,6 +167,10 @@ export const processUploadQueue = async () => {
         }
 
         await updateUploadStatus(item.id, 'uploaded');
+        // Store Drive file ID in recent_photos so project assignment can find it later
+        try {
+          await updateRecentPhotoDriveInfo(item.file_name, uploadResult?.fileId, uploadResult?.uniqueFileName || uploadFileName);
+        } catch {}
         uploadedCount++;
         uploadedItems.push({ item, fileId: uploadResult?.fileId, uniqueFileName: uploadResult?.uniqueFileName || uploadFileName });
         notifyListeners({ type: 'uploaded', item, progress: { ...uploadProgress } });
@@ -179,6 +186,57 @@ export const processUploadQueue = async () => {
         await flushImageRequests(uploadedItems);
       } catch (e) {
         console.warn('[uploadQueue] flushImageRequests failed:', e.message);
+      }
+    }
+
+    // Process meta change queue (project color / notes / tags)
+    for (const item of metaChanges) {
+      if (item.retry_count >= 3) {
+        await updateMetaChangeStatus(item.id, 'permanently_failed', 'Maximale Versuche erreicht');
+        continue;
+      }
+      uploadProgress.current++;
+      const displayItem = { ...item, file_name: item.project_name || 'Projektdaten' };
+      notifyListeners({ type: 'uploading', item: displayItem, progress: { ...uploadProgress } });
+      try {
+        const meta = {
+          color: item.color,
+          notes: item.notes,
+          tags: JSON.parse(item.tags || '[]'),
+          is_starred: item.is_starred === 1,
+        };
+        await saveProjectMetadata(item.project_folder_id, meta, item.project_name);
+        await updateMetaChangeStatus(item.id, 'uploaded');
+        uploadedCount++;
+        notifyListeners({ type: 'uploaded', item: displayItem, progress: { ...uploadProgress } });
+      } catch (e) {
+        await updateMetaChangeStatus(item.id, 'failed', e.message);
+        notifyListeners({ type: 'error', item: displayItem, error: e.message });
+      }
+    }
+
+    // Process image change queue (title/notes edits for already-uploaded images)
+    for (const item of imageChanges) {
+      if (item.retry_count >= 3) {
+        await updateImageChangeStatus(item.id, 'permanently_failed', 'Maximale Versuche erreicht');
+        continue;
+      }
+      uploadProgress.current++;
+      const displayItem = { ...item, file_name: item.image_name };
+      notifyListeners({ type: 'uploading', item: displayItem, progress: { ...uploadProgress } });
+      try {
+        const changes = {};
+        if (item.custom_title !== null) changes.custom_title = item.custom_title;
+        if (item.notes !== null) changes.notes = item.notes;
+        if (item.project_name !== null) changes.project_name = item.project_name;
+        if (item.project_folder_id !== null) changes.project_folder_id = item.project_folder_id;
+        await reportImageChanges(item.image_id, item.image_name, changes);
+        await updateImageChangeStatus(item.id, 'uploaded');
+        uploadedCount++;
+        notifyListeners({ type: 'uploaded', item: displayItem, progress: { ...uploadProgress } });
+      } catch (e) {
+        await updateImageChangeStatus(item.id, 'failed', e.message);
+        notifyListeners({ type: 'error', item: displayItem, error: e.message });
       }
     }
 

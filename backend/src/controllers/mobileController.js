@@ -50,16 +50,16 @@ const getNetworkAddresses = () => {
  * Log a new activity entry. source_id is used for deduplication:
  * same source_id will not be inserted twice.
  */
-const logActivity = (type, title, description, deviceName, sourceId) => {
+const logActivity = (type, title, description, deviceName, sourceId, confirmedBy) => {
   try {
     if (sourceId) {
       const existing = db.prepare('SELECT id FROM inbox_activities WHERE source_id = ?').get(sourceId);
       if (existing) return;
     }
     db.prepare(`
-      INSERT INTO inbox_activities (type, title, description, device_name, source_id)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(type, title, description || null, deviceName || null, sourceId || null);
+      INSERT INTO inbox_activities (type, title, description, device_name, source_id, confirmed_by)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(type, title, description || null, deviceName || null, sourceId || null, confirmedBy || null);
   } catch (e) {
     console.error('Error logging activity:', e.message);
   }
@@ -1156,9 +1156,11 @@ const sanitizeFilename = (filename) => {
  * @param {string|null} driveDescription - Google Drive file description (may contain [FUCHS_META])
  * Returns the new drive_images row ID
  */
-const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePathId, drivePathName, driveDescription = null) => {
+const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePathId, drivePathName, driveDescription = null, subfolderName = null) => {
   const uploadBaseDir = path.join(__dirname, '../../../uploads/drive');
-  const drivePathDir = path.join(uploadBaseDir, sanitizeFilename(drivePathName));
+  const drivePathDir = subfolderName
+    ? path.join(uploadBaseDir, sanitizeFilename(drivePathName), sanitizeFilename(subfolderName))
+    : path.join(uploadBaseDir, sanitizeFilename(drivePathName));
   await fs.ensureDir(drivePathDir);
 
   const fileExt = path.extname(fileName);
@@ -1208,6 +1210,9 @@ const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePa
       if (meta.title) {
         customTitle = meta.title;
       }
+      if (meta.photo_taken_at && !photoTakenAt) {
+        photoTakenAt = meta.photo_taken_at;
+      }
     } catch (e) {
       // Invalid JSON - ignore
     }
@@ -1249,15 +1254,17 @@ const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePa
   await generateThumbnail(localFilePath, thumbnailPath);
 
   // Register in drive_images
-  const localPath = `/uploads/drive/${sanitizeFilename(drivePathName)}/${uniqueName}`;
+  const localPath = subfolderName
+    ? `/uploads/drive/${sanitizeFilename(drivePathName)}/${sanitizeFilename(subfolderName)}/${uniqueName}`
+    : `/uploads/drive/${sanitizeFilename(drivePathName)}/${uniqueName}`;
   const thumbnailUrl = `/uploads/thumbnails/${thumbnailFilename}`;
 
   const result = db.prepare(`
     INSERT INTO drive_images
-    (drive_path_id, name, original_name, local_path, thumbnail_url,
+    (drive_path_id, name, original_name, file_url, local_path, thumbnail_url,
      file_size, mime_type, is_compressed, drive_file_id, photo_taken_at, subfolder,
      gps_latitude, gps_longitude, gps_altitude, image_notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?, ?, ?)
+    VALUES (?, ?, ?, '', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     drivePathId,
     customTitle || fileBaseName,
@@ -1268,6 +1275,7 @@ const downloadAndRegisterImage = async (driveFileId, fileName, mimeType, drivePa
     mimeType || 'image/jpeg',
     driveFileId,
     photoTakenAt,
+    subfolderName || null,
     gpsLatitude,
     gpsLongitude,
     gpsAltitude,
@@ -2750,6 +2758,7 @@ const proxyInboxImage = async (req, res) => {
  * Body: { requestIds: string[] } - IDs of delete requests to process
  */
 const processDeleteRequests = async (req, res) => {
+  let _deleteRelease;
   try {
     const { requestIds } = req.body;
     if (!requestIds || !Array.isArray(requestIds) || requestIds.length === 0) {
@@ -2772,10 +2781,13 @@ const processDeleteRequests = async (req, res) => {
     const inboxFolder = await findSubfolder(metaFolder.id, 'inbox');
     if (!inboxFolder) return res.status(400).json({ error: 'Inbox nicht gefunden' });
 
-    // Find and read delete_requests.json
+    // Find delete_requests.json (before acquiring lock)
     const allFiles = await listAllFilesInFolder(inboxFolder.id);
     const deleteFile = allFiles.find(f => f.name === 'delete_requests.json');
     if (!deleteFile) return res.status(404).json({ error: 'Keine Löschanfragen gefunden' });
+
+    // Acquire lock – released in finally
+    _deleteRelease = await _acquireFileLock('delete_requests.json');
 
     const allRequests = await readDriveFileAsJson(deleteFile.id);
     if (!Array.isArray(allRequests)) {
@@ -2860,10 +2872,11 @@ const processDeleteRequests = async (req, res) => {
     }
 
     // Log activity for each processed delete request
-    for (const req of requestsToProcess) {
-      const reqName = req.file_name || req.fileName || '';
-      const reqBy = req.requested_by || null;
-      logActivity('delete_request', 'Löschanfrage ausgeführt', `„${reqName}"${req.project_name ? ` aus „${req.project_name}"` : ''} gelöscht`, reqBy, `delete_done_${req.id}`);
+    const confirmedByName = req.user?.name || null;
+    for (const delReq of requestsToProcess) {
+      const reqName = delReq.file_name || delReq.fileName || '';
+      const reqBy = delReq.requested_by || null;
+      logActivity('delete_request', 'Löschanfrage ausgeführt', `„${reqName}"${delReq.project_name ? ` aus „${delReq.project_name}"` : ''} gelöscht`, reqBy, `delete_done_${delReq.id}`, confirmedByName);
     }
 
     res.json({
@@ -2875,6 +2888,8 @@ const processDeleteRequests = async (req, res) => {
   } catch (error) {
     console.error('Error processing delete requests:', error);
     res.status(500).json({ error: 'Löschen fehlgeschlagen: ' + error.message });
+  } finally {
+    if (_deleteRelease) _deleteRelease();
   }
 };
 
@@ -2907,26 +2922,31 @@ const dismissDeleteRequests = async (req, res) => {
     const deleteFile = allFiles.find(f => f.name === 'delete_requests.json');
     if (!deleteFile) return res.status(404).json({ error: 'Keine Löschanfragen gefunden' });
 
-    const allRequests = await readDriveFileAsJson(deleteFile.id);
-    const dismissed = Array.isArray(allRequests) ? allRequests.filter(r => requestIds.includes(r.id)) : [];
-    const remaining = Array.isArray(allRequests)
-      ? allRequests.filter(r => !requestIds.includes(r.id))
-      : [];
+    const _dismissRelease = await _acquireFileLock('delete_requests.json');
+    try {
+      const allRequests = await readDriveFileAsJson(deleteFile.id);
+      const dismissed = Array.isArray(allRequests) ? allRequests.filter(r => requestIds.includes(r.id)) : [];
+      const remaining = Array.isArray(allRequests)
+        ? allRequests.filter(r => !requestIds.includes(r.id))
+        : [];
 
-    if (remaining.length > 0) {
-      await updateDriveFileContent(deleteFile.id, remaining);
-    } else {
-      await deleteFileFromDrive(deleteFile.id);
+      if (remaining.length > 0) {
+        await updateDriveFileContent(deleteFile.id, remaining);
+      } else {
+        await deleteFileFromDrive(deleteFile.id);
+      }
+
+      // Log activity for each dismissed request
+      for (const req of dismissed) {
+        const reqName = req.file_name || req.fileName || '';
+        const reqBy = req.requested_by || null;
+        logActivity('delete_request', 'Löschanfrage abgewiesen', `„${reqName}" – Datei behalten`, reqBy, `delete_dismissed_${req.id}`);
+      }
+
+      res.json({ success: true, dismissed: requestIds.length });
+    } finally {
+      _dismissRelease();
     }
-
-    // Log activity for each dismissed request
-    for (const req of dismissed) {
-      const reqName = req.file_name || req.fileName || '';
-      const reqBy = req.requested_by || null;
-      logActivity('delete_request', 'Löschanfrage abgewiesen', `„${reqName}" – Datei behalten`, reqBy, `delete_dismissed_${req.id}`);
-    }
-
-    res.json({ success: true, dismissed: requestIds.length });
   } catch (error) {
     console.error('Error dismissing delete requests:', error);
     res.status(500).json({ error: 'Fehler: ' + error.message });
@@ -2944,24 +2964,47 @@ const previewDeleteRequestImage = async (req, res) => {
     const projectName = req.query.project;
     const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
 
-    // 1. Try local project Bilder/ folder
+    // 1. Try local project Bilder/ folder (exact match, then suffix match)
+    // Mobile sends original camera filename; Drive stores as {timestamp}_{deviceId}_{originalName}
     if (projectName && settings?.project_path) {
-      const filePath = path.join(settings.project_path, projectName, 'Bilder', fileName);
-      if (await fs.pathExists(filePath)) {
-        return res.sendFile(path.resolve(filePath));
+      const bilderDir = path.join(settings.project_path, projectName, 'Bilder');
+      const exactPath = path.join(bilderDir, fileName);
+      if (await fs.pathExists(exactPath)) {
+        return res.sendFile(path.resolve(exactPath));
       }
+      // Suffix match: find any file ending with _fileName (unique Drive naming pattern)
+      try {
+        const files = await fs.readdir(bilderDir);
+        const match = files.find(f => f.endsWith('_' + fileName));
+        if (match) {
+          return res.sendFile(path.resolve(path.join(bilderDir, match)));
+        }
+      } catch { /* folder may not exist */ }
     }
 
-    // 2. Search drive_images DB by filename for thumbnail or local file
+    // 2. Search drive_images DB – exact match on original_name, then suffix match
+    // Also match when extension differs (jpg uploaded as webp): strip extension for LIKE
+    const fileBaseName = fileName.replace(/\.[^/.]+$/, ''); // e.g. "photo_1773401755237"
     const dbImage = db.prepare(`
       SELECT di.*, p.folder_name as project_folder
       FROM drive_images di
-      LEFT JOIN projects p ON p.id = di.project_id
-      WHERE di.original_name = ? OR di.name = ?
+      LEFT JOIN image_project_assignments ipa ON ipa.image_id = di.id
+      LEFT JOIN projects p ON p.id = ipa.project_id
+      WHERE di.original_name = @fileName
+         OR di.name = @fileName
+         OR di.name LIKE '%_' || @fileName
+         OR di.name LIKE '%_' || @fileBaseName || '.%'
       ORDER BY di.created_at DESC LIMIT 1
-    `).get(fileName, fileName);
+    `).get({ fileName, fileBaseName });
 
     if (dbImage) {
+      // Try local_path first (direct file reference, works for all images incl. no-project)
+      if (dbImage.local_path && dbImage.local_path.startsWith('/uploads/')) {
+        const localFilePath = path.join(__dirname, '../../../', dbImage.local_path);
+        if (await fs.pathExists(localFilePath)) {
+          return res.sendFile(path.resolve(localFilePath));
+        }
+      }
       // Try thumbnail (typically /uploads/thumbnails/...)
       if (dbImage.thumbnail_url && dbImage.thumbnail_url.startsWith('/uploads/')) {
         const thumbPath = path.join(__dirname, '../../../', dbImage.thumbnail_url);
@@ -2969,13 +3012,40 @@ const previewDeleteRequestImage = async (req, res) => {
           return res.sendFile(path.resolve(thumbPath));
         }
       }
-      // Try local project path via project_folder
+      // Try local project path via project_folder (exact + suffix match)
       if (dbImage.project_folder && settings?.project_path) {
-        const filePath = path.join(settings.project_path, dbImage.project_folder, 'Bilder', fileName);
-        if (await fs.pathExists(filePath)) {
-          return res.sendFile(path.resolve(filePath));
+        const bilderDir = path.join(settings.project_path, dbImage.project_folder, 'Bilder');
+        const exactPath = path.join(bilderDir, dbImage.name || fileName);
+        if (await fs.pathExists(exactPath)) {
+          return res.sendFile(path.resolve(exactPath));
+        }
+        const origPath = path.join(bilderDir, fileName);
+        if (await fs.pathExists(origPath)) {
+          return res.sendFile(path.resolve(origPath));
         }
       }
+    }
+
+    // 3. Filesystem fallback: scan uploads/drive/ for suffix match (extension-agnostic)
+    const uploadsDir = path.join(__dirname, '../../../uploads/drive');
+    if (await fs.pathExists(uploadsDir)) {
+      const found = await (async function scanDir(dir) {
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            const sub = await scanDir(fullPath);
+            if (sub) return sub;
+          } else {
+            const stem = entry.name.replace(/\.[^/.]+$/, '');
+            if (entry.name.endsWith('_' + fileName) || stem.endsWith('_' + fileBaseName)) {
+              return fullPath;
+            }
+          }
+        }
+        return null;
+      })(uploadsDir);
+      if (found) return res.sendFile(path.resolve(found));
     }
 
     res.status(404).json({ error: 'Bild nicht gefunden' });
@@ -3522,6 +3592,27 @@ const INBOX_JSON_FILES = [
   'delete_requests.json',
 ];
 
+// ─── Per-file async lock ───────────────────────────────────────────────────────
+// Serializes concurrent read-modify-write operations on the same Drive JSON file.
+// Without this, two rapid requests both read the same data and the last write wins.
+const _inboxFileLocks = new Map();
+
+/**
+ * Acquire an exclusive lock for the given inbox filename.
+ * Returns a release() function – MUST be called in a finally block.
+ *
+ * Usage:
+ *   const release = await _acquireFileLock('image_requests.json');
+ *   try { ... read, modify, save ... } finally { release(); }
+ */
+const _acquireFileLock = (fileName) => {
+  let release;
+  const waitFor = _inboxFileLocks.get(fileName) || Promise.resolve();
+  const acquired = new Promise(resolve => { release = resolve; });
+  _inboxFileLocks.set(fileName, waitFor.then(() => acquired));
+  return waitFor.then(() => release);
+};
+
 /**
  * Helper: get root folder ID + metaFolder + inboxFolder from DB
  */
@@ -3538,7 +3629,7 @@ const _getInboxSetup = async () => {
 
   const inboxFolder = await findOrCreateSubfolder(metaFolder.id, 'inbox');
 
-  return { rootFolderId, drivePathId: drivePath.id, metaFolder, inboxFolder };
+  return { rootFolderId, drivePathId: drivePath.id, drivePathName: drivePath.name, metaFolder, inboxFolder };
 };
 
 /**
@@ -3606,11 +3697,15 @@ const getInboxRequests = async (req, res) => {
  * Downloads images from inbox/images/, registers in DB, assigns to project.
  */
 const processImageRequest = async (req, res) => {
-  try {
-    const { requestId, selectedImageIds, projectId } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+  const { requestId, selectedImageIds, projectId } = req.body;
+  if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { inboxFolder, drivePathId } = await _getInboxSetup();
+  let setup;
+  try { setup = await _getInboxSetup(); } catch (e) { return res.status(500).json({ error: e.message }); }
+
+  const release = await _acquireFileLock('image_requests.json');
+  try {
+    const { inboxFolder, drivePathId, drivePathName, metaFolder, rootFolderId } = setup;
 
     // Read image_requests.json
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'image_requests.json');
@@ -3629,63 +3724,95 @@ const processImageRequest = async (req, res) => {
     // Resolve target project
     let targetProjectId = projectId ? parseInt(projectId) : null;
     if (!targetProjectId && entry.project_folder_id) {
-      // Find project by Drive folder reference
       const proj = db.prepare("SELECT id FROM projects WHERE drive_folder_id = ? OR folder_name = ?")
         .get(entry.project_folder_id, entry.project_name || '');
       if (proj) targetProjectId = proj.id;
     }
 
+    // Get project folder name for local path and Drive placement
+    let projectFolderName = null;
+    if (targetProjectId) {
+      const proj = db.prepare('SELECT folder_name FROM projects WHERE id = ?').get(targetProjectId);
+      projectFolderName = proj?.folder_name || null;
+    }
+
+    // Find/create target Drive folder: Projekte/<name>/ or root
+    let targetDriveFolderId = rootFolderId;
+    if (projectFolderName) {
+      const projekteFolder = await findOrCreateSubfolder(metaFolder.id, 'Projekte');
+      const projectDriveFolder = await findOrCreateSubfolder(projekteFolder.id, projectFolderName);
+      targetDriveFolderId = projectDriveFolder.id;
+    }
+
     const settings = db.prepare('SELECT project_path FROM project_settings WHERE id = 1').get();
     let downloaded = 0;
+    const processedIds = new Set(); // only images that were successfully downloaded + moved
 
     for (const img of toProcess) {
       try {
-        // Download image from inbox/images/ to local drive uploads dir
+        // Fetch the Drive file's description to get [FUCHS_META] (GPS, title, notes set by mobile app)
+        let driveDescription = null;
+        try {
+          const fileMeta = await getFileMetadata(img.drive_file_id);
+          if (fileMeta?.description) driveDescription = fileMeta.description;
+        } catch {}
+
+        // Override with values explicitly stored in the request JSON (title/notes from user input)
+        if (img.custom_title || img.notes) {
+          let meta = {};
+          if (driveDescription && driveDescription.startsWith('[FUCHS_META]')) {
+            try { meta = JSON.parse(driveDescription.substring('[FUCHS_META]'.length)); } catch {}
+          }
+          if (img.custom_title) meta.title = img.custom_title;
+          if (img.notes) meta.notes = img.notes;
+          driveDescription = `[FUCHS_META]${JSON.stringify(meta)}`;
+        }
+
+        // Download to correct local folder: uploads/drive/<driveName>/<project>/
         const imageId = await downloadAndRegisterImage(
           img.drive_file_id,
           img.file_name,
           img.mime_type || 'image/jpeg',
           drivePathId,
-          'mobile_inbox',
-          null
+          drivePathName,
+          driveDescription,
+          projectFolderName  // subfolder = project name, or null for root
         );
 
-        // Assign to project if we have one
+        // Assign to project in DB
         if (imageId && targetProjectId) {
           db.prepare('INSERT OR IGNORE INTO image_project_assignments (image_id, project_id) VALUES (?, ?)')
             .run(imageId, targetProjectId);
         }
 
-        // Also copy to local project Bilder folder if project_path configured
-        if (settings?.project_path && targetProjectId) {
+        // Also copy to local project_path Bilder folder if configured
+        if (settings?.project_path && projectFolderName) {
           try {
-            const proj = db.prepare('SELECT folder_name FROM projects WHERE id = ?').get(targetProjectId);
-            if (proj) {
-              const bilderDir = path.join(settings.project_path, proj.folder_name, 'Bilder');
-              await fs.ensureDir(bilderDir);
-              // Image is already downloaded in downloadAndRegisterImage; we do a best-effort copy
-              const imgRow = db.prepare('SELECT local_path FROM drive_images WHERE id = ?').get(imageId);
-              if (imgRow?.local_path) {
-                const absPath = path.join(__dirname, '../../../', imgRow.local_path.replace(/^\//, ''));
-                const destPath = path.join(bilderDir, img.file_name);
-                if (!await fs.pathExists(destPath)) {
-                  await fs.copy(absPath, destPath).catch(() => {});
-                }
+            const bilderDir = path.join(settings.project_path, projectFolderName, 'Bilder');
+            await fs.ensureDir(bilderDir);
+            const imgRow = db.prepare('SELECT local_path FROM drive_images WHERE id = ?').get(imageId);
+            if (imgRow?.local_path) {
+              const absPath = path.join(__dirname, '../../../', imgRow.local_path.replace(/^\//, ''));
+              const destPath = path.join(bilderDir, img.file_name);
+              if (!await fs.pathExists(destPath)) {
+                await fs.copy(absPath, destPath).catch(() => {});
               }
             }
           } catch {}
         }
 
-        // Delete from inbox/images/ on Drive
-        try { await deleteFileFromDrive(img.drive_file_id); } catch {}
+        // Move file on Drive from inbox/images/ to target project folder (or root)
+        await moveFileOnDrive(img.drive_file_id, targetDriveFolderId, imagesSubfolder.id);
+
+        // Only mark as processed AFTER both download and Drive move succeed
+        processedIds.add(img.drive_file_id);
         downloaded++;
       } catch (e) {
         console.error(`[Postfach] Failed to process image ${img.file_name}:`, e.message);
       }
     }
 
-    // Update JSON: remove processed images from entry (or whole entry)
-    const processedIds = new Set(toProcess.map(i => i.drive_file_id));
+    // Update JSON: only remove images that were fully processed (downloaded + moved on Drive)
     entry.images = entry.images.filter(i => !processedIds.has(i.drive_file_id));
 
     const updatedData = entry.images.length > 0
@@ -3704,14 +3831,21 @@ const processImageRequest = async (req, res) => {
         `${downloaded} Bild${downloaded !== 1 ? 'er' : ''} hinzugefügt`,
         `Zu „${projName}" – von ${entry.user_name || entry.device_name}`,
         entry.device_name,
-        `img_req_${requestId}`
+        `img_req_${requestId}`,
+        req.user?.name || null
       );
     }
 
-    res.json({ success: true, downloaded, remaining: entry.images.length });
+    const failed = toProcess.length - downloaded;
+    if (downloaded === 0 && toProcess.length > 0) {
+      return res.status(500).json({ error: `Alle ${toProcess.length} Bilder konnten nicht verarbeitet werden. Bitte Serverlog prüfen.`, downloaded: 0, remaining: entry.images.length });
+    }
+    res.json({ success: true, downloaded, failed, remaining: entry.images.length });
   } catch (error) {
     console.error('[Postfach] processImageRequest error:', error.message);
     res.status(500).json({ error: 'Fehler beim Verarbeiten: ' + error.message });
+  } finally {
+    release();
   }
 };
 
@@ -3721,11 +3855,15 @@ const processImageRequest = async (req, res) => {
  * Deletes images from inbox/images/ and removes from JSON.
  */
 const rejectImageRequest = async (req, res) => {
-  try {
-    const { requestId, selectedImageIds } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+  const { requestId, selectedImageIds } = req.body;
+  if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { inboxFolder } = await _getInboxSetup();
+  let setup;
+  try { setup = await _getInboxSetup(); } catch (e) { return res.status(500).json({ error: e.message }); }
+
+  const release = await _acquireFileLock('image_requests.json');
+  try {
+    const { inboxFolder } = setup;
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'image_requests.json');
     const entry = data.find(e => e.id === requestId);
     if (!entry) return res.status(404).json({ error: 'Anfrage nicht gefunden' });
@@ -3750,6 +3888,8 @@ const rejectImageRequest = async (req, res) => {
   } catch (error) {
     console.error('[Postfach] rejectImageRequest error:', error.message);
     res.status(500).json({ error: 'Fehler beim Ablehnen: ' + error.message });
+  } finally {
+    release();
   }
 };
 
@@ -3759,11 +3899,15 @@ const rejectImageRequest = async (req, res) => {
  * Creates Drive folder + local folder + DB project entry.
  */
 const processProjektRequest = async (req, res) => {
-  try {
-    const { requestId, projectName: nameOverride } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+  const { requestId, projectName: nameOverride } = req.body;
+  if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { metaFolder, inboxFolder, drivePathId } = await _getInboxSetup();
+  let setup;
+  try { setup = await _getInboxSetup(); } catch (e) { return res.status(500).json({ error: e.message }); }
+
+  const release = await _acquireFileLock('projekt_requests.json');
+  try {
+    const { metaFolder, inboxFolder, drivePathId } = setup;
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'projekt_requests.json');
     const entry = data.find(e => e.id === requestId);
     if (!entry) return res.status(404).json({ error: 'Anfrage nicht gefunden' });
@@ -3802,13 +3946,16 @@ const processProjektRequest = async (req, res) => {
       `Projekt angelegt: „${projectName}"`,
       `Anfrage von ${entry.user_name || entry.device_name}`,
       entry.device_name,
-      `proj_req_${requestId}`
+      `proj_req_${requestId}`,
+      req.user?.name || null
     );
 
     res.json({ success: true, projectId, projectName });
   } catch (error) {
     console.error('[Postfach] processProjektRequest error:', error.message);
     res.status(500).json({ error: 'Fehler beim Erstellen des Projekts: ' + error.message });
+  } finally {
+    release();
   }
 };
 
@@ -3817,11 +3964,15 @@ const processProjektRequest = async (req, res) => {
  * Body: { requestId }
  */
 const rejectProjektRequest = async (req, res) => {
-  try {
-    const { requestId } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+  const { requestId } = req.body;
+  if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { inboxFolder } = await _getInboxSetup();
+  let setup;
+  try { setup = await _getInboxSetup(); } catch (e) { return res.status(500).json({ error: e.message }); }
+
+  const release = await _acquireFileLock('projekt_requests.json');
+  try {
+    const { inboxFolder } = setup;
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'projekt_requests.json');
     const updatedData = data.filter(e => e.id !== requestId);
     await _saveInboxJson(inboxFolder.id, 'projekt_requests.json', fileId, updatedData);
@@ -3829,6 +3980,8 @@ const rejectProjektRequest = async (req, res) => {
   } catch (error) {
     console.error('[Postfach] rejectProjektRequest error:', error.message);
     res.status(500).json({ error: 'Fehler: ' + error.message });
+  } finally {
+    release();
   }
 };
 
@@ -3838,11 +3991,15 @@ const rejectProjektRequest = async (req, res) => {
  * Appends/replaces notes on existing project in DB.
  */
 const processProjektChangeRequest = async (req, res) => {
-  try {
-    const { requestId } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+  const { requestId } = req.body;
+  if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { inboxFolder } = await _getInboxSetup();
+  let setup;
+  try { setup = await _getInboxSetup(); } catch (e) { return res.status(500).json({ error: e.message }); }
+
+  const release = await _acquireFileLock('projekt_change_requests.json');
+  try {
+    const { inboxFolder } = setup;
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'projekt_change_requests.json');
     const entry = data.find(e => e.id === requestId);
     if (!entry) return res.status(404).json({ error: 'Anfrage nicht gefunden' });
@@ -3854,14 +4011,40 @@ const processProjektChangeRequest = async (req, res) => {
 
     if (!project) return res.status(404).json({ error: 'Projekt nicht gefunden' });
 
-    // Append notes
-    const newNotes = entry.notes || '';
-    const combined = project.notes
-      ? `${project.notes}\n\n${newNotes}`.trim()
-      : newNotes;
+    // Apply metadata changes
+    const updates = [];
+    const values = [];
 
-    db.prepare("UPDATE projects SET notes = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(combined, project.id);
+    // Notes: append if project already has notes, otherwise set
+    if (entry.notes != null) {
+      const newNotes = entry.notes || '';
+      const combined = project.notes
+        ? `${project.notes}\n\n${newNotes}`.trim()
+        : newNotes;
+      updates.push('notes = ?');
+      values.push(combined);
+    }
+
+    // Color: replace
+    if (entry.color !== undefined) {
+      updates.push('color = ?');
+      values.push(entry.color || null);
+    }
+
+    // Tags: merge (add new tags to existing)
+    if (entry.tags !== undefined && Array.isArray(entry.tags)) {
+      let existingTags = [];
+      try { existingTags = JSON.parse(project.tags || '[]'); } catch {}
+      const tagSet = new Set([...existingTags, ...entry.tags]);
+      updates.push('tags = ?');
+      values.push(JSON.stringify([...tagSet]));
+    }
+
+    if (updates.length > 0) {
+      updates.push("updated_at = datetime('now')");
+      values.push(project.id);
+      db.prepare(`UPDATE projects SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    }
 
     // Push updated project.json to Drive
     const updatedProject = db.prepare('SELECT * FROM projects WHERE id = ?').get(project.id);
@@ -3874,18 +4057,25 @@ const processProjektChangeRequest = async (req, res) => {
     const updatedData = data.filter(e => e.id !== requestId);
     await _saveInboxJson(inboxFolder.id, 'projekt_change_requests.json', fileId, updatedData);
 
+    const changeDesc = [];
+    if (entry.notes != null) changeDesc.push('Notizen');
+    if (entry.color !== undefined) changeDesc.push('Farbe');
+    if (entry.tags !== undefined) changeDesc.push('Tags');
     logActivity(
-      'project_notes',
-      `Projektnotiz zu „${project.folder_name}"`,
-      `Von ${entry.user_name || entry.device_name}`,
+      'project_update',
+      `Projekt „${project.folder_name}" aktualisiert`,
+      `${changeDesc.join(', ')} – von ${entry.user_name || entry.device_name}`,
       entry.device_name,
-      `proj_chg_${requestId}`
+      `proj_chg_${requestId}`,
+      req.user?.name || null
     );
 
     res.json({ success: true });
   } catch (error) {
     console.error('[Postfach] processProjektChangeRequest error:', error.message);
     res.status(500).json({ error: 'Fehler: ' + error.message });
+  } finally {
+    release();
   }
 };
 
@@ -3894,11 +4084,15 @@ const processProjektChangeRequest = async (req, res) => {
  * Body: { requestId }
  */
 const rejectProjektChangeRequest = async (req, res) => {
-  try {
-    const { requestId } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+  const { requestId } = req.body;
+  if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { inboxFolder } = await _getInboxSetup();
+  let setup;
+  try { setup = await _getInboxSetup(); } catch (e) { return res.status(500).json({ error: e.message }); }
+
+  const release = await _acquireFileLock('projekt_change_requests.json');
+  try {
+    const { inboxFolder } = setup;
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'projekt_change_requests.json');
     const updatedData = data.filter(e => e.id !== requestId);
     await _saveInboxJson(inboxFolder.id, 'projekt_change_requests.json', fileId, updatedData);
@@ -3906,6 +4100,8 @@ const rejectProjektChangeRequest = async (req, res) => {
   } catch (error) {
     console.error('[Postfach] rejectProjektChangeRequest error:', error.message);
     res.status(500).json({ error: 'Fehler: ' + error.message });
+  } finally {
+    release();
   }
 };
 
@@ -3915,11 +4111,15 @@ const rejectProjektChangeRequest = async (req, res) => {
  * Updates image name/notes in DB.
  */
 const processImageChangeRequest = async (req, res) => {
-  try {
-    const { requestId } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+  const { requestId } = req.body;
+  if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { inboxFolder } = await _getInboxSetup();
+  let setup;
+  try { setup = await _getInboxSetup(); } catch (e) { return res.status(500).json({ error: e.message }); }
+
+  const release = await _acquireFileLock('image_change_requests.json');
+  try {
+    const { inboxFolder } = setup;
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'image_change_requests.json');
     const entry = data.find(e => e.id === requestId);
     if (!entry) return res.status(404).json({ error: 'Anfrage nicht gefunden' });
@@ -3960,13 +4160,16 @@ const processImageChangeRequest = async (req, res) => {
       `Bildinfo geändert: „${entry.file_name}"`,
       `Von ${entry.user_name || entry.device_name}`,
       entry.device_name,
-      `img_chg_${requestId}`
+      `img_chg_${requestId}`,
+      req.user?.name || null
     );
 
     res.json({ success: true });
   } catch (error) {
     console.error('[Postfach] processImageChangeRequest error:', error.message);
     res.status(500).json({ error: 'Fehler: ' + error.message });
+  } finally {
+    release();
   }
 };
 
@@ -3975,11 +4178,15 @@ const processImageChangeRequest = async (req, res) => {
  * Body: { requestId }
  */
 const rejectImageChangeRequest = async (req, res) => {
-  try {
-    const { requestId } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
+  const { requestId } = req.body;
+  if (!requestId) return res.status(400).json({ error: 'requestId fehlt' });
 
-    const { inboxFolder } = await _getInboxSetup();
+  let setup;
+  try { setup = await _getInboxSetup(); } catch (e) { return res.status(500).json({ error: e.message }); }
+
+  const release = await _acquireFileLock('image_change_requests.json');
+  try {
+    const { inboxFolder } = setup;
     const { fileId, data } = await _readInboxJson(inboxFolder.id, 'image_change_requests.json');
     const updatedData = data.filter(e => e.id !== requestId);
     await _saveInboxJson(inboxFolder.id, 'image_change_requests.json', fileId, updatedData);
@@ -3987,6 +4194,59 @@ const rejectImageChangeRequest = async (req, res) => {
   } catch (error) {
     console.error('[Postfach] rejectImageChangeRequest error:', error.message);
     res.status(500).json({ error: 'Fehler: ' + error.message });
+  } finally {
+    release();
+  }
+};
+
+/**
+ * GET /api/mobile/inbox/image-meta/:fileId
+ * Returns Drive file metadata (size, GPS, description) for the inbox lightbox.
+ */
+const getInboxImageMeta = async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    if (!fileId) return res.status(400).json({ error: 'fileId fehlt' });
+
+    const { getDriveClient } = require('../services/authService');
+    const drive = await getDriveClient();
+    const response = await drive.files.get({
+      fileId,
+      fields: 'id, name, size, mimeType, description, imageMediaMetadata, createdTime, modifiedTime',
+    });
+
+    const file = response.data;
+    const result = {
+      name: file.name,
+      size: file.size ? parseInt(file.size) : null,
+      mimeType: file.mimeType,
+      createdTime: file.createdTime || null,
+      modifiedTime: file.modifiedTime || null,
+      width: file.imageMediaMetadata?.width || null,
+      height: file.imageMediaMetadata?.height || null,
+      cameraMake: file.imageMediaMetadata?.cameraMake || null,
+      cameraModel: file.imageMediaMetadata?.cameraModel || null,
+      photoTakenAt: file.imageMediaMetadata?.time || null,
+      gps: null,
+      customTitle: null,
+      notes: null,
+    };
+
+    // Parse [FUCHS_META] from description
+    if (file.description && file.description.startsWith('[FUCHS_META]')) {
+      try {
+        const meta = JSON.parse(file.description.substring('[FUCHS_META]'.length));
+        if (meta.gps) result.gps = meta.gps;
+        if (meta.title) result.customTitle = meta.title;
+        if (meta.notes) result.notes = meta.notes;
+        if (meta.photo_taken_at && !result.photoTakenAt) result.photoTakenAt = meta.photo_taken_at;
+      } catch {}
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error('Error getting inbox image meta:', error.message);
+    res.status(500).json({ error: 'Metadaten konnten nicht geladen werden' });
   }
 };
 
@@ -4012,6 +4272,7 @@ module.exports = {
   getInbox,
   getInboxImages,
   proxyInboxImage,
+  getInboxImageMeta,
   confirmInboxProject,
   addToLibrary,
   mergeInboxProject,

@@ -122,7 +122,7 @@ export const fetchProjects = async (onProject = null) => {
 /**
  * Save project metadata (tags, color, notes, starred) to project.json in the project folder
  */
-export const saveProjectMetadata = async (projectFolderId, metadata) => {
+export const saveProjectMetadata = async (projectFolderId, metadata, projectName = null) => {
   // Check if project.json already exists
   const files = await listFiles(projectFolderId, {
     fields: 'files(id,name)',
@@ -144,7 +144,43 @@ export const saveProjectMetadata = async (projectFolderId, metadata) => {
     await createJsonFile(projectFolderId, 'project.json', data);
   }
 
+  // Also create a change request so desktop inbox shows the update
+  try {
+    await reportProjectMetadataChange(projectFolderId, projectName, data);
+  } catch (e) {
+    console.warn('[Fuchs] Could not create project change request:', e.message);
+  }
+
   return data;
+};
+
+/**
+ * Report full project metadata change (color, notes, tags) to desktop inbox.
+ */
+export const reportProjectMetadataChange = async (projectFolderId, projectName, metadata) => {
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) return;
+
+  const inboxFolderId = await getInboxFolderId();
+  const deviceId = await getSetting('heartbeat_device_id', '');
+  const deviceName = await getSetting('deviceName', 'Handy');
+  const userName = await getSetting('userName', '');
+
+  const entry = {
+    id: `proj_chg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+    device_id: deviceId,
+    device_name: deviceName,
+    user_name: userName,
+    project_name: projectName,
+    project_folder_id: projectFolderId || null,
+    color: metadata.color || null,
+    notes: metadata.notes || null,
+    tags: metadata.tags || [],
+    is_starred: metadata.is_starred || false,
+    created_at: new Date().toISOString(),
+  };
+
+  await _appendToInboxJson(inboxFolderId, 'projekt_change_requests.json', entry);
 };
 
 /**
@@ -167,6 +203,7 @@ export const fetchProjectImages = async (projectFolderId) => {
     mime_type: f.mimeType,
     size: f.size ? parseInt(f.size) : 0,
     modified_time: f.modifiedTime,
+    created_time: f.imageMediaMetadata?.time || null,
     thumbnail_link: f.thumbnailLink,
     width: f.imageMediaMetadata?.width,
     height: f.imageMediaMetadata?.height,
@@ -287,7 +324,7 @@ export const deletePendingProject = async (folderId) => {
  *
  * Returns { success, fileId, uniqueFileName }
  */
-export const uploadImage = async (fileUri, fileName, mimeType, projectFolderId = null, projectName = null, gpsData = null, customTitle = null, notes = null) => {
+export const uploadImage = async (fileUri, fileName, mimeType, projectFolderId = null, projectName = null, gpsData = null, customTitle = null, notes = null, photoTakenAt = null) => {
   const connection = await getActiveDriveConnection();
   if (!connection?.meta_folder_id) throw new Error('Keine Drive-Verbindung aktiv');
 
@@ -301,22 +338,23 @@ export const uploadImage = async (fileUri, fileName, mimeType, projectFolderId =
   const baseName = fileName.includes('.') ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
   const uniqueFileName = `${Date.now()}_${devicePrefix}_${baseName}${ext}`;
 
-  // Build FUCHS_META description (GPS, title, notes) on the Drive file itself
+  // Build FUCHS_META description (GPS, title, notes, capture date) on the Drive file itself
   let description = null;
   const parsedGps = gpsData ? (typeof gpsData === 'string' ? JSON.parse(gpsData) : gpsData) : null;
   const userName = await getSetting('userName', '');
-  if (parsedGps || customTitle || notes || userName) {
-    const meta = {};
-    if (parsedGps) {
-      meta.gps = {
-        latitude: parsedGps.latitude,
-        longitude: parsedGps.longitude,
-        altitude: parsedGps.altitude || null,
-      };
-    }
-    if (customTitle) meta.title = customTitle;
-    if (notes) meta.notes = notes;
-    if (userName) meta.uploaded_by = userName;
+  const meta = {};
+  if (parsedGps) {
+    meta.gps = {
+      latitude: parsedGps.latitude,
+      longitude: parsedGps.longitude,
+      altitude: parsedGps.altitude || null,
+    };
+  }
+  if (customTitle) meta.title = customTitle;
+  if (notes) meta.notes = notes;
+  if (userName) meta.uploaded_by = userName;
+  if (photoTakenAt) meta.photo_taken_at = photoTakenAt;
+  if (Object.keys(meta).length > 0) {
     description = `[FUCHS_META]${JSON.stringify(meta)}`;
   }
 
@@ -422,6 +460,47 @@ export const reportProjectNotes = async (projectId, projectFolderId, projectName
   };
 
   await _appendToInboxJson(inboxFolderId, 'projekt_change_requests.json', entry);
+};
+
+/**
+ * Try to assign a project to an image that is still pending in image_requests.json.
+ * Finds the matching entry by driveFileId, driveFileName, or localFileName suffix.
+ * If found, updates project_name and project_folder_id and writes back.
+ * Returns { found: boolean }
+ */
+export const assignProjectToInboxImage = async (driveFileId, driveFileName, localFileName, projectName, projectFolderId) => {
+  const connection = await getActiveDriveConnection();
+  if (!connection?.meta_folder_id) return { found: false };
+
+  try {
+    const inboxFolderId = await getInboxFolderId();
+    const data = await readJsonFileByName(inboxFolderId, 'image_requests.json');
+    if (!Array.isArray(data)) return { found: false };
+
+    let found = false;
+    const updated = data.map(entry => {
+      if (!Array.isArray(entry.images)) return entry;
+      const hasImage = entry.images.some(img => {
+        if (driveFileId && img.drive_file_id === driveFileId) return true;
+        if (driveFileName && img.file_name === driveFileName) return true;
+        if (localFileName && img.file_name?.endsWith('_' + localFileName)) return true;
+        return false;
+      });
+      if (!hasImage) return entry;
+      found = true;
+      return { ...entry, project_name: projectName || null, project_folder_id: projectFolderId || null };
+    });
+
+    if (!found) return { found: false };
+
+    const files = await listFiles(inboxFolderId, { name: 'image_requests.json', fields: 'files(id,name)' });
+    if (files.length > 0) {
+      await updateJsonFile(files[0].id, updated);
+    }
+    return { found: true };
+  } catch {
+    return { found: false };
+  }
 };
 
 /**
@@ -543,39 +622,50 @@ export const getImageUrl = async (driveFileId) => {
 };
 
 // ============================================================
-// App Update (via Google Drive)
+// App Update (via public Google Drive update folder)
 // ============================================================
 
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 
+// Public shared folder: NR_company_app_update
+// Structure:
+//   version.json                              – current release info
+//   NR_company_app_update/released/<ver>/app.apk  – release APK
+//   NR_company_app_update/dev/app.apk         – dev/unreleased APK
+const PUBLIC_UPDATE_FOLDER_ID = '1qncbili98bj_P5_41fRtjC_NWryE4oMh';
+
 /**
- * Check if a newer version of the app is available on Google Drive.
- * Looks for:  meta_folder_id / src / app update / version.json
- *             meta_folder_id / src / app update / app.apk
- *
- * Returns { version, apkFileId } or null if no update found.
+ * Check if a newer version of the app is available.
+ * Reads version.json from the public update folder and resolves the APK file ID.
+ * Returns { version, buildNumber, releaseDate, changelog, apkFileId } or null.
  */
 export const checkAppUpdate = async () => {
-  const connection = await getActiveDriveConnection();
-  if (!connection?.meta_folder_id) return null;
-
   try {
-    const srcFolder = await findFolder(connection.meta_folder_id, 'src');
-    if (!srcFolder) return null;
+    // 1. Read version.json from folder root
+    const rootFiles = await listFiles(PUBLIC_UPDATE_FOLDER_ID, { fields: 'files(id,name)' });
+    const versionFile = rootFiles.find(f => f.name === 'version.json');
+    if (!versionFile) return null;
 
-    const updateFolder = await findFolder(srcFolder.id, 'app update');
+    const data = await readJsonFile(versionFile.id);
+    if (!data?.version) return null;
+
+    // 2. Navigate to NR_company_app_update/released/<version>/app.apk
+    const updateFolder = await findFolder(PUBLIC_UPDATE_FOLDER_ID, 'NR_company_app_update');
     if (!updateFolder) return null;
+    const releasedFolder = await findFolder(updateFolder.id, 'released');
+    if (!releasedFolder) return null;
+    const versionFolder = await findFolder(releasedFolder.id, data.version);
+    if (!versionFolder) return null;
+    const apkFiles = await listFiles(versionFolder.id, { fields: 'files(id,name)' });
+    const apkFile = apkFiles.find(f => f.name === 'app.apk');
+    if (!apkFile) return null;
 
-    const files = await listFiles(updateFolder.id, { fields: 'files(id,name)' });
-    const versionFile = files.find(f => f.name === 'version.json');
-    const apkFile    = files.find(f => f.name === 'app.apk');
-
-    if (!versionFile || !apkFile) return null;
-
-    const versionData = await readJsonFile(versionFile.id);
     return {
-      version:   versionData?.version || '0.0.0',
-      apkFileId: apkFile.id,
+      version:     data.version,
+      buildNumber: data.buildNumber || null,
+      releaseDate: data.releaseDate || null,
+      changelog:   data.changelog   || null,
+      apkFileId:   apkFile.id,
     };
   } catch {
     return null;
@@ -584,14 +674,14 @@ export const checkAppUpdate = async () => {
 
 /**
  * Download the update APK from Google Drive to the local cache.
- * @param {string} apkFileId   - Drive file ID of app.apk
- * @param {function} onProgress - called with (percent 0-100)
+ * @param {string} apkFileId       - Drive file ID of app.apk
+ * @param {function} onProgress    - called with (percent 0-100)
+ * @param {function} onResumableCreated - called with the DownloadResumable instance
  * @returns {string} local file URI of the downloaded APK
  */
-export const downloadAppUpdateApk = async (apkFileId, onProgress) => {
+export const downloadAppUpdateApk = async (apkFileId, onProgress, onResumableCreated) => {
   const destPath = FileSystem.cacheDirectory + 'fuchs-update.apk';
 
-  // Remove old cached APK
   try {
     const info = await FileSystem.getInfoAsync(destPath);
     if (info.exists) await FileSystem.deleteAsync(destPath, { idempotent: true });
@@ -610,6 +700,51 @@ export const downloadAppUpdateApk = async (apkFileId, onProgress) => {
       }
     }
   );
+
+  if (onResumableCreated) onResumableCreated(dl);
+
+  const result = await dl.downloadAsync();
+  if (!result?.uri) throw new Error('Download fehlgeschlagen');
+  return result.uri;
+};
+
+/**
+ * Download the dev (unreleased) APK from NR_company_app_update/dev/app.apk.
+ * @param {function} onProgress    - called with (percent 0-100)
+ * @param {function} onResumableCreated - called with the DownloadResumable instance
+ * @returns {string} local file URI of the downloaded APK
+ */
+export const downloadDevApk = async (onProgress, onResumableCreated) => {
+  const destPath = FileSystem.cacheDirectory + 'fuchs-dev.apk';
+
+  try {
+    const info = await FileSystem.getInfoAsync(destPath);
+    if (info.exists) await FileSystem.deleteAsync(destPath, { idempotent: true });
+  } catch {}
+
+  const updateFolder = await findFolder(PUBLIC_UPDATE_FOLDER_ID, 'NR_company_app_update');
+  if (!updateFolder) throw new Error('Update-Ordner nicht gefunden');
+  const devFolder = await findFolder(updateFolder.id, 'dev');
+  if (!devFolder) throw new Error('Dev-Ordner nicht gefunden');
+  const devFiles = await listFiles(devFolder.id, { fields: 'files(id,name)' });
+  const apkFile = devFiles.find(f => f.name === 'app.apk');
+  if (!apkFile) throw new Error('Dev-APK nicht gefunden');
+
+  const token = await getAccessToken();
+  if (!token) throw new Error('Nicht mit Google angemeldet');
+
+  const dl = FileSystem.createDownloadResumable(
+    `${DRIVE_API}/files/${apkFile.id}?alt=media`,
+    destPath,
+    { headers: { Authorization: `Bearer ${token}` } },
+    (progress) => {
+      if (progress.totalBytesExpectedToWrite > 0 && onProgress) {
+        onProgress(Math.round(progress.totalBytesWritten / progress.totalBytesExpectedToWrite * 100));
+      }
+    }
+  );
+
+  if (onResumableCreated) onResumableCreated(dl);
 
   const result = await dl.downloadAsync();
   if (!result?.uri) throw new Error('Download fehlgeschlagen');

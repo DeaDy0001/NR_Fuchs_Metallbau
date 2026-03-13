@@ -1,9 +1,9 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Animated, Linking } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, RefreshControl, Animated, Linking, Platform } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
-import { getQueueDisplayItems, cleanupOldQueueItems, getDeleteQueueDisplayItems, cleanupOldDeleteQueueItems } from '../services/database';
+import { getQueueDisplayItems, cleanupOldQueueItems, getDeleteQueueDisplayItems, cleanupOldDeleteQueueItems, getMetaChangeQueueDisplayItems, cleanupOldMetaChangeQueueItems, getImageChangeQueueDisplayItems, cleanupOldImageChangeQueueItems, dismissFailedUploadItem } from '../services/database';
 import { forceProcessQueue, addUploadListener, getCurrentUploadState } from '../services/uploadQueue';
 import { addDeleteListener, processDeleteQueue } from '../services/deleteQueue';
 import { useApp } from '../contexts/AppContext';
@@ -15,6 +15,10 @@ export default function UploadQueueScreen() {
   const [completed, setCompleted] = useState([]);
   const [deletePending, setDeletePending] = useState([]);
   const [deleteCompleted, setDeleteCompleted] = useState([]);
+  const [metaPending, setMetaPending] = useState([]);
+  const [metaCompleted, setMetaCompleted] = useState([]);
+  const [imageChangePending, setImageChangePending] = useState([]);
+  const [imageChangeCompleted, setImageChangeCompleted] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [uploadState, setUploadState] = useState(getCurrentUploadState());
   const [currentPhase, setCurrentPhase] = useState(null); // 'compressing' or 'uploading'
@@ -28,6 +32,8 @@ export default function UploadQueueScreen() {
     useCallback(() => {
       loadQueue();
       loadDeleteQueue();
+      loadMetaQueue();
+      loadImageChangeQueue();
       setUploadState(getCurrentUploadState());
       getNotificationPermissionStatus().then(setNotifPermission).catch(() => {});
     }, [])
@@ -48,6 +54,7 @@ export default function UploadQueueScreen() {
 
       if (event.type === 'uploaded' || event.type === 'done' || event.type === 'error') {
         await loadQueue();
+        await loadMetaQueue();
         await refreshQueueCount();
       }
       if (event.type === 'uploading') {
@@ -94,6 +101,28 @@ export default function UploadQueueScreen() {
     }
   };
 
+  const loadMetaQueue = async () => {
+    try {
+      const { pending: p, completed: c } = await getMetaChangeQueueDisplayItems();
+      setMetaPending(p);
+      setMetaCompleted(c);
+      await cleanupOldMetaChangeQueueItems();
+    } catch (error) {
+      console.error('Error loading meta queue:', error);
+    }
+  };
+
+  const loadImageChangeQueue = async () => {
+    try {
+      const { pending: p, completed: c } = await getImageChangeQueueDisplayItems();
+      setImageChangePending(p);
+      setImageChangeCompleted(c);
+      await cleanupOldImageChangeQueueItems();
+    } catch (error) {
+      console.error('Error loading image change queue:', error);
+    }
+  };
+
   const loadQueue = async () => {
     try {
       const { pending: p, completed: c } = await getQueueDisplayItems();
@@ -117,8 +146,15 @@ export default function UploadQueueScreen() {
     processDeleteQueue();
     await loadQueue();
     await loadDeleteQueue();
+    await loadMetaQueue();
     await refreshQueueCount();
     setRefreshing(false);
+  };
+
+  const handleDismissFailed = async (id) => {
+    await dismissFailedUploadItem(id);
+    await loadQueue();
+    await refreshQueueCount();
   };
 
   const getStatusConfig = (status, itemId) => {
@@ -192,6 +228,11 @@ export default function UploadQueueScreen() {
         {item.status === 'uploaded' && item.uploaded_at && (
           <Text style={styles.itemTime}>{formatTime(item.uploaded_at)}</Text>
         )}
+        {item.status === 'permanently_failed' && (
+          <TouchableOpacity onPress={() => handleDismissFailed(item.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="close-circle" size={22} color={colors.textTertiary} />
+          </TouchableOpacity>
+        )}
       </View>
     );
   };
@@ -234,10 +275,82 @@ export default function UploadQueueScreen() {
     );
   };
 
+  const renderMetaItem = ({ item }) => {
+    const isCurrentlyUploading = uploadState.currentlyUploadingId === item.id;
+    const config = getStatusConfig(item.status, item.id);
+    return (
+      <View style={[styles.queueItem, isCurrentlyUploading && styles.queueItemUploading]}>
+        <View style={styles.itemIconContainer}>
+          <Ionicons name={isCurrentlyUploading ? config.icon : 'create-outline'} size={24} color={config.color} />
+        </View>
+        <View style={styles.itemInfo}>
+          <Text style={styles.itemName} numberOfLines={1}>{item.project_name || 'Projektdaten'}</Text>
+          <View style={styles.itemMeta}>
+            <Text style={[styles.itemStatus, { color: config.color }]}>{config.label}</Text>
+            <Text style={styles.itemProject}>
+              <Ionicons name="color-palette-outline" size={11} color={colors.textTertiary} /> Farbe · Notizen · Tags
+            </Text>
+          </View>
+          {item.error && <Text style={styles.itemError} numberOfLines={2}>{item.error}</Text>}
+          {isCurrentlyUploading && (
+            <View style={styles.progressBarContainer}>
+              <Animated.View
+                style={[
+                  styles.progressBarFill,
+                  {
+                    width: progressAnims.current[item.id]
+                      ? progressAnims.current[item.id].interpolate({
+                          inputRange: [0, 1],
+                          outputRange: ['10%', '100%'],
+                        })
+                      : '50%',
+                  },
+                ]}
+              />
+            </View>
+          )}
+        </View>
+        {item.status === 'uploaded' && item.uploaded_at && (
+          <Text style={styles.itemTime}>{formatTime(item.uploaded_at)}</Text>
+        )}
+      </View>
+    );
+  };
+
+  const renderImageChangeItem = ({ item }) => {
+    const isCurrentlyUploading = uploadState.currentlyUploadingId === item.id;
+    const config = getStatusConfig(item.status, item.id);
+    return (
+      <View style={[styles.queueItem, isCurrentlyUploading && styles.queueItemUploading]}>
+        <View style={styles.itemIconContainer}>
+          <Ionicons name={isCurrentlyUploading ? config.icon : 'pencil-outline'} size={24} color={config.color} />
+        </View>
+        <View style={styles.itemInfo}>
+          <Text style={styles.itemName} numberOfLines={1}>{item.image_name}</Text>
+          <View style={styles.itemMeta}>
+            <Text style={[styles.itemStatus, { color: config.color }]}>{config.label}</Text>
+            <Text style={styles.itemProject}>
+              <Ionicons name="pencil-outline" size={11} color={colors.textTertiary} />{' '}
+              {[item.custom_title && 'Titel', item.notes && 'Notizen'].filter(Boolean).join(' · ') || 'Bildänderung'}
+            </Text>
+          </View>
+          {item.error && <Text style={styles.itemError} numberOfLines={2}>{item.error}</Text>}
+        </View>
+        {item.status === 'uploaded' && item.uploaded_at && (
+          <Text style={styles.itemTime}>{formatTime(item.uploaded_at)}</Text>
+        )}
+      </View>
+    );
+  };
+
   const totalPending = pending.length;
   const totalCompleted = completed.length;
   const totalDeletePending = deletePending.length;
   const totalDeleteCompleted = deleteCompleted.length;
+  const totalMetaPending = metaPending.length;
+  const totalMetaCompleted = metaCompleted.length;
+  const totalImageChangePending = imageChangePending.length;
+  const totalImageChangeCompleted = imageChangeCompleted.length;
 
   // Build unified list with section headers
   const allItems = [];
@@ -245,14 +358,24 @@ export default function UploadQueueScreen() {
     allItems.push({ _type: 'section', label: `Lösch-Queue (${totalDeletePending})`, icon: 'trash-outline', color: colors.error });
     deletePending.forEach(i => allItems.push({ ...i, _type: 'delete' }));
   }
+  if (totalMetaPending > 0) {
+    allItems.push({ _type: 'section', label: `Projektdaten (${totalMetaPending})`, icon: 'create-outline', color: '#8b5cf6' });
+    metaPending.forEach(i => allItems.push({ ...i, _type: 'meta' }));
+  }
+  if (totalImageChangePending > 0) {
+    allItems.push({ _type: 'section', label: `Bildänderungen (${totalImageChangePending})`, icon: 'pencil-outline', color: '#f59e0b' });
+    imageChangePending.forEach(i => allItems.push({ ...i, _type: 'imagechange' }));
+  }
   if (totalPending > 0) {
     allItems.push({ _type: 'section', label: `Upload-Queue (${totalPending})`, icon: 'cloud-upload-outline', color: colors.accent });
     pending.forEach(i => allItems.push({ ...i, _type: 'upload' }));
   }
-  if (totalCompleted > 0 || totalDeleteCompleted > 0) {
+  if (totalCompleted > 0 || totalDeleteCompleted > 0 || totalMetaCompleted > 0 || totalImageChangeCompleted > 0) {
     allItems.push({ _type: 'section', label: 'Erledigt', icon: 'checkmark-done-outline', color: colors.success });
     const allDone = [
       ...deleteCompleted.map(i => ({ ...i, _type: 'delete', _sortDate: i.processed_at || '' })),
+      ...metaCompleted.map(i => ({ ...i, _type: 'meta', _sortDate: i.uploaded_at || '' })),
+      ...imageChangeCompleted.map(i => ({ ...i, _type: 'imagechange', _sortDate: i.uploaded_at || '' })),
       ...completed.map(i => ({ ...i, _type: 'upload', _sortDate: i.uploaded_at || '' })),
     ].sort((a, b) => b._sortDate.localeCompare(a._sortDate));
     allDone.forEach(i => allItems.push(i));
@@ -282,14 +405,14 @@ export default function UploadQueueScreen() {
       {/* Summary card */}
       <View style={styles.summary}>
         <View style={styles.summaryItem}>
-          <Text style={[styles.summaryNumber, { color: (totalPending + totalDeletePending) > 0 ? colors.warning : colors.textTertiary }]}>
-            {totalPending + totalDeletePending}
+          <Text style={[styles.summaryNumber, { color: (totalPending + totalDeletePending + totalMetaPending + totalImageChangePending) > 0 ? colors.warning : colors.textTertiary }]}>
+            {totalPending + totalDeletePending + totalMetaPending + totalImageChangePending}
           </Text>
           <Text style={styles.summaryLabel}>Ausstehend</Text>
         </View>
         <View style={styles.summaryDivider} />
         <View style={styles.summaryItem}>
-          <Text style={[styles.summaryNumber, { color: colors.success }]}>{totalCompleted + totalDeleteCompleted}</Text>
+          <Text style={[styles.summaryNumber, { color: colors.success }]}>{totalCompleted + totalDeleteCompleted + totalMetaCompleted + totalImageChangeCompleted}</Text>
           <Text style={styles.summaryLabel}>Erledigt</Text>
         </View>
       </View>
@@ -318,13 +441,24 @@ export default function UploadQueueScreen() {
       )}
 
       {/* Offline / WiFi hint */}
-      {uploadState.isProcessing === false && totalPending > 0 && (
+      {uploadState.isProcessing === false && (totalPending + totalMetaPending) > 0 && (
         <View style={styles.hintCard}>
           <Ionicons name="information-circle-outline" size={18} color={colors.textTertiary} />
           <Text style={styles.hintText}>
             Uploads werden automatisch verarbeitet, sobald eine Verbindung besteht.
           </Text>
         </View>
+      )}
+
+      {/* Android battery optimization hint */}
+      {Platform.OS === 'android' && uploadState.isProcessing === false && (totalPending + totalMetaPending) > 0 && (
+        <TouchableOpacity style={styles.batteryHint} onPress={() => Linking.openSettings()} activeOpacity={0.75}>
+          <Ionicons name="battery-charging-outline" size={18} color="#f59e0b" />
+          <Text style={styles.batteryHintText}>
+            Uploads starten nur beim Öffnen der App? Akku-Optimierung für diese App deaktivieren.
+          </Text>
+          <Ionicons name="chevron-forward" size={15} color="#f59e0b" style={{ flexShrink: 0 }} />
+        </TouchableOpacity>
       )}
 
       {/* Action button */}
@@ -356,6 +490,8 @@ export default function UploadQueueScreen() {
             );
           }
           if (item._type === 'delete') return renderDeleteItem({ item });
+          if (item._type === 'meta') return renderMetaItem({ item });
+          if (item._type === 'imagechange') return renderImageChangeItem({ item });
           return renderQueueItem({ item });
         }}
         contentContainerStyle={styles.list}
@@ -495,6 +631,25 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 12,
     color: colors.textTertiary,
+  },
+  batteryHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(245,158,11,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.25)',
+  },
+  batteryHintText: {
+    flex: 1,
+    fontSize: 12,
+    color: colors.textSecondary,
+    lineHeight: 17,
   },
 
   // Sync button

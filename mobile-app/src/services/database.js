@@ -138,6 +138,36 @@ const initTables = async () => {
       created_at TEXT DEFAULT (datetime('now')),
       processed_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS meta_change_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_folder_id TEXT NOT NULL,
+      project_name TEXT,
+      color TEXT,
+      notes TEXT,
+      tags TEXT DEFAULT '[]',
+      is_starred INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'queued',
+      retry_count INTEGER DEFAULT 0,
+      error TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      uploaded_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS image_change_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      image_id TEXT NOT NULL,
+      image_name TEXT NOT NULL,
+      custom_title TEXT,
+      notes TEXT,
+      project_name TEXT,
+      project_folder_id TEXT,
+      status TEXT DEFAULT 'queued',
+      retry_count INTEGER DEFAULT 0,
+      error TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      uploaded_at TEXT
+    );
   `);
 
   // Migrate: add columns that may be missing from older DB versions
@@ -158,9 +188,18 @@ const initTables = async () => {
     { table: 'upload_queue', column: 'gps_data', sql: 'ALTER TABLE upload_queue ADD COLUMN gps_data TEXT' },
     { table: 'upload_queue', column: 'custom_title', sql: 'ALTER TABLE upload_queue ADD COLUMN custom_title TEXT' },
     { table: 'upload_queue', column: 'notes', sql: 'ALTER TABLE upload_queue ADD COLUMN notes TEXT' },
+    { table: 'upload_queue', column: 'photo_taken_at', sql: 'ALTER TABLE upload_queue ADD COLUMN photo_taken_at TEXT' },
     // recent_photos migrations
     { table: 'recent_photos', column: 'custom_title', sql: 'ALTER TABLE recent_photos ADD COLUMN custom_title TEXT' },
     { table: 'recent_photos', column: 'notes', sql: 'ALTER TABLE recent_photos ADD COLUMN notes TEXT' },
+    { table: 'recent_photos', column: 'project_folder_id', sql: 'ALTER TABLE recent_photos ADD COLUMN project_folder_id TEXT' },
+    { table: 'recent_photos', column: 'drive_file_id', sql: 'ALTER TABLE recent_photos ADD COLUMN drive_file_id TEXT' },
+    { table: 'recent_photos', column: 'drive_file_name', sql: 'ALTER TABLE recent_photos ADD COLUMN drive_file_name TEXT' },
+    // image_change_queue migrations
+    { table: 'image_change_queue', column: 'project_name', sql: 'ALTER TABLE image_change_queue ADD COLUMN project_name TEXT' },
+    { table: 'image_change_queue', column: 'project_folder_id', sql: 'ALTER TABLE image_change_queue ADD COLUMN project_folder_id TEXT' },
+    // cached_images migrations
+    { table: 'cached_images', column: 'created_time', sql: 'ALTER TABLE cached_images ADD COLUMN created_time TEXT' },
   ];
 
   for (const m of migrations) {
@@ -201,15 +240,15 @@ export const setSetting = async (key, value) => {
 // Upload queue helpers
 // ============================================================
 
-export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = null, projectName = null, projectFolderId = null, gpsData = null, skipRecentPhotos = false, customTitle = null, notes = null) => {
+export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = null, projectName = null, projectFolderId = null, gpsData = null, skipRecentPhotos = false, customTitle = null, notes = null, photoTakenAt = null) => {
   const db = await getDb();
 
   // Also add to recent photos for the home screen (skip when re-assigning existing photos)
   if (!skipRecentPhotos) {
     try {
       await db.runAsync(
-        'INSERT INTO recent_photos (file_uri, file_name, mime_type, project_id, project_name, gps_data, thumbnail_uri, custom_title, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [fileUri, fileName, mimeType, projectId, projectName, gpsData, fileUri, customTitle, notes]
+        'INSERT INTO recent_photos (file_uri, file_name, mime_type, project_id, project_name, project_folder_id, gps_data, thumbnail_uri, custom_title, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [fileUri, fileName, mimeType, projectId, projectName, projectFolderId, gpsData, fileUri, customTitle, notes]
       );
       // Keep only last 50 recent photos
       await db.runAsync(
@@ -219,8 +258,8 @@ export const addToUploadQueue = async (fileUri, fileName, mimeType, projectId = 
   }
 
   return await db.runAsync(
-    'INSERT INTO upload_queue (file_uri, file_name, mime_type, project_id, project_name, project_folder_id, gps_data, custom_title, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [fileUri, fileName, mimeType, projectId, projectName, projectFolderId, gpsData, customTitle, notes]
+    'INSERT INTO upload_queue (file_uri, file_name, mime_type, project_id, project_name, project_folder_id, gps_data, custom_title, notes, photo_taken_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [fileUri, fileName, mimeType, projectId, projectName, projectFolderId, gpsData, customTitle, notes, photoTakenAt]
   );
 };
 
@@ -248,10 +287,13 @@ export const updateUploadStatus = async (id, status, error = null) => {
 
 export const getUploadQueueCount = async () => {
   const db = await getDb();
-  const result = await db.getFirstAsync(
-    'SELECT COUNT(*) as count FROM upload_queue WHERE status IN (\'queued\', \'failed\')'
+  const uploads = await db.getFirstAsync(
+    "SELECT COUNT(*) as count FROM upload_queue WHERE status IN ('queued', 'failed')"
   );
-  return result?.count || 0;
+  const imageChanges = await db.getFirstAsync(
+    "SELECT COUNT(*) as count FROM image_change_queue WHERE status IN ('queued', 'failed')"
+  );
+  return (uploads?.count || 0) + (imageChanges?.count || 0);
 };
 
 /**
@@ -273,6 +315,11 @@ export const getQueueDisplayItems = async () => {
 /**
  * Cleanup old completed items - keep only last 30
  */
+export const dismissFailedUploadItem = async (id) => {
+  const db = await getDb();
+  await db.runAsync("DELETE FROM upload_queue WHERE id = ? AND status = 'permanently_failed'", [id]);
+};
+
 export const cleanupOldQueueItems = async () => {
   const db = await getDb();
   await db.runAsync(`
@@ -344,6 +391,79 @@ export const cacheTags = async (tags) => {
 export const getCachedTags = async () => {
   const db = await getDb();
   return await db.getAllAsync('SELECT * FROM cached_tags ORDER BY name');
+};
+
+/** Cache image list for a project (upsert by Drive file id) */
+export const cacheProjectImages = async (projectFolderId, images) => {
+  const db = await getDb();
+  for (const img of images) {
+    await db.runAsync(
+      `INSERT INTO cached_images (id, project_id, name, mime_type, size, modified_time, created_time, thumbnail_link, synced_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(id) DO UPDATE SET
+         project_id = excluded.project_id,
+         name = excluded.name,
+         mime_type = excluded.mime_type,
+         size = excluded.size,
+         modified_time = excluded.modified_time,
+         created_time = excluded.created_time,
+         thumbnail_link = excluded.thumbnail_link,
+         synced_at = excluded.synced_at`,
+      [
+        img.id,
+        projectFolderId,
+        img.name || '',
+        img.mime_type || 'image/jpeg',
+        img.size || 0,
+        img.modified_time || null,
+        img.created_time || null,
+        img.thumbnail_link || null,
+      ]
+    );
+  }
+};
+
+/** Update local file paths after downloading */
+export const updateCachedImagePaths = async (driveFileId, thumbnailPath, fullPath) => {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE cached_images SET local_thumbnail_path = COALESCE(?, local_thumbnail_path), local_full_path = COALESCE(?, local_full_path) WHERE id = ?',
+    [thumbnailPath || null, fullPath || null, driveFileId]
+  );
+};
+
+/** Get a single cached image entry by Drive file ID */
+export const getCachedImageByDriveId = async (driveFileId) => {
+  const db = await getDb();
+  return await db.getFirstAsync('SELECT * FROM cached_images WHERE id = ?', [driveFileId]);
+};
+
+/** Get all cached images for a project folder */
+export const getCachedProjectImages = async (projectFolderId) => {
+  const db = await getDb();
+  return await db.getAllAsync(
+    'SELECT * FROM cached_images WHERE project_id = ? ORDER BY modified_time DESC',
+    [projectFolderId]
+  );
+};
+
+/** Delete a single cached image entry by Drive file ID */
+export const deleteCachedImage = async (driveFileId) => {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM cached_images WHERE id = ?', [driveFileId]);
+};
+
+/** Return all cached image entries whose project_id is NOT in the given list */
+export const getOrphanedCachedImages = async (validProjectFolderIds) => {
+  const db = await getDb();
+  if (!validProjectFolderIds || validProjectFolderIds.length === 0) {
+    return await db.getAllAsync('SELECT * FROM cached_images');
+  }
+  const placeholders = validProjectFolderIds.map(() => '?').join(',');
+  return await db.getAllAsync(
+    `SELECT * FROM cached_images WHERE project_id NOT IN (${placeholders})`,
+    validProjectFolderIds
+  );
 };
 
 // ============================================================
@@ -419,6 +539,22 @@ export const updateRecentPhotoProject = async (photoId, projectId, projectName) 
   await db.runAsync(
     'UPDATE recent_photos SET project_id = ?, project_name = ? WHERE id = ?',
     [projectId, projectName, photoId]
+  );
+};
+
+export const updateRecentPhotoDriveInfo = async (fileName, driveFileId, driveFileName) => {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE recent_photos SET drive_file_id = ?, drive_file_name = ? WHERE file_name = ?',
+    [driveFileId || null, driveFileName || null, fileName]
+  );
+};
+
+export const updateRecentPhotoProject = async (photoId, projectId, projectName, projectFolderId) => {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE recent_photos SET project_id = ?, project_name = ?, project_folder_id = ? WHERE id = ?',
+    [projectId || null, projectName || null, projectFolderId || null, photoId]
   );
 };
 
@@ -553,5 +689,135 @@ export const clearConfirmedPendingProjects = async () => {
   await db.runAsync(`
     DELETE FROM pending_projects
     WHERE LOWER(folder_name) IN (SELECT LOWER(folder_name) FROM cached_projects)
+  `);
+};
+
+// ============================================================
+// Meta change queue helpers (project color / notes / tags)
+// ============================================================
+
+export const addToMetaChangeQueue = async (projectFolderId, projectName, meta) => {
+  const db = await getDb();
+  return await db.runAsync(
+    'INSERT INTO meta_change_queue (project_folder_id, project_name, color, notes, tags, is_starred) VALUES (?, ?, ?, ?, ?, ?)',
+    [
+      projectFolderId,
+      projectName || null,
+      meta.color || null,
+      meta.notes || null,
+      JSON.stringify(meta.tags || []),
+      meta.is_starred ? 1 : 0,
+    ]
+  );
+};
+
+export const getQueuedMetaChanges = async () => {
+  const db = await getDb();
+  return await db.getAllAsync(
+    "SELECT * FROM meta_change_queue WHERE status IN ('queued', 'failed') ORDER BY created_at ASC"
+  );
+};
+
+export const updateMetaChangeStatus = async (id, status, error = null) => {
+  const db = await getDb();
+  if (status === 'uploaded') {
+    await db.runAsync(
+      "UPDATE meta_change_queue SET status = ?, uploaded_at = datetime('now') WHERE id = ?",
+      [status, id]
+    );
+  } else {
+    await db.runAsync(
+      'UPDATE meta_change_queue SET status = ?, error = ?, retry_count = retry_count + 1 WHERE id = ?',
+      [status, error, id]
+    );
+  }
+};
+
+export const getMetaChangeQueueDisplayItems = async () => {
+  const db = await getDb();
+  const pending = await db.getAllAsync(
+    "SELECT * FROM meta_change_queue WHERE status IN ('queued', 'failed') ORDER BY created_at ASC"
+  );
+  const completed = await db.getAllAsync(
+    "SELECT * FROM meta_change_queue WHERE status = 'uploaded' ORDER BY uploaded_at DESC LIMIT 30"
+  );
+  return { pending, completed };
+};
+
+export const cleanupOldMetaChangeQueueItems = async () => {
+  const db = await getDb();
+  await db.runAsync(`
+    DELETE FROM meta_change_queue
+    WHERE status = 'uploaded'
+    AND id NOT IN (
+      SELECT id FROM meta_change_queue
+      WHERE status = 'uploaded'
+      ORDER BY uploaded_at DESC
+      LIMIT 30
+    )
+  `);
+};
+
+// ============================================================
+// Image change queue (title/notes edits for already-uploaded images)
+// ============================================================
+
+export const addToImageChangeQueue = async (imageId, imageName, customTitle, notes, projectName = null, projectFolderId = null) => {
+  const db = await getDb();
+  // Merge into any existing pending entry for this image (one request per image)
+  await db.runAsync(
+    "DELETE FROM image_change_queue WHERE image_id = ? AND status IN ('queued', 'failed')",
+    [imageId]
+  );
+  await db.runAsync(
+    'INSERT INTO image_change_queue (image_id, image_name, custom_title, notes, project_name, project_folder_id) VALUES (?, ?, ?, ?, ?, ?)',
+    [imageId, imageName, customTitle ?? null, notes ?? null, projectName ?? null, projectFolderId ?? null]
+  );
+};
+
+export const getQueuedImageChanges = async () => {
+  const db = await getDb();
+  return db.getAllAsync(
+    "SELECT * FROM image_change_queue WHERE status IN ('queued', 'failed') ORDER BY created_at ASC"
+  );
+};
+
+export const updateImageChangeStatus = async (id, status, error = null) => {
+  const db = await getDb();
+  if (status === 'uploaded') {
+    await db.runAsync(
+      "UPDATE image_change_queue SET status = ?, uploaded_at = datetime('now') WHERE id = ?",
+      [status, id]
+    );
+  } else {
+    await db.runAsync(
+      'UPDATE image_change_queue SET status = ?, error = ?, retry_count = retry_count + 1 WHERE id = ?',
+      [status, error, id]
+    );
+  }
+};
+
+export const getImageChangeQueueDisplayItems = async () => {
+  const db = await getDb();
+  const pending = await db.getAllAsync(
+    "SELECT * FROM image_change_queue WHERE status IN ('queued', 'failed') ORDER BY created_at ASC"
+  );
+  const completed = await db.getAllAsync(
+    "SELECT * FROM image_change_queue WHERE status = 'uploaded' ORDER BY uploaded_at DESC LIMIT 30"
+  );
+  return { pending, completed };
+};
+
+export const cleanupOldImageChangeQueueItems = async () => {
+  const db = await getDb();
+  await db.runAsync(`
+    DELETE FROM image_change_queue
+    WHERE status = 'uploaded'
+    AND id NOT IN (
+      SELECT id FROM image_change_queue
+      WHERE status = 'uploaded'
+      ORDER BY uploaded_at DESC
+      LIMIT 30
+    )
   `);
 };
