@@ -2988,11 +2988,11 @@ const previewDeleteRequestImage = async (req, res) => {
       FROM drive_images di
       LEFT JOIN image_project_assignments ipa ON ipa.image_id = di.id
       LEFT JOIN projects p ON p.id = ipa.project_id
-      WHERE di.original_name = ?1
-         OR di.name = ?1
-         OR di.name LIKE '%_' || ?1
+      WHERE di.original_name = @fileName
+         OR di.name = @fileName
+         OR di.name LIKE '%_' || @fileName
       ORDER BY di.created_at DESC LIMIT 1
-    `).get(fileName);
+    `).get({ fileName });
 
     if (dbImage) {
       // Try thumbnail (typically /uploads/thumbnails/...)
