@@ -749,16 +749,20 @@ export default function CameraScreen({ navigation, route }) {
 
   return (
     <View style={styles.cameraContainer}>
+      {/* Native camera – no gesture handler directly on native views */}
+      <CameraView
+        ref={cameraRef}
+        style={styles.camera}
+        facing={facing}
+        flash={flash}
+        shutterSound={false}
+        zoom={zoom}
+        autofocus={autoFocusMode}
+      />
+
+      {/* Transparent gesture capture layer (sits above camera, below buttons) */}
       <GestureDetector gesture={cameraGesture}>
-        <CameraView
-          ref={cameraRef}
-          style={styles.camera}
-          facing={facing}
-          flash={flash}
-          shutterSound={false}
-          zoom={zoom}
-          autofocus={autoFocusMode}
-        />
+        <View style={StyleSheet.absoluteFill} />
       </GestureDetector>
 
       {/* Tap-to-focus ring */}
@@ -776,7 +780,8 @@ export default function CameraScreen({ navigation, route }) {
         />
       )}
 
-      {/* Overlay on top of camera */}
+      {/* Overlay on top of camera – buttons with pointerEvents="box-none" so
+          taps on empty areas pass through to the gesture layer below */}
       <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
         {/* Top bar – only controls, no close button */}
         <View style={styles.topBar}>
