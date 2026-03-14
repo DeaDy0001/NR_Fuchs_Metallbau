@@ -4,9 +4,7 @@ import {
   ActivityIndicator, FlatList, Dimensions, Modal, ScrollView, TextInput, Animated,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useDialog } from '../components/CustomDialog';
-import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import * as MediaLibrary from 'expo-media-library';
@@ -22,23 +20,12 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 export default function CameraScreen({ navigation, route }) {
   const { alert } = useDialog();
   const { refreshQueueCount } = useApp();
-  const [permission, requestPermission] = useCameraPermissions();
   const [capturedImages, setCapturedImages] = useState([]);
-  const [facing, setFacing] = useState('back');
   const [toast, setToast] = useState(null);
   const toastOpacity = useRef(new Animated.Value(0)).current;
-  const [flash, setFlash] = useState('off');
   const [gpsEnabled, setGpsEnabled] = useState(false);
   const [locationPermission, setLocationPermission] = useState(null);
-  const cameraRef = useRef(null);
   const metadataInputRef = useRef(null);
-
-  // Zoom & tap-to-focus
-  const [zoom, setZoom] = useState(0);
-  const baseZoomRef = useRef(0);
-  const [focusPoint, setFocusPoint] = useState(null); // {x, y} screen coords
-  const [autoFocusMode, setAutoFocusMode] = useState('off');
-  const focusAnim = useRef(new Animated.Value(0)).current;
 
   // Project assignment
   const [projectId, setProjectId] = useState(route.params?.projectId || null);
@@ -58,33 +45,6 @@ export default function CameraScreen({ navigation, route }) {
   // Per-image metadata editing
   const [editingField, setEditingField] = useState(null); // 'title' | 'notes' | null
   const [editFieldValue, setEditFieldValue] = useState('');
-
-  // Pinch-to-zoom gesture
-  const pinchGesture = Gesture.Pinch()
-    .onStart(() => {
-      baseZoomRef.current = zoom;
-    })
-    .onUpdate((e) => {
-      const next = Math.min(1, Math.max(0, baseZoomRef.current + (e.scale - 1) * 0.3));
-      setZoom(next);
-    })
-    .runOnJS(true);
-
-  // Tap-to-focus: show ring and toggle autofocus
-  const tapGesture = Gesture.Tap()
-    .onEnd((e) => {
-      setFocusPoint({ x: e.x, y: e.y });
-      focusAnim.setValue(1);
-      Animated.timing(focusAnim, { toValue: 0, duration: 900, delay: 600, useNativeDriver: true }).start(() => {
-        setFocusPoint(null);
-      });
-      // Toggle autofocus to trigger refocus (works on iOS; visual feedback on Android)
-      setAutoFocusMode('on');
-      setTimeout(() => setAutoFocusMode('off'), 500);
-    })
-    .runOnJS(true);
-
-  const cameraGesture = Gesture.Simultaneous(pinchGesture, tapGesture);
 
   // Load projects for picker
   const loadProjects = async () => {
@@ -262,7 +222,6 @@ export default function CameraScreen({ navigation, route }) {
   }, []);
 
   // Pre-request MediaLibrary permission for "Original behalten" feature
-  // Must be done in foreground context, not in background queue
   useEffect(() => {
     MediaLibrary.requestPermissionsAsync().catch(() => {});
   }, []);
@@ -333,27 +292,32 @@ export default function CameraScreen({ navigation, route }) {
         height: asset.height,
         gps: gpsData,
       }));
+      const nextIndex = capturedImages.length;
       setCapturedImages(prev => [...prev, ...newImages]);
+      setSelectedPreviewIndex(nextIndex);
+      setShowPreviewGallery(true);
     } else if (route.params?.pickFromGallery && capturedImages.length === 0) {
       navigation.goBack();
     }
   };
 
-  const takePicture = async () => {
-    if (!cameraRef.current) return;
+  // Open native camera - uses the phone's built-in camera app so all native
+  // features (focus, zoom, flash, etc.) work out of the box.
+  const openNativeCamera = async () => {
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 1,
+      exif: true,
+    });
 
-    try {
-      const photo = await cameraRef.current.takePictureAsync({
-        quality: 1,
-        exif: true,
-      });
-
+    if (!result.canceled && result.assets?.length > 0) {
       const gpsData = await getCurrentLocation();
+      const asset = result.assets[0];
 
       // Extract capture date from EXIF (will be lost during compression)
       let capturedAt = null;
-      if (photo.exif) {
-        const dateStr = photo.exif.DateTimeOriginal || photo.exif.DateTime || photo.exif.DateTimeDigitized;
+      if (asset.exif) {
+        const dateStr = asset.exif.DateTimeOriginal || asset.exif.DateTime || asset.exif.DateTimeDigitized;
         if (dateStr) {
           try {
             // EXIF format: "2024:03:15 14:30:00" → ISO
@@ -365,19 +329,22 @@ export default function CameraScreen({ navigation, route }) {
       if (!capturedAt) capturedAt = new Date().toISOString();
 
       const newImage = {
-        uri: photo.uri,
+        uri: asset.uri,
         fileName: `photo_${Date.now()}.jpg`,
         mimeType: 'image/jpeg',
-        width: photo.width,
-        height: photo.height,
-        exif: photo.exif,
+        width: asset.width,
+        height: asset.height,
+        exif: asset.exif,
         gps: gpsData,
         capturedAt,
+        // The native camera already saves to camera roll - skip our keepOriginal logic
+        isFromNativeCamera: true,
       };
 
+      const nextIndex = capturedImages.length;
       setCapturedImages(prev => [...prev, newImage]);
-    } catch (error) {
-      alert('Fehler', 'Foto konnte nicht aufgenommen werden.');
+      setSelectedPreviewIndex(nextIndex);
+      setShowPreviewGallery(true);
     }
   };
 
@@ -459,8 +426,8 @@ export default function CameraScreen({ navigation, route }) {
     const count = capturedImages.length;
 
     try {
-      // Save original to gallery for camera photos (only once, before queuing)
-      // Gallery picks already exist in the gallery so we skip them.
+      // Save original to gallery - only for gallery picks (not native camera shots,
+      // which are already saved by the camera app itself).
       const keepOriginal = (await getSetting('keepOriginal', 'true')) === 'true';
       if (keepOriginal) {
         let { status } = await MediaLibrary.getPermissionsAsync();
@@ -470,7 +437,7 @@ export default function CameraScreen({ navigation, route }) {
         }
         if (status === 'granted') {
           for (const img of capturedImages) {
-            if (img.fileName && img.fileName.startsWith('photo_')) {
+            if (img.fileName && img.fileName.startsWith('photo_') && !img.isFromNativeCamera) {
               try { await MediaLibrary.saveToLibraryAsync(img.uri); } catch {}
             }
           }
@@ -492,7 +459,7 @@ export default function CameraScreen({ navigation, route }) {
 
       await refreshQueueCount();
 
-      // Clear images and go back to camera view
+      // Clear images and go back to shooter screen
       setCapturedImages([]);
       setShowPreviewGallery(false);
 
@@ -657,7 +624,17 @@ export default function CameraScreen({ navigation, route }) {
           {/* Discard */}
           <TouchableOpacity style={styles.previewActionBtn} onPress={removeAllImages}>
             <Ionicons name="trash-outline" size={24} color={colors.error} />
-            <Text style={[styles.previewActionLabel, { color: colors.error }]}>Verwerfen</Text>
+            <Text style={styles.previewActionLabel}>Verwerfen</Text>
+          </TouchableOpacity>
+
+          {/* Add more (opens native camera again) */}
+          <TouchableOpacity style={styles.previewActionBtn} onPress={() => {
+            setShowPreviewGallery(false);
+            // openNativeCamera will re-open camera and add to existing list
+            setTimeout(openNativeCamera, 100);
+          }}>
+            <Ionicons name="camera-outline" size={24} color={colors.textSecondary} />
+            <Text style={styles.previewActionLabel}>Weiteres Foto</Text>
           </TouchableOpacity>
 
           {/* Project */}
@@ -672,20 +649,11 @@ export default function CameraScreen({ navigation, route }) {
             </Text>
           </TouchableOpacity>
 
-          {/* More photos */}
-          <TouchableOpacity style={styles.previewActionBtn} onPress={() => setShowPreviewGallery(false)}>
-            <Ionicons name="camera-outline" size={24} color={colors.textSecondary} />
-            <Text style={styles.previewActionLabel}>Weitere</Text>
-          </TouchableOpacity>
-
-          {/* Upload / Queue */}
-          <TouchableOpacity
-            style={styles.previewActionBtnSend}
-            onPress={handleUpload}
-          >
-            <Ionicons name="send" size={24} color="white" />
+          {/* Upload */}
+          <TouchableOpacity style={styles.previewActionBtnSend} onPress={handleUpload}>
+            <Ionicons name="cloud-upload-outline" size={24} color="white" />
             <Text style={styles.previewActionLabelSend}>
-              Senden{capturedImages.length > 1 ? ` (${capturedImages.length})` : ''}
+              {capturedImages.length === 1 ? '1 Bild' : `${capturedImages.length} Bilder`}
             </Text>
           </TouchableOpacity>
         </View>
@@ -696,170 +664,85 @@ export default function CameraScreen({ navigation, route }) {
     );
   }
 
-  // ---- Captured images bar (shown in camera view when images exist) ----
-  const renderCapturedBar = () => {
-    if (capturedImages.length === 0) return null;
-    return (
-      <TouchableOpacity
-        style={styles.capturedBar}
-        onPress={() => {
-          setSelectedPreviewIndex(capturedImages.length - 1);
-          setShowPreviewGallery(true);
-        }}
-      >
-        <View style={styles.capturedBarLeft}>
-          <Image
-            source={{ uri: capturedImages[capturedImages.length - 1].uri }}
-            style={styles.capturedBarThumb}
+  // ---- Shooter home screen ----
+  return (
+    <View style={styles.shooterContainer}>
+      {/* Header */}
+      <View style={styles.shooterHeader}>
+        <TouchableOpacity style={styles.shooterHeaderLeft} onPress={() => navigation.goBack()}>
+          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
+          <Text style={styles.shooterHeaderBack}>Zurück</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.gpsBtn, gpsEnabled && styles.gpsBtnActive]}
+          onPress={() => gpsEnabled ? setGpsEnabled(false) : enableGps()}
+        >
+          <Ionicons
+            name={gpsEnabled ? 'location' : 'location-outline'}
+            size={20}
+            color={gpsEnabled ? '#22c55e' : colors.textTertiary}
           />
-          <Text style={styles.capturedBarText}>
-            {capturedImages.length} {capturedImages.length === 1 ? 'Foto' : 'Fotos'}
+          <Text style={[styles.gpsBtnText, gpsEnabled && styles.gpsBtnTextActive]}>GPS</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Body */}
+      <View style={styles.shooterBody}>
+        {/* Project selector */}
+        <TouchableOpacity style={styles.shooterProjectBtn} onPress={openProjectPicker}>
+          <Ionicons
+            name="folder-outline"
+            size={18}
+            color={projectName ? colors.accent : colors.textTertiary}
+          />
+          <Text style={projectName ? styles.shooterProjectName : styles.shooterProjectText}>
+            {projectName || 'Kein Projekt gewählt'}
           </Text>
-        </View>
-        <View style={styles.capturedBarRight}>
-          <TouchableOpacity
-            style={styles.capturedBarAction}
-            onPress={() => {
-              setSelectedPreviewIndex(capturedImages.length - 1);
-              setShowPreviewGallery(true);
-            }}
-          >
+          <Ionicons name="chevron-down" size={14} color={colors.textTertiary} />
+        </TouchableOpacity>
+
+        {/* Camera button */}
+        <TouchableOpacity style={styles.shooterCameraBtn} onPress={openNativeCamera} activeOpacity={0.8}>
+          <Ionicons name="camera" size={56} color="white" />
+        </TouchableOpacity>
+        <Text style={styles.shooterCameraHint}>Tippen zum Fotografieren</Text>
+
+        {/* Gallery button */}
+        <TouchableOpacity style={styles.shooterGalleryBtn} onPress={pickFromGallery}>
+          <Ionicons name="images-outline" size={20} color={colors.textSecondary} />
+          <Text style={styles.shooterGalleryText}>Galerie öffnen</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Captured images bar (visible after taking photos, before uploading) */}
+      {capturedImages.length > 0 && (
+        <TouchableOpacity
+          style={styles.capturedBarStatic}
+          onPress={() => {
+            setSelectedPreviewIndex(capturedImages.length - 1);
+            setShowPreviewGallery(true);
+          }}
+        >
+          <View style={styles.capturedBarLeft}>
+            <Image
+              source={{ uri: capturedImages[capturedImages.length - 1].uri }}
+              style={styles.capturedBarThumb}
+            />
+            <Text style={styles.capturedBarText}>
+              {capturedImages.length} {capturedImages.length === 1 ? 'Foto' : 'Fotos'}
+            </Text>
+          </View>
+          <View style={styles.capturedBarRight}>
             <Text style={styles.capturedBarActionText}>Ansehen</Text>
             <Ionicons name="chevron-forward" size={16} color={colors.accent} />
-          </TouchableOpacity>
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  if (!permission) {
-    return <View style={styles.container}><ActivityIndicator color={colors.accent} /></View>;
-  }
-
-  if (!permission.granted) {
-    return (
-      <View style={styles.container}>
-        <Ionicons name="camera-outline" size={64} color={colors.textTertiary} />
-        <Text style={styles.permissionText}>Kamera-Zugriff erforderlich</Text>
-        <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
-          <Text style={styles.permissionButtonText}>Zugriff erlauben</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.cameraContainer}>
-      {/* Native camera – no gesture handler directly on native views */}
-      <CameraView
-        ref={cameraRef}
-        style={styles.camera}
-        facing={facing}
-        flash={flash}
-        shutterSound={false}
-        zoom={zoom}
-        autofocus={autoFocusMode}
-      />
-
-      {/* Transparent gesture capture layer (sits above camera, below buttons) */}
-      <GestureDetector gesture={cameraGesture}>
-        <View style={StyleSheet.absoluteFill} />
-      </GestureDetector>
-
-      {/* Tap-to-focus ring */}
-      {focusPoint && (
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.focusRing,
-            {
-              left: focusPoint.x - 32,
-              top:  focusPoint.y - 32,
-              opacity: focusAnim,
-            },
-          ]}
-        />
-      )}
-
-      {/* Overlay on top of camera – buttons with pointerEvents="box-none" so
-          taps on empty areas pass through to the gesture layer below */}
-      <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-        {/* Top bar – only controls, no close button */}
-        <View style={styles.topBar}>
-          <View style={styles.topRight}>
-            {/* GPS toggle */}
-            <TouchableOpacity
-              style={[styles.topButton, gpsEnabled && styles.topButtonActive]}
-              onPress={() => {
-                if (!gpsEnabled) {
-                  enableGps();
-                } else {
-                  setGpsEnabled(false);
-                }
-              }}
-            >
-              <Ionicons
-                name={gpsEnabled ? 'location' : 'location-outline'}
-                size={22}
-                color={gpsEnabled ? '#22c55e' : '#999'}
-              />
-            </TouchableOpacity>
-
-            {/* Flash toggle */}
-            <TouchableOpacity
-              style={styles.topButton}
-              onPress={() => setFlash(f => f === 'off' ? 'on' : f === 'on' ? 'auto' : 'off')}
-            >
-              <Ionicons
-                name={flash === 'off' ? 'flash-off' : flash === 'auto' ? 'flash' : 'flash'}
-                size={24}
-                color={flash === 'off' ? '#999' : '#ffd700'}
-              />
-            </TouchableOpacity>
           </View>
-        </View>
-
-        {/* Project indicator */}
-        {projectName && (
-          <TouchableOpacity style={styles.projectIndicator} onPress={openProjectPicker}>
-            <Ionicons name="folder" size={14} color={colors.accent} />
-            <Text style={styles.projectIndicatorText}>{projectName}</Text>
-            <Ionicons name="chevron-down" size={14} color="white" />
-          </TouchableOpacity>
-        )}
-
-        {/* Captured images bar */}
-        {renderCapturedBar()}
-
-        {/* Bottom controls */}
-        <View style={styles.bottomBar}>
-          <TouchableOpacity style={styles.galleryButton} onPress={pickFromGallery}>
-            <Ionicons name="images" size={28} color="white" />
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.captureButton} onPress={takePicture}>
-            <View style={styles.captureInner} />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.flipButton}
-            onPress={() => setFacing(f => f === 'back' ? 'front' : 'back')}
-          >
-            <Ionicons name="camera-reverse" size={28} color="white" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Back button – at the very bottom for thumb reach */}
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-          <Ionicons name="chevron-back" size={26} color="white" />
-          <Text style={styles.backButtonText}>Zurück</Text>
         </TouchableOpacity>
-      </View>
+      )}
 
       {/* Project Picker Modal */}
       {renderProjectPicker()}
 
-      {/* Toast notification - dismissable by touch */}
+      {/* Toast notification */}
       {toast && (
         <TouchableOpacity
           style={styles.toastTouchArea}
@@ -877,54 +760,139 @@ export default function CameraScreen({ navigation, route }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bgPrimary, alignItems: 'center', justifyContent: 'center', gap: 16 },
-  cameraContainer: { flex: 1, backgroundColor: 'black' },
-  camera: { flex: 1 },
-
-  // Focus ring overlay
-  focusRing: {
-    position: 'absolute', width: 64, height: 64, borderRadius: 32,
-    borderWidth: 2, borderColor: '#ffd700',
+  // ---- Shooter home screen ----
+  shooterContainer: {
+    flex: 1,
+    backgroundColor: colors.bgPrimary,
+  },
+  shooterHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: Platform.OS === 'android' ? 24 : 56,
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  shooterHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  shooterHeaderBack: {
+    color: colors.textPrimary,
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  gpsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: colors.bgSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  gpsBtnActive: {
+    backgroundColor: 'rgba(34, 197, 94, 0.12)',
+    borderColor: 'rgba(34, 197, 94, 0.4)',
+  },
+  gpsBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textTertiary,
+  },
+  gpsBtnTextActive: {
+    color: '#22c55e',
+  },
+  shooterBody: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 28,
+    paddingHorizontal: 32,
+    paddingBottom: 40,
+  },
+  shooterProjectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 22,
+    backgroundColor: colors.bgSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+    maxWidth: '90%',
+  },
+  shooterProjectText: {
+    color: colors.textTertiary,
+    fontSize: 14,
+    flex: 1,
+  },
+  shooterProjectName: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '600',
+    flex: 1,
+  },
+  shooterCameraBtn: {
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 6,
+    shadowColor: colors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+  },
+  shooterCameraHint: {
+    color: colors.textTertiary,
+    fontSize: 13,
+    marginTop: -12,
+  },
+  shooterGalleryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.bgSecondary,
+  },
+  shooterGalleryText: {
+    color: colors.textSecondary,
+    fontSize: 15,
+    fontWeight: '500',
   },
 
-  // Top bar
-  topBar: { flexDirection: 'row', justifyContent: 'flex-end', paddingTop: 48, paddingHorizontal: 20 },
-  topRight: { flexDirection: 'row', gap: 10 },
-  topButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
-  topButtonActive: { backgroundColor: 'rgba(34, 197, 94, 0.3)' },
-
-  // Back button at bottom
-  backButton: {
-    position: 'absolute', bottom: 10, alignSelf: 'center',
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingVertical: 8, paddingHorizontal: 20,
-    backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 20,
-  },
-  backButtonText: { color: 'white', fontSize: 15, fontWeight: '500' },
-
-  // Project indicator
-  projectIndicator: { flexDirection: 'row', alignItems: 'center', alignSelf: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, marginTop: 12 },
-  projectIndicatorText: { color: 'white', fontSize: 13, fontWeight: '500' },
-
-  // Captured images bar
-  capturedBar: {
-    position: 'absolute', bottom: 165, left: 16, right: 16,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: 'rgba(0,0,0,0.75)', borderRadius: 12, padding: 10,
+  // Captured images bar (static, not in camera overlay)
+  capturedBarStatic: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.cardBg,
+    borderRadius: 12,
+    padding: 12,
+    marginHorizontal: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   capturedBarLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  capturedBarThumb: { width: 40, height: 40, borderRadius: 6 },
-  capturedBarText: { color: 'white', fontSize: 14, fontWeight: '500' },
-  capturedBarRight: { flexDirection: 'row', alignItems: 'center' },
+  capturedBarThumb: { width: 44, height: 44, borderRadius: 8 },
+  capturedBarText: { color: colors.textPrimary, fontSize: 14, fontWeight: '600' },
+  capturedBarRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   capturedBarAction: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   capturedBarActionText: { color: colors.accent, fontSize: 14, fontWeight: '500' },
-
-  // Bottom bar (moved up to leave room for back button)
-  bottomBar: { position: 'absolute', bottom: 70, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 40 },
-  captureButton: { width: 76, height: 76, borderRadius: 38, borderWidth: 4, borderColor: 'white', padding: 4 },
-  captureInner: { flex: 1, borderRadius: 34, backgroundColor: 'white' },
-  galleryButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
-  flipButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
 
   // Preview container
   previewContainer: { flex: 1, backgroundColor: 'black' },
@@ -1019,11 +987,6 @@ const styles = StyleSheet.create({
     borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12,
     fontSize: 16, color: colors.textPrimary,
   },
-
-  // Permission
-  permissionText: { color: colors.textPrimary, fontSize: 16 },
-  permissionButton: { backgroundColor: colors.accent, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10 },
-  permissionButtonText: { color: 'white', fontSize: 15, fontWeight: '600' },
 
   // Project picker modal
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },

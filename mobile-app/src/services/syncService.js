@@ -20,12 +20,28 @@ const ensureCacheDirs = async () => {
 export const syncMetadata = async (onProjectFound = null) => {
   try {
     if (onProjectFound) {
-      // Progressive sync: clear old data, then stream projects one by one
-      await clearCachedProjects();
+      // Progressive sync: upsert each project as it arrives.
+      // IMPORTANT: we do NOT call clearCachedProjects() before the network
+      // requests complete.  If the fetch fails or the user has no internet,
+      // clearing first would leave cached_projects empty and the next app open
+      // would show a blank list.  Instead we use INSERT OR REPLACE (upsert)
+      // so existing rows are updated in-place.  After a fully successful fetch
+      // we remove any stale rows (projects deleted from Drive).
+      const fetchedIds = new Set();
       const projects = await fetchProjects(async (project) => {
         await cacheProject(project);
+        fetchedIds.add(String(project.id));
         onProjectFound(project);
       });
+
+      // Purge stale projects (deleted from Drive) from the local cache
+      const allCached = await getCachedProjects();
+      const stale = allCached.filter(p => !fetchedIds.has(String(p.id)));
+      if (stale.length > 0) {
+        // Only clear-and-rewrite when we actually found stale rows
+        await clearCachedProjects();
+        for (const p of projects) await cacheProject(p);
+      }
 
       // Also sync tags
       const data = await fetchSyncData(true); // tagsOnly
