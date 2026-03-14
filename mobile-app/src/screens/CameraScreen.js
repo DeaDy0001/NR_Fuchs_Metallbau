@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Image, ScrollView,
-  FlatList, Modal, TextInput, Animated, KeyboardAvoidingView, Platform,
+  Modal, TextInput, Animated, KeyboardAvoidingView, Platform,
   ActivityIndicator,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -21,7 +21,6 @@ import { createProject } from '../services/api';
 import { processUploadQueue } from '../services/uploadQueue';
 
 // ─── Screen States ────────────────────────────────────────────────────────────
-// SHOOTER  : default – GPS toggle, camera button, gallery button
 // CONFIRM  : full-screen photo preview with X / ✓
 // WORKSPACE: list of all captured photos with inline editing + project notes
 // ─────────────────────────────────────────────────────────────────────────────
@@ -31,10 +30,7 @@ export default function CameraScreen({ navigation, route }) {
   const { refreshQueueCount } = useApp();
 
   // ── Screen state machine ──────────────────────────────────────────────────
-  const [screenState, setScreenState] = useState('SHOOTER'); // 'SHOOTER' | 'CONFIRM' | 'WORKSPACE'
-
-  // ── GPS ───────────────────────────────────────────────────────────────────
-  const [gpsEnabled, setGpsEnabled] = useState(false);
+  const [screenState, setScreenState] = useState('WORKSPACE'); // 'CONFIRM' | 'WORKSPACE'
 
   // ── CONFIRM state ─────────────────────────────────────────────────────────
   const [pendingPhoto, setPendingPhoto] = useState(null); // { uri, file_name, mime_type, gps_data, captured_at }
@@ -46,6 +42,11 @@ export default function CameraScreen({ navigation, route }) {
   const [projectFolderId, setProjectFolderId] = useState(null);
   const [projectNotes, setProjectNotes] = useState('');
   const sessionSaveTimer = useRef(null);
+
+  // ── Project notes / checklist ─────────────────────────────────────────────
+  const [notesMode, setNotesMode] = useState('text'); // 'text' | 'checklist'
+  const [checklistItems, setChecklistItems] = useState([]); // [{id, text, checked}]
+  const [newCheckItemText, setNewCheckItemText] = useState('');
 
   // ── Project picker ────────────────────────────────────────────────────────
   const [showProjectPicker, setShowProjectPicker] = useState(false);
@@ -87,7 +88,6 @@ export default function CameraScreen({ navigation, route }) {
 
   useEffect(() => {
     MediaLibrary.requestPermissionsAsync().catch(() => {});
-    checkLocationPermission();
   }, []);
 
   const loadWorkspace = async () => {
@@ -97,34 +97,35 @@ export default function CameraScreen({ navigation, route }) {
       setProjectId(session.project_id || null);
       setProjectName(session.project_name || null);
       setProjectFolderId(session.project_folder_id || null);
-      setProjectNotes(session.project_notes || '');
+      // Parse notes: may be plain text or checklist JSON
+      const raw = session.project_notes || '';
+      if (raw.startsWith('{"type":"checklist"')) {
+        try {
+          const parsed = JSON.parse(raw);
+          setNotesMode('checklist');
+          setChecklistItems(parsed.items || []);
+          setProjectNotes('');
+        } catch {
+          setNotesMode('text');
+          setProjectNotes(raw);
+          setChecklistItems([]);
+        }
+      } else {
+        setNotesMode('text');
+        setProjectNotes(raw);
+        setChecklistItems([]);
+      }
     }
-    if (imgs.length > 0 && screenState === 'SHOOTER') {
-      setScreenState('WORKSPACE');
-    }
+    // Always show WORKSPACE
+    setScreenState('WORKSPACE');
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // GPS
+  // GPS (read from settings, not from UI state)
   // ─────────────────────────────────────────────────────────────────────────
-  const checkLocationPermission = async () => {
-    try {
-      const { status } = await Location.getForegroundPermissionsAsync();
-      if (status === 'granted') setGpsEnabled(true);
-    } catch {}
-  };
-
-  const toggleGps = async () => {
-    if (gpsEnabled) { setGpsEnabled(false); return; }
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === 'granted') setGpsEnabled(true);
-      else alert('GPS nicht verfügbar', 'Standortzugriff wurde nicht erlaubt.');
-    } catch { alert('Fehler', 'GPS konnte nicht aktiviert werden.'); }
-  };
-
   const getCurrentLocation = async () => {
-    if (!gpsEnabled) return null;
+    const enabled = (await getSetting('gpsEnabled', 'false')) === 'true';
+    if (!enabled) return null;
     try {
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High, timeout: 5000 });
       const { latitude, longitude, altitude, accuracy } = loc.coords;
@@ -158,17 +159,17 @@ export default function CameraScreen({ navigation, route }) {
       });
       setScreenState('CONFIRM');
     } else {
-      // User cancelled native camera
+      // User cancelled native camera - return to WORKSPACE
       const imgs = await getWorkspaceImages();
       setWorkspaceImages(imgs);
-      setScreenState(imgs.length > 0 ? 'WORKSPACE' : 'SHOOTER');
+      setScreenState('WORKSPACE');
     }
   };
 
   const handleConfirm = async (keep) => {
     if (keep && pendingPhoto) {
-      const id = await addWorkspaceImage(pendingPhoto);
-      // Save to gallery if keepOriginal enabled (native camera shots need explicit save on some devices)
+      await addWorkspaceImage(pendingPhoto);
+      // Save to gallery if keepOriginal enabled
       try {
         const keepOrig = (await getSetting('keepOriginal', 'true')) === 'true';
         if (keepOrig) {
@@ -177,15 +178,16 @@ export default function CameraScreen({ navigation, route }) {
         }
       } catch {}
       setPendingPhoto(null);
-      // Immediately open camera again
-      setScreenState('SHOOTER'); // intermediate so launchCameraAsync has a clean state
-      await openNativeCamera();
+      // Return to WORKSPACE with updated image list
+      const imgs = await getWorkspaceImages();
+      setWorkspaceImages(imgs);
+      setScreenState('WORKSPACE');
     } else {
       // Discard
       setPendingPhoto(null);
       const imgs = await getWorkspaceImages();
       setWorkspaceImages(imgs);
-      setScreenState(imgs.length > 0 ? 'WORKSPACE' : 'SHOOTER');
+      setScreenState('WORKSPACE');
     }
   };
 
@@ -259,11 +261,14 @@ export default function CameraScreen({ navigation, route }) {
   // Session persistence (debounced for notes typing)
   // ─────────────────────────────────────────────────────────────────────────
   const persistSession = async (overrides = {}) => {
+    const notesStr = notesMode === 'checklist'
+      ? JSON.stringify({ type: 'checklist', items: checklistItems })
+      : projectNotes;
     await saveWorkspaceSession({
       project_id: projectId,
       project_name: projectName,
       project_folder_id: projectFolderId,
-      project_notes: projectNotes,
+      project_notes: notesStr,
       ...overrides,
     });
   };
@@ -272,6 +277,53 @@ export default function CameraScreen({ navigation, route }) {
     setProjectNotes(text);
     if (sessionSaveTimer.current) clearTimeout(sessionSaveTimer.current);
     sessionSaveTimer.current = setTimeout(() => persistSession({ project_notes: text }), 800);
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Project notes checklist
+  // ─────────────────────────────────────────────────────────────────────────
+  const toggleNotesMode = () => {
+    if (notesMode === 'text') {
+      // Convert text lines to checklist items
+      const items = projectNotes.split('\n')
+        .filter(l => l.trim())
+        .map((text, i) => ({ id: String(Date.now() + i), text: text.trim(), checked: false }));
+      setChecklistItems(items);
+      setNotesMode('checklist');
+      const serialized = JSON.stringify({ type: 'checklist', items });
+      persistSession({ project_notes: serialized });
+    } else {
+      // Convert checklist back to plain text
+      const text = checklistItems.map(item => item.text).join('\n');
+      setProjectNotes(text);
+      setChecklistItems([]);
+      setNotesMode('text');
+      persistSession({ project_notes: text });
+    }
+  };
+
+  const addChecklistItem = () => {
+    if (!newCheckItemText.trim()) return;
+    const item = { id: String(Date.now()), text: newCheckItemText.trim(), checked: false };
+    const newItems = [...checklistItems, item];
+    setChecklistItems(newItems);
+    setNewCheckItemText('');
+    const serialized = JSON.stringify({ type: 'checklist', items: newItems });
+    persistSession({ project_notes: serialized });
+  };
+
+  const toggleChecklistItem = (id) => {
+    const newItems = checklistItems.map(item => item.id === id ? { ...item, checked: !item.checked } : item);
+    setChecklistItems(newItems);
+    const serialized = JSON.stringify({ type: 'checklist', items: newItems });
+    persistSession({ project_notes: serialized });
+  };
+
+  const removeChecklistItem = (id) => {
+    const newItems = checklistItems.filter(item => item.id !== id);
+    setChecklistItems(newItems);
+    const serialized = JSON.stringify({ type: 'checklist', items: newItems });
+    persistSession({ project_notes: serialized });
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -303,9 +355,8 @@ export default function CameraScreen({ navigation, route }) {
         { text: 'Abbrechen', style: 'cancel' },
         { text: 'Löschen', style: 'destructive', onPress: async () => {
           await removeWorkspaceImage(img.id);
-          const remaining = workspaceImages.filter(i => i.id !== img.id);
-          setWorkspaceImages(remaining);
-          if (remaining.length === 0) setScreenState('SHOOTER');
+          setWorkspaceImages(prev => prev.filter(i => i.id !== img.id));
+          // Stay in WORKSPACE even when empty
         }},
       ]
     );
@@ -317,6 +368,7 @@ export default function CameraScreen({ navigation, route }) {
   const handleUpload = async () => {
     if (workspaceImages.length === 0) return;
     setUploading(true);
+    const countSnapshot = workspaceImages.length;
     try {
       for (const img of workspaceImages) {
         await addToUploadQueue(
@@ -329,17 +381,14 @@ export default function CameraScreen({ navigation, route }) {
           img.captured_at || new Date().toISOString()
         );
       }
-      // Save project notes as meta change if project is selected
-      if (projectId && projectFolderId && projectNotes.trim()) {
-        // (meta_change_queue handled by existing sync logic)
-      }
       await clearWorkspace();
       setWorkspaceImages([]);
-      setProjectId(null); setProjectName(null); setProjectFolderId(null); setProjectNotes('');
-      setScreenState('SHOOTER');
+      setProjectId(null); setProjectName(null); setProjectFolderId(null);
+      setProjectNotes(''); setChecklistItems([]); setNotesMode('text'); setNewCheckItemText('');
+      setScreenState('WORKSPACE');
       await refreshQueueCount();
       processUploadQueue();
-      showToast(`${workspaceImages.length} ${workspaceImages.length === 1 ? 'Bild wird' : 'Bilder werden'} hochgeladen`);
+      showToast(`${countSnapshot} ${countSnapshot === 1 ? 'Bild wird' : 'Bilder werden'} hochgeladen`);
     } catch (e) {
       showToast('Fehler: ' + e.message);
     } finally { setUploading(false); }
@@ -354,8 +403,9 @@ export default function CameraScreen({ navigation, route }) {
         { text: 'Alles löschen', style: 'destructive', onPress: async () => {
           await clearWorkspace();
           setWorkspaceImages([]);
-          setProjectId(null); setProjectName(null); setProjectFolderId(null); setProjectNotes('');
-          setScreenState('SHOOTER');
+          setProjectId(null); setProjectName(null); setProjectFolderId(null);
+          setProjectNotes(''); setChecklistItems([]); setNotesMode('text'); setNewCheckItemText('');
+          setScreenState('WORKSPACE');
         }},
       ]
     );
@@ -373,7 +423,7 @@ export default function CameraScreen({ navigation, route }) {
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ── RENDER: Project picker modal (shared across states) ───────────────────
+  // ── RENDER: Project picker modal ──────────────────────────────────────────
   // ─────────────────────────────────────────────────────────────────────────
   const renderProjectPicker = () => (
     <Modal visible={showProjectPicker} animationType="slide" transparent onRequestClose={() => setShowProjectPicker(false)}>
@@ -432,7 +482,7 @@ export default function CameraScreen({ navigation, route }) {
   );
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ── RENDER: Edit modal (title / notes)  ───────────────────────────────────
+  // ── RENDER: Edit modal (title / notes) ────────────────────────────────────
   // ─────────────────────────────────────────────────────────────────────────
   const renderEditModal = () => {
     if (!editingImage || !editField) return null;
@@ -510,36 +560,42 @@ export default function CameraScreen({ navigation, route }) {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ── STATE: WORKSPACE ──────────────────────────────────────────────────────
+  // ── STATE: WORKSPACE (default) ────────────────────────────────────────────
   // ─────────────────────────────────────────────────────────────────────────
-  if (screenState === 'WORKSPACE') {
-    return (
-      <View style={s.container}>
-        {/* Header */}
-        <View style={s.wsHeader}>
-          <Text style={s.wsHeaderTitle}>{workspaceImages.length} {workspaceImages.length === 1 ? 'Foto' : 'Fotos'}</Text>
+  return (
+    <View style={s.container}>
+      {/* Header */}
+      <View style={s.wsHeader}>
+        <Text style={s.wsHeaderTitle}>{workspaceImages.length} {workspaceImages.length === 1 ? 'Foto' : 'Fotos'}</Text>
+        {workspaceImages.length > 0 && (
           <TouchableOpacity style={s.discardBtn} onPress={handleDiscardAll}>
             <Ionicons name="trash-outline" size={18} color={colors.error} />
             <Text style={s.discardBtnText}>Löschen</Text>
           </TouchableOpacity>
-        </View>
+        )}
+      </View>
 
-        <ScrollView style={s.wsScroll} contentContainerStyle={s.wsScrollContent} keyboardShouldPersistTaps="handled">
-          {/* Project picker */}
-          <TouchableOpacity style={s.projectChip} onPress={openProjectPicker}>
-            <Ionicons name={projectName ? 'folder' : 'folder-outline'} size={18} color={projectName ? colors.accent : colors.textTertiary} />
-            <Text style={[s.projectChipText, projectName && s.projectChipActive]} numberOfLines={1}>
-              {projectName || 'Kein Projekt gewählt'}
-            </Text>
-            <Ionicons name="chevron-down" size={14} color={colors.textTertiary} />
-          </TouchableOpacity>
+      <ScrollView style={s.wsScroll} contentContainerStyle={s.wsScrollContent} keyboardShouldPersistTaps="handled">
+        {/* Project picker */}
+        <TouchableOpacity style={s.projectChip} onPress={openProjectPicker}>
+          <Ionicons name={projectName ? 'folder' : 'folder-outline'} size={18} color={projectName ? colors.accent : colors.textTertiary} />
+          <Text style={[s.projectChipText, projectName && s.projectChipActive]} numberOfLines={1}>
+            {projectName || 'Kein Projekt gewählt'}
+          </Text>
+          <Ionicons name="chevron-down" size={14} color={colors.textTertiary} />
+        </TouchableOpacity>
 
-          {/* Project notes */}
-          <View style={s.projectNotesBox}>
-            <View style={s.projectNotesLabelRow}>
-              <Ionicons name="document-text-outline" size={16} color={colors.textTertiary} />
-              <Text style={s.projectNotesLabel}>Projektnotizen</Text>
-            </View>
+        {/* Project notes */}
+        <View style={s.projectNotesBox}>
+          <View style={s.projectNotesLabelRow}>
+            <Ionicons name="document-text-outline" size={16} color={colors.textTertiary} />
+            <Text style={s.projectNotesLabel}>Projektnotizen</Text>
+            <TouchableOpacity style={s.notesModeBtn} onPress={toggleNotesMode}>
+              <Ionicons name={notesMode === 'checklist' ? 'text' : 'checkbox-outline'} size={15} color={colors.accent} />
+              <Text style={s.notesModeText}>{notesMode === 'checklist' ? 'Text' : 'Checkliste'}</Text>
+            </TouchableOpacity>
+          </View>
+          {notesMode === 'text' ? (
             <TextInput
               style={s.projectNotesInput}
               value={projectNotes}
@@ -549,57 +605,97 @@ export default function CameraScreen({ navigation, route }) {
               multiline
               textAlignVertical="top"
             />
-          </View>
-
-          {/* Photo list */}
-          <Text style={s.sectionLabel}>Fotos</Text>
-          {workspaceImages.map((img) => (
-            <View key={img.id} style={s.photoRow}>
-              <Image source={{ uri: img.uri }} style={s.photoThumb} />
-              <View style={s.photoMeta}>
-                {/* Title */}
-                <TouchableOpacity style={s.photoField} onPress={() => openEditModal(img, 'title')}>
-                  <Text style={s.photoTitle} numberOfLines={1}>
-                    {img.custom_title || img.file_name.replace(/\.[^.]+$/, '')}
+          ) : (
+            <View style={s.checklistContainer}>
+              {checklistItems.map(item => (
+                <View key={item.id} style={s.checklistItem}>
+                  <TouchableOpacity onPress={() => toggleChecklistItem(item.id)}>
+                    <Ionicons
+                      name={item.checked ? 'checkbox' : 'square-outline'}
+                      size={20}
+                      color={item.checked ? colors.accent : colors.textTertiary}
+                    />
+                  </TouchableOpacity>
+                  <Text style={[s.checklistItemText, item.checked && s.checklistItemChecked]}>
+                    {item.text}
                   </Text>
-                  <Ionicons name="pencil-outline" size={14} color={colors.textTertiary} />
-                </TouchableOpacity>
-                {/* Notes */}
-                <TouchableOpacity style={s.photoField} onPress={() => openEditModal(img, 'notes')}>
-                  <Text style={[s.photoNotes, !img.notes && s.photoNotesPlaceholder]} numberOfLines={2}>
-                    {img.notes || 'Notiz hinzufügen...'}
-                  </Text>
-                  <Ionicons name="document-text-outline" size={14} color={colors.textTertiary} />
-                </TouchableOpacity>
-                {/* GPS badge */}
-                {img.gps_data && (
-                  <View style={s.gpsBadge}>
-                    <Ionicons name="location" size={12} color="#22c55e" />
-                    <Text style={s.gpsBadgeText}>GPS</Text>
-                  </View>
-                )}
+                  <TouchableOpacity onPress={() => removeChecklistItem(item.id)}>
+                    <Ionicons name="close-circle-outline" size={17} color={colors.textTertiary} />
+                  </TouchableOpacity>
+                </View>
+              ))}
+              <View style={s.checklistAddRow}>
+                <TextInput
+                  style={s.checklistAddInput}
+                  value={newCheckItemText}
+                  onChangeText={setNewCheckItemText}
+                  placeholder="Punkt hinzufügen..."
+                  placeholderTextColor={colors.textTertiary}
+                  returnKeyType="done"
+                  onSubmitEditing={addChecklistItem}
+                />
+                {newCheckItemText.trim() ? (
+                  <TouchableOpacity onPress={addChecklistItem}>
+                    <Ionicons name="add-circle" size={24} color={colors.accent} />
+                  </TouchableOpacity>
+                ) : null}
               </View>
-              {/* Remove */}
-              <TouchableOpacity style={s.photoRemoveBtn} onPress={() => handleRemoveImage(img)}>
-                <Ionicons name="close-circle" size={22} color={colors.error} />
-              </TouchableOpacity>
             </View>
-          ))}
+          )}
+        </View>
 
-          {/* Add more photos */}
-          <View style={s.addMoreRow}>
-            <TouchableOpacity style={s.addMoreBtn} onPress={openNativeCamera}>
-              <Ionicons name="camera-outline" size={20} color={colors.textSecondary} />
-              <Text style={s.addMoreText}>Foto aufnehmen</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={s.addMoreBtn} onPress={pickFromGallery}>
-              <Ionicons name="images-outline" size={20} color={colors.textSecondary} />
-              <Text style={s.addMoreText}>Galerie</Text>
+        {/* Photo list */}
+        {workspaceImages.length > 0 && (
+          <Text style={s.sectionLabel}>Fotos</Text>
+        )}
+        {workspaceImages.map((img) => (
+          <View key={img.id} style={s.photoRow}>
+            <Image source={{ uri: img.uri }} style={s.photoThumb} />
+            <View style={s.photoMeta}>
+              {/* Title */}
+              <TouchableOpacity style={s.photoField} onPress={() => openEditModal(img, 'title')}>
+                <Text style={s.photoTitle} numberOfLines={1}>
+                  {img.custom_title || img.file_name.replace(/\.[^.]+$/, '')}
+                </Text>
+                <Ionicons name="pencil-outline" size={14} color={colors.textTertiary} />
+              </TouchableOpacity>
+              {/* Notes */}
+              <TouchableOpacity style={s.photoField} onPress={() => openEditModal(img, 'notes')}>
+                <Text style={[s.photoNotes, !img.notes && s.photoNotesPlaceholder]} numberOfLines={2}>
+                  {img.notes || 'Notiz hinzufügen...'}
+                </Text>
+                <Ionicons name="document-text-outline" size={14} color={colors.textTertiary} />
+              </TouchableOpacity>
+              {/* GPS badge */}
+              {img.gps_data && (
+                <View style={s.gpsBadge}>
+                  <Ionicons name="location" size={12} color="#22c55e" />
+                  <Text style={s.gpsBadgeText}>GPS</Text>
+                </View>
+              )}
+            </View>
+            {/* Remove */}
+            <TouchableOpacity style={s.photoRemoveBtn} onPress={() => handleRemoveImage(img)}>
+              <Ionicons name="close-circle" size={22} color={colors.error} />
             </TouchableOpacity>
           </View>
-        </ScrollView>
+        ))}
 
-        {/* Upload button */}
+        {/* Add more photos */}
+        <View style={s.addMoreRow}>
+          <TouchableOpacity style={s.addMoreBtn} onPress={openNativeCamera}>
+            <Ionicons name="camera-outline" size={20} color={colors.textSecondary} />
+            <Text style={s.addMoreText}>Foto aufnehmen</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={s.addMoreBtn} onPress={pickFromGallery}>
+            <Ionicons name="images-outline" size={20} color={colors.textSecondary} />
+            <Text style={s.addMoreText}>Galerie</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+
+      {/* Upload button */}
+      {workspaceImages.length > 0 && (
         <TouchableOpacity style={s.uploadBtn} onPress={handleUpload} disabled={uploading}>
           {uploading
             ? <ActivityIndicator color="white" />
@@ -611,59 +707,10 @@ export default function CameraScreen({ navigation, route }) {
               </>
           }
         </TouchableOpacity>
-
-        {renderProjectPicker()}
-        {renderEditModal()}
-
-        {toast && (
-          <Animated.View style={[s.toast, { opacity: toastOpacity }]}>
-            <Ionicons name="checkmark-circle-outline" size={18} color={colors.accent} />
-            <Text style={s.toastText}>{toast}</Text>
-          </Animated.View>
-        )}
-      </View>
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // ── STATE: SHOOTER (default) ──────────────────────────────────────────────
-  // ─────────────────────────────────────────────────────────────────────────
-  return (
-    <View style={s.container}>
-      {/* Header */}
-      <View style={s.shooterHeader}>
-        <Text style={s.shooterTitle}>Foto</Text>
-        <TouchableOpacity style={[s.gpsChip, gpsEnabled && s.gpsChipOn]} onPress={toggleGps}>
-          <Ionicons name={gpsEnabled ? 'location' : 'location-outline'} size={18} color={gpsEnabled ? '#22c55e' : colors.textTertiary} />
-          <Text style={[s.gpsChipText, gpsEnabled && s.gpsChipTextOn]}>GPS</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Body */}
-      <View style={s.shooterBody}>
-        <TouchableOpacity style={s.cameraBtn} onPress={openNativeCamera} activeOpacity={0.8}>
-          <Ionicons name="camera" size={60} color="white" />
-        </TouchableOpacity>
-        <Text style={s.cameraHint}>Tippen zum Fotografieren</Text>
-
-        <TouchableOpacity style={s.galleryBtn} onPress={pickFromGallery}>
-          <Ionicons name="images-outline" size={20} color={colors.textSecondary} />
-          <Text style={s.galleryBtnText}>Galerie öffnen</Text>
-        </TouchableOpacity>
-
-        {/* Chip if workspace already has images (after returning from somewhere) */}
-        {workspaceImages.length > 0 && (
-          <TouchableOpacity style={s.draftChip} onPress={() => setScreenState('WORKSPACE')}>
-            <Ionicons name="layers-outline" size={16} color={colors.accent} />
-            <Text style={s.draftChipText}>
-              {workspaceImages.length} {workspaceImages.length === 1 ? 'Foto im Entwurf' : 'Fotos im Entwurf'} – Bearbeiten
-            </Text>
-            <Ionicons name="chevron-forward" size={14} color={colors.accent} />
-          </TouchableOpacity>
-        )}
-      </View>
+      )}
 
       {renderProjectPicker()}
+      {renderEditModal()}
 
       {toast && (
         <Animated.View style={[s.toast, { opacity: toastOpacity }]}>
@@ -680,45 +727,6 @@ export default function CameraScreen({ navigation, route }) {
 // ─────────────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bgPrimary },
-
-  // ── SHOOTER ──────────────────────────────────────────────────────────────
-  shooterHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingTop: Platform.OS === 'android' ? 28 : 60,
-    paddingHorizontal: 20, paddingBottom: 14,
-    borderBottomWidth: 1, borderBottomColor: colors.border,
-  },
-  shooterTitle: { fontSize: 22, fontWeight: '700', color: colors.textPrimary },
-  gpsChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16,
-    backgroundColor: colors.bgSecondary, borderWidth: 1, borderColor: colors.border,
-  },
-  gpsChipOn: { backgroundColor: 'rgba(34,197,94,0.12)', borderColor: 'rgba(34,197,94,0.4)' },
-  gpsChipText: { fontSize: 13, fontWeight: '600', color: colors.textTertiary },
-  gpsChipTextOn: { color: '#22c55e' },
-
-  shooterBody: {
-    flex: 1, alignItems: 'center', justifyContent: 'center', gap: 28, paddingBottom: 60,
-  },
-  cameraBtn: {
-    width: 130, height: 130, borderRadius: 65, backgroundColor: colors.accent,
-    alignItems: 'center', justifyContent: 'center',
-    elevation: 8, shadowColor: colors.accent, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 14,
-  },
-  cameraHint: { color: colors.textTertiary, fontSize: 13, marginTop: -12 },
-  galleryBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingVertical: 12, paddingHorizontal: 24, borderRadius: 14,
-    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgSecondary,
-  },
-  galleryBtnText: { color: colors.textSecondary, fontSize: 15, fontWeight: '500' },
-  draftChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingVertical: 10, paddingHorizontal: 16, borderRadius: 20,
-    backgroundColor: 'rgba(59,130,246,0.1)', borderWidth: 1, borderColor: 'rgba(59,130,246,0.3)',
-  },
-  draftChipText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
 
   // ── CONFIRM ───────────────────────────────────────────────────────────────
   confirmContainer: { flex: 1, backgroundColor: 'black' },
@@ -762,8 +770,18 @@ const s = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border, padding: 12, gap: 8,
   },
   projectNotesLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  projectNotesLabel: { color: colors.textTertiary, fontSize: 13, fontWeight: '500' },
+  projectNotesLabel: { color: colors.textTertiary, fontSize: 13, fontWeight: '500', flex: 1 },
   projectNotesInput: { color: colors.textPrimary, fontSize: 14, minHeight: 72, textAlignVertical: 'top' },
+
+  notesModeBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 8, backgroundColor: 'rgba(59,130,246,0.1)', borderWidth: 1, borderColor: 'rgba(59,130,246,0.2)' },
+  notesModeText: { fontSize: 12, fontWeight: '600', color: colors.accent },
+
+  checklistContainer: { gap: 4 },
+  checklistItem: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
+  checklistItemText: { flex: 1, fontSize: 14, color: colors.textPrimary },
+  checklistItemChecked: { color: colors.textTertiary, textDecorationLine: 'line-through' },
+  checklistAddRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border },
+  checklistAddInput: { flex: 1, fontSize: 14, color: colors.textPrimary, paddingVertical: 4 },
 
   sectionLabel: { fontSize: 13, fontWeight: '600', color: colors.textTertiary, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 },
 

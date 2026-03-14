@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Switch, ActivityIndicator, Linking, AppState, Modal, KeyboardAvoidingView, Platform } from 'react-native';
 import * as IntentLauncher from 'expo-intent-launcher';
+import * as Location from 'expo-location';
 import { useDialog } from '../components/CustomDialog';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
@@ -26,6 +27,7 @@ export default function SettingsScreen({ navigation }) {
   const [maxResolution, setMaxResolution] = useState(1920);
   const [maxImageSizeKB, setMaxImageSizeKB] = useState(1024);
   const [keepOriginal, setKeepOriginal] = useState(true);
+  const [gpsEnabled, setGpsEnabled] = useState(false);
   const [lazyLoadImages, setLazyLoadImages] = useState(true);
   const [autoDeleteOld, setAutoDeleteOld] = useState(false);
   const [autoDeleteUnit, setAutoDeleteUnit] = useState('monate');   // 'tage' | 'monate' | 'jahre'
@@ -131,6 +133,7 @@ export default function SettingsScreen({ navigation }) {
     setMaxResolution(parseInt(await getSetting('maxImageResolution', '1920')));
     setMaxImageSizeKB(parseInt(await getSetting('maxImageSizeKB', '1024')));
     setKeepOriginal((await getSetting('keepOriginal', 'true')) === 'true');
+    setGpsEnabled((await getSetting('gpsEnabled', 'false')) === 'true');
     setLazyLoadImages((await getSetting('lazyLoadImages', 'true')) === 'true');
     setAutoDeleteOld((await getSetting('autoDeleteOld', 'false')) === 'true');
     setAutoDeleteUnit(await getSetting('autoDeleteUnit', 'monate'));
@@ -225,6 +228,23 @@ export default function SettingsScreen({ navigation }) {
       await updateUserName(nameInput.trim());
       setEditingName(false);
     }
+  };
+
+  const handleToggleGps = async (value) => {
+    if (value) {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          alert('GPS nicht verfügbar', 'Standortzugriff wurde nicht erlaubt. Bitte in den Systemeinstellungen aktivieren.');
+          return;
+        }
+      } catch {
+        alert('Fehler', 'GPS konnte nicht aktiviert werden.');
+        return;
+      }
+    }
+    setGpsEnabled(value);
+    await saveSetting('gpsEnabled', value);
   };
 
   const handleToggleWifi = async (value) => {
@@ -500,6 +520,23 @@ export default function SettingsScreen({ navigation }) {
           <Switch
             value={keepOriginal}
             onValueChange={async (v) => { setKeepOriginal(v); await saveSetting('keepOriginal', v); }}
+            trackColor={{ false: colors.bgTertiary, true: colors.accent }}
+            thumbColor="white"
+          />
+        </View>
+
+        <View style={styles.settingRow}>
+          <View style={styles.settingInfo}>
+            <Text style={styles.settingLabel}>GPS-Standort bei Fotos</Text>
+            <Text style={styles.settingDesc}>
+              {gpsEnabled
+                ? 'Standort wird beim Fotografieren gespeichert'
+                : 'Kein Standort wird bei Fotos gespeichert'}
+            </Text>
+          </View>
+          <Switch
+            value={gpsEnabled}
+            onValueChange={handleToggleGps}
             trackColor={{ false: colors.bgTertiary, true: colors.accent }}
             thumbColor="white"
           />
