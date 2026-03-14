@@ -285,7 +285,10 @@ export default function ProjectDetailScreen({ navigation, route }) {
       {/* FAB - Take photo */}
       <TouchableOpacity
         style={styles.fab}
-        onPress={() => navigation.navigate('CameraStack', { projectId, projectName, projectFolderId })}
+        onPress={() => navigation.navigate('Main', {
+          screen: 'Camera',
+          params: { presetProject: { id: projectId, name: projectName, folderId: projectFolderId } },
+        })}
       >
         <Ionicons name="camera" size={28} color="white" />
       </TouchableOpacity>

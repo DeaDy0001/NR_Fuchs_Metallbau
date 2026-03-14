@@ -168,6 +168,28 @@ const initTables = async () => {
       created_at TEXT DEFAULT (datetime('now')),
       uploaded_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS workspace_images (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      uri TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      mime_type TEXT DEFAULT 'image/jpeg',
+      custom_title TEXT,
+      notes TEXT,
+      gps_data TEXT,
+      captured_at TEXT,
+      sort_order INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS workspace_session (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      project_id TEXT,
+      project_name TEXT,
+      project_folder_id TEXT,
+      project_notes TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
   `);
 
   // Migrate: add columns that may be missing from older DB versions
@@ -812,4 +834,58 @@ export const cleanupOldImageChangeQueueItems = async () => {
       LIMIT 30
     )
   `);
+};
+
+// ============================================================
+// Workspace (Foto-Tab Entwurf) helpers
+// ============================================================
+
+export const getWorkspaceImages = async () => {
+  const db = await getDb();
+  return await db.getAllAsync('SELECT * FROM workspace_images ORDER BY sort_order ASC, id ASC');
+};
+
+export const addWorkspaceImage = async ({ uri, file_name, mime_type, gps_data, captured_at }) => {
+  const db = await getDb();
+  const countRow = await db.getFirstAsync('SELECT COUNT(*) as cnt FROM workspace_images');
+  const sortOrder = countRow?.cnt || 0;
+  const result = await db.runAsync(
+    'INSERT INTO workspace_images (uri, file_name, mime_type, gps_data, captured_at, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
+    [uri, file_name, mime_type || 'image/jpeg', gps_data || null, captured_at || null, sortOrder]
+  );
+  return result.lastInsertRowId;
+};
+
+export const updateWorkspaceImage = async (id, { custom_title, notes }) => {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE workspace_images SET custom_title = ?, notes = ? WHERE id = ?',
+    [custom_title ?? null, notes ?? null, id]
+  );
+};
+
+export const removeWorkspaceImage = async (id) => {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM workspace_images WHERE id = ?', [id]);
+};
+
+export const getWorkspaceSession = async () => {
+  const db = await getDb();
+  return await db.getFirstAsync('SELECT * FROM workspace_session WHERE id = 1');
+};
+
+export const saveWorkspaceSession = async ({ project_id, project_name, project_folder_id, project_notes }) => {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT OR REPLACE INTO workspace_session
+       (id, project_id, project_name, project_folder_id, project_notes, updated_at)
+     VALUES (1, ?, ?, ?, ?, datetime('now'))`,
+    [project_id ?? null, project_name ?? null, project_folder_id ?? null, project_notes ?? null]
+  );
+};
+
+export const clearWorkspace = async () => {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM workspace_images');
+  await db.runAsync('DELETE FROM workspace_session WHERE id = 1');
 };

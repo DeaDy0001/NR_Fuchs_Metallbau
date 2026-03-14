@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Image,
-  ActivityIndicator, FlatList, Dimensions, Modal, ScrollView, TextInput, Animated,
-  KeyboardAvoidingView, Platform,
+  View, Text, StyleSheet, TouchableOpacity, Image, ScrollView,
+  FlatList, Modal, TextInput, Animated, KeyboardAvoidingView, Platform,
+  ActivityIndicator,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useDialog } from '../components/CustomDialog';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -11,133 +12,383 @@ import * as MediaLibrary from 'expo-media-library';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme/colors';
 import { useApp } from '../contexts/AppContext';
-import { addToUploadQueue, getCachedProjects, getPendingProjects, addPendingProject, getSetting } from '../services/database';
+import {
+  addToUploadQueue, getCachedProjects, getPendingProjects, addPendingProject, getSetting,
+  getWorkspaceImages, addWorkspaceImage, updateWorkspaceImage, removeWorkspaceImage,
+  getWorkspaceSession, saveWorkspaceSession, clearWorkspace,
+} from '../services/database';
 import { createProject } from '../services/api';
 import { processUploadQueue } from '../services/uploadQueue';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+// ─── Screen States ────────────────────────────────────────────────────────────
+// SHOOTER  : default – GPS toggle, camera button, gallery button
+// CONFIRM  : full-screen photo preview with X / ✓
+// WORKSPACE: list of all captured photos with inline editing + project notes
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function CameraScreen({ navigation, route }) {
   const { alert } = useDialog();
   const { refreshQueueCount } = useApp();
-  const [capturedImages, setCapturedImages] = useState([]);
-  const [toast, setToast] = useState(null);
-  const toastOpacity = useRef(new Animated.Value(0)).current;
-  const [gpsEnabled, setGpsEnabled] = useState(false);
-  const [locationPermission, setLocationPermission] = useState(null);
-  const metadataInputRef = useRef(null);
 
-  // Project assignment
-  const [projectId, setProjectId] = useState(route.params?.projectId || null);
-  const [projectName, setProjectName] = useState(route.params?.projectName || null);
-  const [projectFolderId, setProjectFolderId] = useState(route.params?.projectFolderId || null);
+  // ── Screen state machine ──────────────────────────────────────────────────
+  const [screenState, setScreenState] = useState('SHOOTER'); // 'SHOOTER' | 'CONFIRM' | 'WORKSPACE'
+
+  // ── GPS ───────────────────────────────────────────────────────────────────
+  const [gpsEnabled, setGpsEnabled] = useState(false);
+
+  // ── CONFIRM state ─────────────────────────────────────────────────────────
+  const [pendingPhoto, setPendingPhoto] = useState(null); // { uri, file_name, mime_type, gps_data, captured_at }
+
+  // ── WORKSPACE state ───────────────────────────────────────────────────────
+  const [workspaceImages, setWorkspaceImages] = useState([]);
+  const [projectId, setProjectId] = useState(null);
+  const [projectName, setProjectName] = useState(null);
+  const [projectFolderId, setProjectFolderId] = useState(null);
+  const [projectNotes, setProjectNotes] = useState('');
+  const sessionSaveTimer = useRef(null);
+
+  // ── Project picker ────────────────────────────────────────────────────────
   const [showProjectPicker, setShowProjectPicker] = useState(false);
-  const [projects, setProjects] = useState([]);
-  const [pendingProjects, setPendingProjects] = useState([]);
-  const [projectSearchText, setProjectSearchText] = useState('');
+  const [pickerProjects, setPickerProjects] = useState([]);
+  const [pickerPending, setPickerPending] = useState([]);
+  const [pickerSearch, setPickerSearch] = useState('');
   const [newProjectName, setNewProjectName] = useState('');
   const [creatingProject, setCreatingProject] = useState(false);
 
-  // Preview gallery
-  const [showPreviewGallery, setShowPreviewGallery] = useState(false);
-  const [selectedPreviewIndex, setSelectedPreviewIndex] = useState(0);
+  // ── Image editing modal ───────────────────────────────────────────────────
+  const [editingImage, setEditingImage] = useState(null);  // workspace image row
+  const [editField, setEditField] = useState(null);        // 'title' | 'notes'
+  const [editValue, setEditValue] = useState('');
+  const editInputRef = useRef(null);
 
-  // Per-image metadata editing
-  const [editingField, setEditingField] = useState(null); // 'title' | 'notes' | null
-  const [editFieldValue, setEditFieldValue] = useState('');
+  // ── Toast ─────────────────────────────────────────────────────────────────
+  const [toast, setToast] = useState(null);
+  const toastOpacity = useRef(new Animated.Value(0)).current;
 
-  // Load projects for picker
-  const loadProjects = async () => {
+  // ── Uploading indicator ───────────────────────────────────────────────────
+  const [uploading, setUploading] = useState(false);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Lifecycle: load workspace from SQLite when tab gains focus
+  // ─────────────────────────────────────────────────────────────────────────
+  useFocusEffect(
+    useCallback(() => {
+      loadWorkspace();
+      // If another screen passes a preset project (e.g. ProjectDetailScreen)
+      if (route.params?.presetProject) {
+        const p = route.params.presetProject;
+        setProjectId(p.id);
+        setProjectName(p.name);
+        setProjectFolderId(p.folderId);
+        navigation.setParams({ presetProject: null });
+      }
+    }, [route.params?.presetProject])
+  );
+
+  useEffect(() => {
+    MediaLibrary.requestPermissionsAsync().catch(() => {});
+    checkLocationPermission();
+  }, []);
+
+  const loadWorkspace = async () => {
+    const [imgs, session] = await Promise.all([getWorkspaceImages(), getWorkspaceSession()]);
+    setWorkspaceImages(imgs);
+    if (session) {
+      setProjectId(session.project_id || null);
+      setProjectName(session.project_name || null);
+      setProjectFolderId(session.project_folder_id || null);
+      setProjectNotes(session.project_notes || '');
+    }
+    if (imgs.length > 0 && screenState === 'SHOOTER') {
+      setScreenState('WORKSPACE');
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // GPS
+  // ─────────────────────────────────────────────────────────────────────────
+  const checkLocationPermission = async () => {
     try {
-      const [cached, pending] = await Promise.all([getCachedProjects(), getPendingProjects()]);
-      setProjects(cached);
-      setPendingProjects(pending);
+      const { status } = await Location.getForegroundPermissionsAsync();
+      if (status === 'granted') setGpsEnabled(true);
     } catch {}
   };
 
-  const openProjectPicker = () => {
-    loadProjects();
+  const toggleGps = async () => {
+    if (gpsEnabled) { setGpsEnabled(false); return; }
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') setGpsEnabled(true);
+      else alert('GPS nicht verfügbar', 'Standortzugriff wurde nicht erlaubt.');
+    } catch { alert('Fehler', 'GPS konnte nicht aktiviert werden.'); }
+  };
+
+  const getCurrentLocation = async () => {
+    if (!gpsEnabled) return null;
+    try {
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High, timeout: 5000 });
+      const { latitude, longitude, altitude, accuracy } = loc.coords;
+      if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+      return JSON.stringify({ latitude, longitude, altitude, accuracy });
+    } catch { return null; }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Camera
+  // ─────────────────────────────────────────────────────────────────────────
+  const openNativeCamera = async () => {
+    const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 1, exif: true });
+
+    if (!result.canceled && result.assets?.length > 0) {
+      const asset = result.assets[0];
+      const gps_data = await getCurrentLocation();
+      let capturedAt = null;
+      if (asset.exif) {
+        const ds = asset.exif.DateTimeOriginal || asset.exif.DateTime || asset.exif.DateTimeDigitized;
+        if (ds) {
+          try { capturedAt = new Date(ds.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3').replace(' ', 'T')).toISOString(); } catch {}
+        }
+      }
+      setPendingPhoto({
+        uri: asset.uri,
+        file_name: `photo_${Date.now()}.jpg`,
+        mime_type: 'image/jpeg',
+        gps_data,
+        captured_at: capturedAt || new Date().toISOString(),
+      });
+      setScreenState('CONFIRM');
+    } else {
+      // User cancelled native camera
+      const imgs = await getWorkspaceImages();
+      setWorkspaceImages(imgs);
+      setScreenState(imgs.length > 0 ? 'WORKSPACE' : 'SHOOTER');
+    }
+  };
+
+  const handleConfirm = async (keep) => {
+    if (keep && pendingPhoto) {
+      const id = await addWorkspaceImage(pendingPhoto);
+      // Save to gallery if keepOriginal enabled (native camera shots need explicit save on some devices)
+      try {
+        const keepOrig = (await getSetting('keepOriginal', 'true')) === 'true';
+        if (keepOrig) {
+          const { status } = await MediaLibrary.getPermissionsAsync();
+          if (status === 'granted') await MediaLibrary.saveToLibraryAsync(pendingPhoto.uri).catch(() => {});
+        }
+      } catch {}
+      setPendingPhoto(null);
+      // Immediately open camera again
+      setScreenState('SHOOTER'); // intermediate so launchCameraAsync has a clean state
+      await openNativeCamera();
+    } else {
+      // Discard
+      setPendingPhoto(null);
+      const imgs = await getWorkspaceImages();
+      setWorkspaceImages(imgs);
+      setScreenState(imgs.length > 0 ? 'WORKSPACE' : 'SHOOTER');
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Gallery picker
+  // ─────────────────────────────────────────────────────────────────────────
+  const pickFromGallery = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1, allowsMultipleSelection: true });
+    if (!result.canceled && result.assets?.length > 0) {
+      const gps_data = await getCurrentLocation();
+      for (const asset of result.assets) {
+        await addWorkspaceImage({
+          uri: asset.uri,
+          file_name: asset.fileName || `gallery_${Date.now()}.jpg`,
+          mime_type: asset.mimeType || 'image/jpeg',
+          gps_data,
+          captured_at: new Date().toISOString(),
+        });
+      }
+      const imgs = await getWorkspaceImages();
+      setWorkspaceImages(imgs);
+      setScreenState('WORKSPACE');
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Project picker
+  // ─────────────────────────────────────────────────────────────────────────
+  const openProjectPicker = async () => {
+    const [cached, pending] = await Promise.all([getCachedProjects(), getPendingProjects()]);
+    setPickerProjects(cached);
+    setPickerPending(pending);
+    setPickerSearch('');
     setNewProjectName('');
-    setProjectSearchText('');
     setShowProjectPicker(true);
   };
 
-  // Combine cached and pending projects, filter by search
-  const allProjects = [
-    ...projects,
-    ...pendingProjects
-      .filter(pp => !projects.some(p => p.folder_id === pp.folder_id))
-      .map(pp => ({
-        id: pp.folder_id || `pending_${pp.id}`,
-        folder_name: pp.folder_name,
-        folder_id: pp.folder_id,
-        color: '#6b7280',
-        image_count: 0,
-        isPending: true,
-      })),
-  ];
-
-  const filteredPickerProjects = allProjects.filter(p => {
-    if (!projectSearchText) return true;
-    return p.folder_name.toLowerCase().includes(projectSearchText.toLowerCase());
-  });
-
-  const selectProject = (project) => {
-    if (project) {
-      setProjectId(project.id);
-      setProjectName(project.folder_name);
-      setProjectFolderId(project.folder_id);
-    } else {
-      setProjectId(null);
-      setProjectName(null);
-      setProjectFolderId(null);
-    }
+  const selectProject = async (project) => {
+    const id = project?.id ?? null;
+    const name = project?.folder_name ?? null;
+    const folderId = project?.folder_id ?? null;
+    setProjectId(id);
+    setProjectName(name);
+    setProjectFolderId(folderId);
     setShowProjectPicker(false);
+    await persistSession({ project_id: id, project_name: name, project_folder_id: folderId });
   };
 
   const handleCreateProject = async () => {
     const name = newProjectName.trim();
     if (!name) return;
-
     setCreatingProject(true);
     try {
       const result = await createProject(name);
-      // Also add as pending project so it shows as "Unbestätigt" in Projekte tab
       await addPendingProject(name, result.folder_id);
-      selectProject({
-        id: result.id,
-        folder_name: result.folder_name,
-        folder_id: result.folder_id,
-      });
+      await selectProject({ id: result.id, folder_name: result.folder_name, folder_id: result.folder_id });
       setNewProjectName('');
-    } catch (error) {
-      alert('Fehler', 'Projekt konnte nicht erstellt werden: ' + error.message);
-    } finally {
-      setCreatingProject(false);
-    }
+    } catch (e) {
+      alert('Fehler', 'Projekt konnte nicht erstellt werden: ' + e.message);
+    } finally { setCreatingProject(false); }
   };
 
-  // ---- Project Picker Modal ----
+  const allPickerProjects = [
+    ...pickerProjects,
+    ...pickerPending
+      .filter(pp => !pickerProjects.some(p => p.folder_id === pp.folder_id))
+      .map(pp => ({ id: pp.folder_id || `pending_${pp.id}`, folder_name: pp.folder_name, folder_id: pp.folder_id, color: '#6b7280', image_count: 0, isPending: true })),
+  ].filter(p => !pickerSearch || p.folder_name.toLowerCase().includes(pickerSearch.toLowerCase()));
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Session persistence (debounced for notes typing)
+  // ─────────────────────────────────────────────────────────────────────────
+  const persistSession = async (overrides = {}) => {
+    await saveWorkspaceSession({
+      project_id: projectId,
+      project_name: projectName,
+      project_folder_id: projectFolderId,
+      project_notes: projectNotes,
+      ...overrides,
+    });
+  };
+
+  const handleProjectNotesChange = (text) => {
+    setProjectNotes(text);
+    if (sessionSaveTimer.current) clearTimeout(sessionSaveTimer.current);
+    sessionSaveTimer.current = setTimeout(() => persistSession({ project_notes: text }), 800);
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Image editing
+  // ─────────────────────────────────────────────────────────────────────────
+  const openEditModal = (img, field) => {
+    setEditingImage(img);
+    setEditField(field);
+    setEditValue(field === 'title' ? (img.custom_title || img.file_name.replace(/\.[^.]+$/, '')) : (img.notes || ''));
+  };
+
+  const saveEditModal = async () => {
+    if (!editingImage) return;
+    const updates = editField === 'title'
+      ? { custom_title: editValue.trim() || null, notes: editingImage.notes }
+      : { custom_title: editingImage.custom_title, notes: editValue.trim() || null };
+    await updateWorkspaceImage(editingImage.id, updates);
+    setWorkspaceImages(prev => prev.map(img => img.id === editingImage.id ? { ...img, ...updates } : img));
+    setEditingImage(null);
+    setEditField(null);
+    setEditValue('');
+  };
+
+  const handleRemoveImage = async (img) => {
+    alert(
+      'Foto löschen?',
+      img.custom_title || img.file_name,
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        { text: 'Löschen', style: 'destructive', onPress: async () => {
+          await removeWorkspaceImage(img.id);
+          const remaining = workspaceImages.filter(i => i.id !== img.id);
+          setWorkspaceImages(remaining);
+          if (remaining.length === 0) setScreenState('SHOOTER');
+        }},
+      ]
+    );
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Upload / clear workspace
+  // ─────────────────────────────────────────────────────────────────────────
+  const handleUpload = async () => {
+    if (workspaceImages.length === 0) return;
+    setUploading(true);
+    try {
+      for (const img of workspaceImages) {
+        await addToUploadQueue(
+          img.uri, img.file_name, img.mime_type,
+          projectId, projectName, projectFolderId,
+          img.gps_data,
+          false,
+          img.custom_title || null,
+          img.notes || null,
+          img.captured_at || new Date().toISOString()
+        );
+      }
+      // Save project notes as meta change if project is selected
+      if (projectId && projectFolderId && projectNotes.trim()) {
+        // (meta_change_queue handled by existing sync logic)
+      }
+      await clearWorkspace();
+      setWorkspaceImages([]);
+      setProjectId(null); setProjectName(null); setProjectFolderId(null); setProjectNotes('');
+      setScreenState('SHOOTER');
+      await refreshQueueCount();
+      processUploadQueue();
+      showToast(`${workspaceImages.length} ${workspaceImages.length === 1 ? 'Bild wird' : 'Bilder werden'} hochgeladen`);
+    } catch (e) {
+      showToast('Fehler: ' + e.message);
+    } finally { setUploading(false); }
+  };
+
+  const handleDiscardAll = () => {
+    alert(
+      'Alle Fotos verwerfen?',
+      `${workspaceImages.length} ${workspaceImages.length === 1 ? 'Foto' : 'Fotos'} und alle Notizen werden gelöscht.`,
+      [
+        { text: 'Abbrechen', style: 'cancel' },
+        { text: 'Alles löschen', style: 'destructive', onPress: async () => {
+          await clearWorkspace();
+          setWorkspaceImages([]);
+          setProjectId(null); setProjectName(null); setProjectFolderId(null); setProjectNotes('');
+          setScreenState('SHOOTER');
+        }},
+      ]
+    );
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Toast
+  // ─────────────────────────────────────────────────────────────────────────
+  const showToast = (msg) => {
+    setToast(msg);
+    Animated.timing(toastOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+    setTimeout(() => {
+      Animated.timing(toastOpacity, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => setToast(null));
+    }, 3000);
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ── RENDER: Project picker modal (shared across states) ───────────────────
+  // ─────────────────────────────────────────────────────────────────────────
   const renderProjectPicker = () => (
-    <Modal
-      visible={showProjectPicker}
-      animationType="slide"
-      transparent={true}
-      onRequestClose={() => setShowProjectPicker(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Projekt zuordnen</Text>
+    <Modal visible={showProjectPicker} animationType="slide" transparent onRequestClose={() => setShowProjectPicker(false)}>
+      <View style={s.modalOverlay}>
+        <View style={s.modalSheet}>
+          <View style={s.modalHeader}>
+            <Text style={s.modalTitle}>Projekt wählen</Text>
             <TouchableOpacity onPress={() => setShowProjectPicker(false)}>
               <Ionicons name="close" size={24} color={colors.textPrimary} />
             </TouchableOpacity>
           </View>
-
-          {/* Create new project */}
-          <View style={styles.newProjectRow}>
+          {/* New project */}
+          <View style={s.newProjectRow}>
             <TextInput
-              style={styles.newProjectInput}
+              style={s.newProjectInput}
               placeholder="Neues Projekt erstellen..."
               placeholderTextColor={colors.textTertiary}
               value={newProjectName}
@@ -146,924 +397,437 @@ export default function CameraScreen({ navigation, route }) {
               returnKeyType="done"
             />
             {newProjectName.trim() ? (
-              <TouchableOpacity
-                style={styles.newProjectBtn}
-                onPress={handleCreateProject}
-                disabled={creatingProject}
-              >
-                {creatingProject ? (
-                  <ActivityIndicator size="small" color="white" />
-                ) : (
-                  <Ionicons name="add" size={22} color="white" />
-                )}
+              <TouchableOpacity style={s.newProjectBtn} onPress={handleCreateProject} disabled={creatingProject}>
+                {creatingProject ? <ActivityIndicator size="small" color="white" /> : <Ionicons name="add" size={22} color="white" />}
               </TouchableOpacity>
             ) : null}
           </View>
-
           {/* Search */}
-          <View style={styles.pickerSearchContainer}>
+          <View style={s.searchRow}>
             <Ionicons name="search" size={16} color={colors.textTertiary} />
-            <TextInput
-              style={styles.pickerSearchInput}
-              placeholder="Projekt suchen..."
-              placeholderTextColor={colors.textTertiary}
-              value={projectSearchText}
-              onChangeText={setProjectSearchText}
-            />
-            {projectSearchText ? (
-              <TouchableOpacity onPress={() => setProjectSearchText('')}>
-                <Ionicons name="close-circle" size={18} color={colors.textTertiary} />
-              </TouchableOpacity>
-            ) : null}
+            <TextInput style={s.searchInput} placeholder="Suchen..." placeholderTextColor={colors.textTertiary} value={pickerSearch} onChangeText={setPickerSearch} />
+            {pickerSearch ? <TouchableOpacity onPress={() => setPickerSearch('')}><Ionicons name="close-circle" size={18} color={colors.textTertiary} /></TouchableOpacity> : null}
           </View>
-
-          <TouchableOpacity
-            style={[styles.projectPickerItem, !projectId && styles.projectPickerItemActive]}
-            onPress={() => selectProject(null)}
-          >
+          {/* No project option */}
+          <TouchableOpacity style={[s.pickerItem, !projectId && s.pickerItemActive]} onPress={() => selectProject(null)}>
             <Ionicons name="close-circle-outline" size={20} color={colors.textTertiary} />
-            <Text style={styles.projectPickerText}>Kein Projekt</Text>
+            <Text style={s.pickerItemText}>Kein Projekt</Text>
           </TouchableOpacity>
-
-          <ScrollView style={styles.projectPickerList}>
-            {filteredPickerProjects.map(p => (
-              <TouchableOpacity
-                key={p.id}
-                style={[
-                  styles.projectPickerItem,
-                  projectId === p.id && styles.projectPickerItemActive,
-                ]}
-                onPress={() => selectProject(p)}
-              >
-                <View style={[styles.projectPickerColor, { backgroundColor: p.color || colors.accent }]} />
+          <ScrollView style={{ maxHeight: 380 }}>
+            {allPickerProjects.map(p => (
+              <TouchableOpacity key={p.id} style={[s.pickerItem, projectId === p.id && s.pickerItemActive]} onPress={() => selectProject(p)}>
+                <View style={[s.pickerDot, { backgroundColor: p.color || colors.accent }]} />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.projectPickerText}>{p.folder_name}</Text>
-                  {p.isPending && (
-                    <Text style={styles.pendingBadgeText}>Unbestätigt</Text>
-                  )}
+                  <Text style={s.pickerItemText}>{p.folder_name}</Text>
+                  {p.isPending && <Text style={s.pendingLabel}>Unbestätigt</Text>}
                 </View>
-                <Text style={styles.projectPickerMeta}>{p.image_count || 0} Bilder</Text>
+                <Text style={s.pickerMeta}>{p.image_count || 0} Bilder</Text>
               </TouchableOpacity>
             ))}
-            {filteredPickerProjects.length === 0 && (
-              <Text style={styles.noProjectsHint}>Keine Projekte gefunden</Text>
-            )}
+            {allPickerProjects.length === 0 && <Text style={s.emptyHint}>Keine Projekte gefunden</Text>}
           </ScrollView>
         </View>
       </View>
     </Modal>
   );
 
-  // If opened with pickFromGallery, open gallery immediately
-  useEffect(() => {
-    if (route.params?.pickFromGallery) {
-      pickFromGallery();
+  // ─────────────────────────────────────────────────────────────────────────
+  // ── RENDER: Edit modal (title / notes)  ───────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  const renderEditModal = () => {
+    if (!editingImage || !editField) return null;
+    const isNotes = editField === 'notes';
+    if (isNotes) {
+      return (
+        <Modal animationType="slide" onShow={() => setTimeout(() => editInputRef.current?.focus(), 300)}>
+          <View style={s.notesFullScreen}>
+            <View style={s.notesHeader}>
+              <TouchableOpacity onPress={() => { setEditingImage(null); setEditField(null); }}>
+                <Ionicons name="close" size={26} color={colors.textPrimary} />
+              </TouchableOpacity>
+              <Text style={s.notesTitle}>Notizen</Text>
+              <TouchableOpacity onPress={saveEditModal}>
+                <Ionicons name="checkmark-circle" size={28} color={colors.accent} />
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              ref={editInputRef}
+              style={s.notesInput}
+              value={editValue}
+              onChangeText={setEditValue}
+              placeholder="Notizen eingeben..."
+              placeholderTextColor={colors.textTertiary}
+              autoFocus multiline textAlignVertical="top"
+            />
+          </View>
+        </Modal>
+      );
     }
-  }, []);
-
-  // Pre-request MediaLibrary permission for "Original behalten" feature
-  useEffect(() => {
-    MediaLibrary.requestPermissionsAsync().catch(() => {});
-  }, []);
-
-  // Check GPS permission on mount
-  useEffect(() => {
-    checkLocationPermission();
-  }, []);
-
-  const checkLocationPermission = async () => {
-    try {
-      const { status } = await Location.getForegroundPermissionsAsync();
-      setLocationPermission(status);
-      if (status === 'granted') {
-        setGpsEnabled(true);
-      }
-    } catch {}
-  };
-
-  const enableGps = async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      setLocationPermission(status);
-      if (status === 'granted') {
-        setGpsEnabled(true);
-      } else {
-        alert('GPS nicht verfügbar', 'Standortzugriff wurde nicht erlaubt.');
-      }
-    } catch (error) {
-      alert('Fehler', 'GPS konnte nicht aktiviert werden.');
-    }
-  };
-
-  const getCurrentLocation = async () => {
-    if (!gpsEnabled) return null;
-    try {
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-        timeout: 5000,
-      });
-      const { latitude, longitude, altitude, accuracy } = location.coords;
-      if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
-        console.warn('[Fuchs] Invalid GPS coordinates:', latitude, longitude);
-        return null;
-      }
-      return { latitude, longitude, altitude, accuracy };
-    } catch (e) {
-      console.log('[Fuchs] GPS error:', e.message);
-      return null;
-    }
-  };
-
-  const pickFromGallery = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 1,
-      allowsMultipleSelection: true,
-    });
-
-    if (!result.canceled && result.assets?.length > 0) {
-      // Get GPS for gallery images too (current position)
-      const gpsData = await getCurrentLocation();
-      const newImages = result.assets.map(asset => ({
-        uri: asset.uri,
-        fileName: asset.fileName || `gallery_${Date.now()}_${Math.random().toString(36).substr(2, 6)}.jpg`,
-        mimeType: asset.mimeType || 'image/jpeg',
-        width: asset.width,
-        height: asset.height,
-        gps: gpsData,
-      }));
-      const nextIndex = capturedImages.length;
-      setCapturedImages(prev => [...prev, ...newImages]);
-      setSelectedPreviewIndex(nextIndex);
-      setShowPreviewGallery(true);
-    } else if (route.params?.pickFromGallery && capturedImages.length === 0) {
-      navigation.goBack();
-    }
-  };
-
-  // Open native camera - uses the phone's built-in camera app so all native
-  // features (focus, zoom, flash, etc.) work out of the box.
-  const openNativeCamera = async () => {
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['images'],
-      quality: 1,
-      exif: true,
-    });
-
-    if (!result.canceled && result.assets?.length > 0) {
-      const gpsData = await getCurrentLocation();
-      const asset = result.assets[0];
-
-      // Extract capture date from EXIF (will be lost during compression)
-      let capturedAt = null;
-      if (asset.exif) {
-        const dateStr = asset.exif.DateTimeOriginal || asset.exif.DateTime || asset.exif.DateTimeDigitized;
-        if (dateStr) {
-          try {
-            // EXIF format: "2024:03:15 14:30:00" → ISO
-            const iso = dateStr.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3').replace(' ', 'T');
-            capturedAt = new Date(iso).toISOString();
-          } catch {}
-        }
-      }
-      if (!capturedAt) capturedAt = new Date().toISOString();
-
-      const newImage = {
-        uri: asset.uri,
-        fileName: `photo_${Date.now()}.jpg`,
-        mimeType: 'image/jpeg',
-        width: asset.width,
-        height: asset.height,
-        exif: asset.exif,
-        gps: gpsData,
-        capturedAt,
-        // The native camera already saves to camera roll - skip our keepOriginal logic
-        isFromNativeCamera: true,
-      };
-
-      const nextIndex = capturedImages.length;
-      setCapturedImages(prev => [...prev, newImage]);
-      setSelectedPreviewIndex(nextIndex);
-      setShowPreviewGallery(true);
-    }
-  };
-
-  const removeImage = (index) => {
-    setCapturedImages(prev => prev.filter((_, i) => i !== index));
-    if (selectedPreviewIndex >= capturedImages.length - 1 && selectedPreviewIndex > 0) {
-      setSelectedPreviewIndex(selectedPreviewIndex - 1);
-    }
-  };
-
-  const removeAllImages = () => {
-    alert(
-      'Alle Bilder verwerfen?',
-      `${capturedImages.length} ${capturedImages.length === 1 ? 'Bild' : 'Bilder'} werden gelöscht.`,
-      [
-        { text: 'Abbrechen', style: 'cancel' },
-        { text: 'Alle verwerfen', style: 'destructive', onPress: () => {
-          setCapturedImages([]);
-          setShowPreviewGallery(false);
-        }},
-      ]
+    return (
+      <Modal transparent animationType="slide" onShow={() => setTimeout(() => editInputRef.current?.focus(), 300)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <TouchableOpacity style={s.titleModalOverlay} activeOpacity={1} onPress={saveEditModal}>
+            <View style={s.titleModalSheet} onStartShouldSetResponder={() => true}>
+              <View style={s.titleModalHeader}>
+                <Text style={s.titleModalTitle}>Foto-Titel</Text>
+                <TouchableOpacity onPress={saveEditModal}><Ionicons name="checkmark-circle" size={28} color={colors.accent} /></TouchableOpacity>
+              </View>
+              <TextInput
+                ref={editInputRef}
+                style={s.titleInput}
+                value={editValue}
+                onChangeText={setEditValue}
+                placeholder="Titel eingeben..."
+                placeholderTextColor={colors.textTertiary}
+                autoFocus selectTextOnFocus returnKeyType="done" onSubmitEditing={saveEditModal}
+              />
+            </View>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
+      </Modal>
     );
   };
 
-  // Open an editing field for the current image
-  const openEditField = (field) => {
-    const currentImage = capturedImages[selectedPreviewIndex];
-    if (!currentImage) return;
-    if (field === 'title') {
-      setEditFieldValue(currentImage.customTitle || currentImage.fileName.replace(/\.[^.]+$/, ''));
-    } else {
-      setEditFieldValue(currentImage.notes || '');
-    }
-    setEditingField(field);
-  };
-
-  // Save the editing field and close
-  const saveEditField = () => {
-    if (editingField && capturedImages[selectedPreviewIndex]) {
-      setCapturedImages(prev => {
-        const updated = [...prev];
-        if (editingField === 'title') {
-          updated[selectedPreviewIndex] = { ...updated[selectedPreviewIndex], customTitle: editFieldValue.trim() || null };
-        } else {
-          updated[selectedPreviewIndex] = { ...updated[selectedPreviewIndex], notes: editFieldValue.trim() || null };
-        }
-        return updated;
-      });
-    }
-    setEditingField(null);
-    setEditFieldValue('');
-  };
-
-  // Helper to get basename without extension (for display)
-  const path = {
-    basename: (name, ext) => ext ? name.replace(new RegExp(ext.replace('.', '\\.') + '$'), '') : name,
-    extname: (name) => { const m = name.match(/\.[^.]+$/); return m ? m[0] : ''; },
-  };
-
-  const showToast = (message) => {
-    setToast(message);
-    Animated.timing(toastOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
-    setTimeout(() => {
-      Animated.timing(toastOpacity, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
-        setToast(null);
-      });
-    }, 3000);
-  };
-
-  const dismissToast = () => {
-    Animated.timing(toastOpacity, { toValue: 0, duration: 150, useNativeDriver: true }).start(() => {
-      setToast(null);
-    });
-  };
-
-  const handleUpload = async () => {
-    if (capturedImages.length === 0) return;
-
-    const count = capturedImages.length;
-
-    try {
-      // Save original to gallery - only for gallery picks (not native camera shots,
-      // which are already saved by the camera app itself).
-      const keepOriginal = (await getSetting('keepOriginal', 'true')) === 'true';
-      if (keepOriginal) {
-        let { status } = await MediaLibrary.getPermissionsAsync();
-        if (status !== 'granted') {
-          const result = await MediaLibrary.requestPermissionsAsync();
-          status = result.status;
-        }
-        if (status === 'granted') {
-          for (const img of capturedImages) {
-            if (img.fileName && img.fileName.startsWith('photo_') && !img.isFromNativeCamera) {
-              try { await MediaLibrary.saveToLibraryAsync(img.uri); } catch {}
-            }
-          }
-        }
-      }
-
-      // Always add to queue - non-blocking
-      for (const img of capturedImages) {
-        await addToUploadQueue(
-          img.uri, img.fileName, img.mimeType,
-          projectId, projectName, projectFolderId,
-          img.gps ? JSON.stringify(img.gps) : null,
-          false,
-          img.customTitle || null,
-          img.notes || null,
-          img.capturedAt || new Date().toISOString()
-        );
-      }
-
-      await refreshQueueCount();
-
-      // Clear images and go back to shooter screen
-      setCapturedImages([]);
-      setShowPreviewGallery(false);
-
-      // Show brief toast notification
-      const msg = projectName
-        ? `${count} ${count === 1 ? 'Bild wird' : 'Bilder werden'} zu "${projectName}" hochgeladen`
-        : `${count} ${count === 1 ? 'Bild wird' : 'Bilder werden'} hochgeladen`;
-      showToast(msg);
-
-      // Trigger queue processing in background
-      processUploadQueue();
-    } catch (error) {
-      console.error('Error queuing images:', error);
-      showToast('Fehler beim Einreihen: ' + error.message);
-    }
-  };
-
-  // ---- Preview Gallery (after capturing images) ----
-  if (showPreviewGallery && capturedImages.length > 0) {
-    const currentImage = capturedImages[selectedPreviewIndex] || capturedImages[0];
+  // ─────────────────────────────────────────────────────────────────────────
+  // ── STATE: CONFIRM ────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  if (screenState === 'CONFIRM' && pendingPhoto) {
     return (
-      <View style={styles.previewContainer}>
-        {/* Full image display */}
-        <Image source={{ uri: currentImage.uri }} style={styles.preview} resizeMode="contain" />
-
-        {/* Image counter */}
-        <View style={styles.imageCounter}>
-          <Text style={styles.imageCounterText}>
-            {selectedPreviewIndex + 1} / {capturedImages.length}
-          </Text>
-        </View>
-
-        {/* Thumbnail strip */}
-        {capturedImages.length > 1 && (
-          <View style={styles.thumbStrip}>
-            <FlatList
-              horizontal
-              data={capturedImages}
-              keyExtractor={(_, i) => String(i)}
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.thumbStripContent}
-              renderItem={({ item, index }) => (
-                <TouchableOpacity
-                  style={[styles.thumbItem, index === selectedPreviewIndex && styles.thumbItemActive]}
-                  onPress={() => setSelectedPreviewIndex(index)}
-                >
-                  <Image source={{ uri: item.uri }} style={styles.thumbImage} />
-                  <TouchableOpacity
-                    style={styles.thumbRemove}
-                    onPress={() => removeImage(index)}
-                  >
-                    <Ionicons name="close-circle" size={18} color={colors.error} />
-                  </TouchableOpacity>
-                </TouchableOpacity>
-              )}
-            />
-          </View>
-        )}
-
-        {/* Metadata buttons for current image */}
-        <View style={styles.metadataBar}>
-          <TouchableOpacity
-            style={[styles.metadataBtn, currentImage.customTitle && styles.metadataBtnActive]}
-            onPress={() => openEditField('title')}
-          >
-            <Ionicons name="pencil-outline" size={18} color={currentImage.customTitle ? colors.accent : colors.textSecondary} />
-            <Text
-              style={[styles.metadataBtnText, currentImage.customTitle && { color: colors.accent }]}
-              numberOfLines={1}
-            >
-              {currentImage.customTitle || 'Titel'}
-            </Text>
+      <View style={s.confirmContainer}>
+        <Image source={{ uri: pendingPhoto.uri }} style={s.confirmImage} resizeMode="contain" />
+        <View style={s.confirmBar}>
+          <TouchableOpacity style={s.confirmBtnDiscard} onPress={() => handleConfirm(false)}>
+            <Ionicons name="close" size={32} color="white" />
+            <Text style={s.confirmBtnLabel}>Verwerfen</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.metadataBtn, currentImage.notes && styles.metadataBtnActive]}
-            onPress={() => openEditField('notes')}
-          >
-            <Ionicons name="document-text-outline" size={18} color={currentImage.notes ? colors.accent : colors.textSecondary} />
-            <Text
-              style={[styles.metadataBtnText, currentImage.notes && { color: colors.accent }]}
-              numberOfLines={1}
-            >
-              {currentImage.notes || 'Notizen'}
-            </Text>
-          </TouchableOpacity>
-
-          {currentImage.gps && (
-            <View style={styles.metadataGpsBadge}>
-              <Ionicons name="location" size={14} color={colors.success || '#22c55e'} />
-              <Text style={styles.metadataGpsText}>GPS</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Metadata editing modal – Notizen: Vollbild, Titel: Bottom-Sheet */}
-        {editingField === 'notes' && (
-          <Modal
-            animationType="slide"
-            onShow={() => { setTimeout(() => metadataInputRef.current?.focus(), 300); }}
-          >
-            <View style={styles.notesFullScreen}>
-              <View style={styles.notesFullScreenHeader}>
-                <Text style={styles.notesFullScreenTitle}>Notizen</Text>
-                <TouchableOpacity onPress={saveEditField} style={styles.notesFullScreenSave}>
-                  <Ionicons name="checkmark-circle" size={28} color={colors.accent} />
-                </TouchableOpacity>
-              </View>
-              <TextInput
-                ref={metadataInputRef}
-                style={styles.notesFullScreenInput}
-                value={editFieldValue}
-                onChangeText={setEditFieldValue}
-                placeholder="Notizen eingeben..."
-                placeholderTextColor={colors.textTertiary}
-                autoFocus
-                multiline
-                textAlignVertical="top"
-              />
-            </View>
-          </Modal>
-        )}
-
-        {editingField === 'title' && (
-          <Modal
-            transparent
-            animationType="slide"
-            onShow={() => { setTimeout(() => metadataInputRef.current?.focus(), 300); }}
-          >
-            <KeyboardAvoidingView
-              style={{ flex: 1 }}
-              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            >
-              <TouchableOpacity style={styles.metadataModalOverlay} activeOpacity={1} onPress={saveEditField}>
-                <View style={styles.metadataModalContent} onStartShouldSetResponder={() => true}>
-                  <View style={styles.metadataModalHeader}>
-                    <Text style={styles.metadataModalTitle}>Bild-Titel</Text>
-                    <TouchableOpacity onPress={saveEditField}>
-                      <Ionicons name="checkmark-circle" size={28} color={colors.accent} />
-                    </TouchableOpacity>
-                  </View>
-                  <TextInput
-                    ref={metadataInputRef}
-                    style={styles.metadataModalInput}
-                    value={editFieldValue}
-                    onChangeText={setEditFieldValue}
-                    placeholder="Bildname eingeben..."
-                    placeholderTextColor={colors.textTertiary}
-                    autoFocus
-                    selectTextOnFocus
-                    returnKeyType="done"
-                    onSubmitEditing={saveEditField}
-                  />
-                </View>
-              </TouchableOpacity>
-            </KeyboardAvoidingView>
-          </Modal>
-        )}
-
-        {/* Action bar - single row with icons */}
-        <View style={styles.previewActionBar}>
-          {/* Discard */}
-          <TouchableOpacity style={styles.previewActionBtn} onPress={removeAllImages}>
-            <Ionicons name="trash-outline" size={24} color={colors.error} />
-            <Text style={styles.previewActionLabel}>Verwerfen</Text>
-          </TouchableOpacity>
-
-          {/* Add more (opens native camera again) */}
-          <TouchableOpacity style={styles.previewActionBtn} onPress={() => {
-            setShowPreviewGallery(false);
-            // openNativeCamera will re-open camera and add to existing list
-            setTimeout(openNativeCamera, 100);
-          }}>
-            <Ionicons name="camera-outline" size={24} color={colors.textSecondary} />
-            <Text style={styles.previewActionLabel}>Weiteres Foto</Text>
-          </TouchableOpacity>
-
-          {/* Project */}
-          <TouchableOpacity style={styles.previewActionBtn} onPress={openProjectPicker}>
-            <Ionicons
-              name={projectName ? 'folder' : 'folder-outline'}
-              size={24}
-              color={projectName ? colors.accent : colors.textSecondary}
-            />
-            <Text style={[styles.previewActionLabel, projectName && { color: colors.accent }]} numberOfLines={1}>
-              {projectName || 'Projekt'}
-            </Text>
-          </TouchableOpacity>
-
-          {/* Upload */}
-          <TouchableOpacity style={styles.previewActionBtnSend} onPress={handleUpload}>
-            <Ionicons name="cloud-upload-outline" size={24} color="white" />
-            <Text style={styles.previewActionLabelSend}>
-              {capturedImages.length === 1 ? '1 Bild' : `${capturedImages.length} Bilder`}
-            </Text>
+          <TouchableOpacity style={s.confirmBtnKeep} onPress={() => handleConfirm(true)}>
+            <Ionicons name="checkmark" size={32} color="white" />
+            <Text style={s.confirmBtnLabel}>OK</Text>
           </TouchableOpacity>
         </View>
-
-        {/* Project Picker Modal */}
-        {renderProjectPicker()}
       </View>
     );
   }
 
-  // ---- Shooter home screen ----
-  return (
-    <View style={styles.shooterContainer}>
-      {/* Header */}
-      <View style={styles.shooterHeader}>
-        <TouchableOpacity style={styles.shooterHeaderLeft} onPress={() => navigation.goBack()}>
-          <Ionicons name="chevron-back" size={26} color={colors.textPrimary} />
-          <Text style={styles.shooterHeaderBack}>Zurück</Text>
+  // ─────────────────────────────────────────────────────────────────────────
+  // ── STATE: WORKSPACE ──────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  if (screenState === 'WORKSPACE') {
+    return (
+      <View style={s.container}>
+        {/* Header */}
+        <View style={s.wsHeader}>
+          <Text style={s.wsHeaderTitle}>{workspaceImages.length} {workspaceImages.length === 1 ? 'Foto' : 'Fotos'}</Text>
+          <TouchableOpacity style={s.discardBtn} onPress={handleDiscardAll}>
+            <Ionicons name="trash-outline" size={18} color={colors.error} />
+            <Text style={s.discardBtnText}>Löschen</Text>
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView style={s.wsScroll} contentContainerStyle={s.wsScrollContent} keyboardShouldPersistTaps="handled">
+          {/* Project picker */}
+          <TouchableOpacity style={s.projectChip} onPress={openProjectPicker}>
+            <Ionicons name={projectName ? 'folder' : 'folder-outline'} size={18} color={projectName ? colors.accent : colors.textTertiary} />
+            <Text style={[s.projectChipText, projectName && s.projectChipActive]} numberOfLines={1}>
+              {projectName || 'Kein Projekt gewählt'}
+            </Text>
+            <Ionicons name="chevron-down" size={14} color={colors.textTertiary} />
+          </TouchableOpacity>
+
+          {/* Project notes */}
+          <View style={s.projectNotesBox}>
+            <View style={s.projectNotesLabelRow}>
+              <Ionicons name="document-text-outline" size={16} color={colors.textTertiary} />
+              <Text style={s.projectNotesLabel}>Projektnotizen</Text>
+            </View>
+            <TextInput
+              style={s.projectNotesInput}
+              value={projectNotes}
+              onChangeText={handleProjectNotesChange}
+              placeholder="Notizen für dieses Projekt..."
+              placeholderTextColor={colors.textTertiary}
+              multiline
+              textAlignVertical="top"
+            />
+          </View>
+
+          {/* Photo list */}
+          <Text style={s.sectionLabel}>Fotos</Text>
+          {workspaceImages.map((img) => (
+            <View key={img.id} style={s.photoRow}>
+              <Image source={{ uri: img.uri }} style={s.photoThumb} />
+              <View style={s.photoMeta}>
+                {/* Title */}
+                <TouchableOpacity style={s.photoField} onPress={() => openEditModal(img, 'title')}>
+                  <Text style={s.photoTitle} numberOfLines={1}>
+                    {img.custom_title || img.file_name.replace(/\.[^.]+$/, '')}
+                  </Text>
+                  <Ionicons name="pencil-outline" size={14} color={colors.textTertiary} />
+                </TouchableOpacity>
+                {/* Notes */}
+                <TouchableOpacity style={s.photoField} onPress={() => openEditModal(img, 'notes')}>
+                  <Text style={[s.photoNotes, !img.notes && s.photoNotesPlaceholder]} numberOfLines={2}>
+                    {img.notes || 'Notiz hinzufügen...'}
+                  </Text>
+                  <Ionicons name="document-text-outline" size={14} color={colors.textTertiary} />
+                </TouchableOpacity>
+                {/* GPS badge */}
+                {img.gps_data && (
+                  <View style={s.gpsBadge}>
+                    <Ionicons name="location" size={12} color="#22c55e" />
+                    <Text style={s.gpsBadgeText}>GPS</Text>
+                  </View>
+                )}
+              </View>
+              {/* Remove */}
+              <TouchableOpacity style={s.photoRemoveBtn} onPress={() => handleRemoveImage(img)}>
+                <Ionicons name="close-circle" size={22} color={colors.error} />
+              </TouchableOpacity>
+            </View>
+          ))}
+
+          {/* Add more photos */}
+          <View style={s.addMoreRow}>
+            <TouchableOpacity style={s.addMoreBtn} onPress={openNativeCamera}>
+              <Ionicons name="camera-outline" size={20} color={colors.textSecondary} />
+              <Text style={s.addMoreText}>Foto aufnehmen</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.addMoreBtn} onPress={pickFromGallery}>
+              <Ionicons name="images-outline" size={20} color={colors.textSecondary} />
+              <Text style={s.addMoreText}>Galerie</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+
+        {/* Upload button */}
+        <TouchableOpacity style={s.uploadBtn} onPress={handleUpload} disabled={uploading}>
+          {uploading
+            ? <ActivityIndicator color="white" />
+            : <>
+                <Ionicons name="cloud-upload-outline" size={22} color="white" />
+                <Text style={s.uploadBtnText}>
+                  {workspaceImages.length === 1 ? '1 Foto absenden' : `${workspaceImages.length} Fotos absenden`}
+                </Text>
+              </>
+          }
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.gpsBtn, gpsEnabled && styles.gpsBtnActive]}
-          onPress={() => gpsEnabled ? setGpsEnabled(false) : enableGps()}
-        >
-          <Ionicons
-            name={gpsEnabled ? 'location' : 'location-outline'}
-            size={20}
-            color={gpsEnabled ? '#22c55e' : colors.textTertiary}
-          />
-          <Text style={[styles.gpsBtnText, gpsEnabled && styles.gpsBtnTextActive]}>GPS</Text>
+
+        {renderProjectPicker()}
+        {renderEditModal()}
+
+        {toast && (
+          <Animated.View style={[s.toast, { opacity: toastOpacity }]}>
+            <Ionicons name="checkmark-circle-outline" size={18} color={colors.accent} />
+            <Text style={s.toastText}>{toast}</Text>
+          </Animated.View>
+        )}
+      </View>
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ── STATE: SHOOTER (default) ──────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  return (
+    <View style={s.container}>
+      {/* Header */}
+      <View style={s.shooterHeader}>
+        <Text style={s.shooterTitle}>Foto</Text>
+        <TouchableOpacity style={[s.gpsChip, gpsEnabled && s.gpsChipOn]} onPress={toggleGps}>
+          <Ionicons name={gpsEnabled ? 'location' : 'location-outline'} size={18} color={gpsEnabled ? '#22c55e' : colors.textTertiary} />
+          <Text style={[s.gpsChipText, gpsEnabled && s.gpsChipTextOn]}>GPS</Text>
         </TouchableOpacity>
       </View>
 
       {/* Body */}
-      <View style={styles.shooterBody}>
-        {/* Project selector */}
-        <TouchableOpacity style={styles.shooterProjectBtn} onPress={openProjectPicker}>
-          <Ionicons
-            name="folder-outline"
-            size={18}
-            color={projectName ? colors.accent : colors.textTertiary}
-          />
-          <Text style={projectName ? styles.shooterProjectName : styles.shooterProjectText}>
-            {projectName || 'Kein Projekt gewählt'}
-          </Text>
-          <Ionicons name="chevron-down" size={14} color={colors.textTertiary} />
+      <View style={s.shooterBody}>
+        <TouchableOpacity style={s.cameraBtn} onPress={openNativeCamera} activeOpacity={0.8}>
+          <Ionicons name="camera" size={60} color="white" />
         </TouchableOpacity>
+        <Text style={s.cameraHint}>Tippen zum Fotografieren</Text>
 
-        {/* Camera button */}
-        <TouchableOpacity style={styles.shooterCameraBtn} onPress={openNativeCamera} activeOpacity={0.8}>
-          <Ionicons name="camera" size={56} color="white" />
-        </TouchableOpacity>
-        <Text style={styles.shooterCameraHint}>Tippen zum Fotografieren</Text>
-
-        {/* Gallery button */}
-        <TouchableOpacity style={styles.shooterGalleryBtn} onPress={pickFromGallery}>
+        <TouchableOpacity style={s.galleryBtn} onPress={pickFromGallery}>
           <Ionicons name="images-outline" size={20} color={colors.textSecondary} />
-          <Text style={styles.shooterGalleryText}>Galerie öffnen</Text>
+          <Text style={s.galleryBtnText}>Galerie öffnen</Text>
         </TouchableOpacity>
+
+        {/* Chip if workspace already has images (after returning from somewhere) */}
+        {workspaceImages.length > 0 && (
+          <TouchableOpacity style={s.draftChip} onPress={() => setScreenState('WORKSPACE')}>
+            <Ionicons name="layers-outline" size={16} color={colors.accent} />
+            <Text style={s.draftChipText}>
+              {workspaceImages.length} {workspaceImages.length === 1 ? 'Foto im Entwurf' : 'Fotos im Entwurf'} – Bearbeiten
+            </Text>
+            <Ionicons name="chevron-forward" size={14} color={colors.accent} />
+          </TouchableOpacity>
+        )}
       </View>
 
-      {/* Captured images bar (visible after taking photos, before uploading) */}
-      {capturedImages.length > 0 && (
-        <TouchableOpacity
-          style={styles.capturedBarStatic}
-          onPress={() => {
-            setSelectedPreviewIndex(capturedImages.length - 1);
-            setShowPreviewGallery(true);
-          }}
-        >
-          <View style={styles.capturedBarLeft}>
-            <Image
-              source={{ uri: capturedImages[capturedImages.length - 1].uri }}
-              style={styles.capturedBarThumb}
-            />
-            <Text style={styles.capturedBarText}>
-              {capturedImages.length} {capturedImages.length === 1 ? 'Foto' : 'Fotos'}
-            </Text>
-          </View>
-          <View style={styles.capturedBarRight}>
-            <Text style={styles.capturedBarActionText}>Ansehen</Text>
-            <Ionicons name="chevron-forward" size={16} color={colors.accent} />
-          </View>
-        </TouchableOpacity>
-      )}
-
-      {/* Project Picker Modal */}
       {renderProjectPicker()}
 
-      {/* Toast notification */}
       {toast && (
-        <TouchableOpacity
-          style={styles.toastTouchArea}
-          activeOpacity={1}
-          onPress={dismissToast}
-        >
-          <Animated.View style={[styles.toastContainer, { opacity: toastOpacity }]}>
-            <Ionicons name="cloud-upload-outline" size={20} color={colors.accent} />
-            <Text style={styles.toastText}>{toast}</Text>
-          </Animated.View>
-        </TouchableOpacity>
+        <Animated.View style={[s.toast, { opacity: toastOpacity }]}>
+          <Ionicons name="checkmark-circle-outline" size={18} color={colors.accent} />
+          <Text style={s.toastText}>{toast}</Text>
+        </Animated.View>
       )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  // ---- Shooter home screen ----
-  shooterContainer: {
-    flex: 1,
-    backgroundColor: colors.bgPrimary,
-  },
+// ─────────────────────────────────────────────────────────────────────────────
+// Styles
+// ─────────────────────────────────────────────────────────────────────────────
+const s = StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.bgPrimary },
+
+  // ── SHOOTER ──────────────────────────────────────────────────────────────
   shooterHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: Platform.OS === 'android' ? 24 : 56,
-    paddingHorizontal: 20,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  shooterHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  shooterHeaderBack: {
-    color: colors.textPrimary,
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  gpsBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 16,
-    backgroundColor: colors.bgSecondary,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  gpsBtnActive: {
-    backgroundColor: 'rgba(34, 197, 94, 0.12)',
-    borderColor: 'rgba(34, 197, 94, 0.4)',
-  },
-  gpsBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.textTertiary,
-  },
-  gpsBtnTextActive: {
-    color: '#22c55e',
-  },
-  shooterBody: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 28,
-    paddingHorizontal: 32,
-    paddingBottom: 40,
-  },
-  shooterProjectBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 22,
-    backgroundColor: colors.bgSecondary,
-    borderWidth: 1,
-    borderColor: colors.border,
-    maxWidth: '90%',
-  },
-  shooterProjectText: {
-    color: colors.textTertiary,
-    fontSize: 14,
-    flex: 1,
-  },
-  shooterProjectName: {
-    color: colors.textPrimary,
-    fontSize: 14,
-    fontWeight: '600',
-    flex: 1,
-  },
-  shooterCameraBtn: {
-    width: 130,
-    height: 130,
-    borderRadius: 65,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 6,
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-  },
-  shooterCameraHint: {
-    color: colors.textTertiary,
-    fontSize: 13,
-    marginTop: -12,
-  },
-  shooterGalleryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.bgSecondary,
-  },
-  shooterGalleryText: {
-    color: colors.textSecondary,
-    fontSize: 15,
-    fontWeight: '500',
-  },
-
-  // Captured images bar (static, not in camera overlay)
-  capturedBarStatic: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.cardBg,
-    borderRadius: 12,
-    padding: 12,
-    marginHorizontal: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  capturedBarLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  capturedBarThumb: { width: 44, height: 44, borderRadius: 8 },
-  capturedBarText: { color: colors.textPrimary, fontSize: 14, fontWeight: '600' },
-  capturedBarRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  capturedBarAction: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  capturedBarActionText: { color: colors.accent, fontSize: 14, fontWeight: '500' },
-
-  // Preview container
-  previewContainer: { flex: 1, backgroundColor: 'black' },
-  preview: { flex: 1 },
-
-  // Image counter overlay
-  imageCounter: {
-    position: 'absolute', top: 50, alignSelf: 'center',
-    backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20,
-  },
-  imageCounterText: { color: 'white', fontSize: 14, fontWeight: '600' },
-
-  // Thumbnail strip
-  thumbStrip: { backgroundColor: 'rgba(0,0,0,0.85)', paddingVertical: 8 },
-  thumbStripContent: { paddingHorizontal: 12, gap: 8 },
-  thumbItem: { width: 56, height: 56, borderRadius: 8, borderWidth: 2, borderColor: 'transparent', overflow: 'hidden' },
-  thumbItemActive: { borderColor: colors.accent },
-  thumbImage: { width: '100%', height: '100%' },
-  thumbRemove: { position: 'absolute', top: -4, right: -4 },
-
-  // Action bar - single row of icon buttons
-  previewActionBar: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around',
-    paddingHorizontal: 12, paddingTop: 12, paddingBottom: 32,
-    backgroundColor: 'rgba(0,0,0,0.9)',
-  },
-  previewActionBtn: {
-    alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 12, gap: 4,
-  },
-  previewActionLabel: { fontSize: 11, color: colors.textSecondary, fontWeight: '500' },
-  previewActionBtnSend: {
-    alignItems: 'center', justifyContent: 'center', gap: 4,
-    paddingVertical: 10, paddingHorizontal: 20, borderRadius: 12, backgroundColor: colors.accent,
-  },
-  previewActionLabelSend: { fontSize: 11, color: 'white', fontWeight: '600' },
-
-  // Metadata bar (title + notes buttons)
-  metadataBar: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 16, paddingVertical: 8,
-    backgroundColor: colors.bgSecondary, borderTopWidth: 1, borderTopColor: colors.border,
-  },
-  metadataBtn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingVertical: 10, paddingHorizontal: 12,
-    backgroundColor: colors.cardBg, borderRadius: 10,
-    borderWidth: 1, borderColor: colors.border,
-  },
-  metadataBtnActive: {
-    borderColor: colors.accent, backgroundColor: 'rgba(59,130,246,0.08)',
-  },
-  metadataBtnText: { fontSize: 13, color: colors.textSecondary, fontWeight: '500', flex: 1 },
-  metadataGpsBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingVertical: 8, paddingHorizontal: 10,
-    backgroundColor: 'rgba(34,197,94,0.1)', borderRadius: 10,
-    borderWidth: 1, borderColor: 'rgba(34,197,94,0.3)',
-  },
-  metadataGpsText: { fontSize: 12, color: '#22c55e', fontWeight: '600' },
-
-  // Notizen Vollbild-Editor
-  notesFullScreen: {
-    flex: 1, backgroundColor: colors.bgPrimary, paddingTop: Platform.OS === 'android' ? 40 : 60,
-  },
-  notesFullScreenHeader: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 20, paddingVertical: 14,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingTop: Platform.OS === 'android' ? 28 : 60,
+    paddingHorizontal: 20, paddingBottom: 14,
     borderBottomWidth: 1, borderBottomColor: colors.border,
   },
-  notesFullScreenTitle: { fontSize: 18, fontWeight: '700', color: colors.textPrimary },
-  notesFullScreenSave: { padding: 4 },
-  notesFullScreenInput: {
-    flex: 1, padding: 20, fontSize: 16, color: colors.textPrimary,
-    textAlignVertical: 'top', backgroundColor: colors.bgPrimary,
+  shooterTitle: { fontSize: 22, fontWeight: '700', color: colors.textPrimary },
+  gpsChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16,
+    backgroundColor: colors.bgSecondary, borderWidth: 1, borderColor: colors.border,
   },
+  gpsChipOn: { backgroundColor: 'rgba(34,197,94,0.12)', borderColor: 'rgba(34,197,94,0.4)' },
+  gpsChipText: { fontSize: 13, fontWeight: '600', color: colors.textTertiary },
+  gpsChipTextOn: { color: '#22c55e' },
 
-  // Metadata editing modal (Titel)
-  metadataModalOverlay: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end',
+  shooterBody: {
+    flex: 1, alignItems: 'center', justifyContent: 'center', gap: 28, paddingBottom: 60,
   },
-  metadataModalContent: {
-    backgroundColor: colors.bgPrimary, borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    padding: 20, paddingBottom: 40,
+  cameraBtn: {
+    width: 130, height: 130, borderRadius: 65, backgroundColor: colors.accent,
+    alignItems: 'center', justifyContent: 'center',
+    elevation: 8, shadowColor: colors.accent, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 14,
   },
-  metadataModalHeader: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16,
+  cameraHint: { color: colors.textTertiary, fontSize: 13, marginTop: -12 },
+  galleryBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 12, paddingHorizontal: 24, borderRadius: 14,
+    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bgSecondary,
   },
-  metadataModalTitle: { fontSize: 18, fontWeight: '700', color: colors.textPrimary },
-  metadataModalInput: {
-    backgroundColor: colors.inputBg || colors.bgSecondary,
+  galleryBtnText: { color: colors.textSecondary, fontSize: 15, fontWeight: '500' },
+  draftChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 10, paddingHorizontal: 16, borderRadius: 20,
+    backgroundColor: 'rgba(59,130,246,0.1)', borderWidth: 1, borderColor: 'rgba(59,130,246,0.3)',
+  },
+  draftChipText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
+
+  // ── CONFIRM ───────────────────────────────────────────────────────────────
+  confirmContainer: { flex: 1, backgroundColor: 'black' },
+  confirmImage: { flex: 1 },
+  confirmBar: {
+    flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.9)',
+    paddingBottom: 40, paddingTop: 12,
+  },
+  confirmBtnDiscard: {
+    flex: 1, alignItems: 'center', gap: 4, paddingVertical: 14,
+    borderRightWidth: 1, borderRightColor: 'rgba(255,255,255,0.15)',
+  },
+  confirmBtnKeep: { flex: 1, alignItems: 'center', gap: 4, paddingVertical: 14 },
+  confirmBtnLabel: { color: 'white', fontSize: 13, fontWeight: '500' },
+
+  // ── WORKSPACE ─────────────────────────────────────────────────────────────
+  wsHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingTop: Platform.OS === 'android' ? 28 : 60,
+    paddingHorizontal: 20, paddingBottom: 14,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+    backgroundColor: colors.bgPrimary,
+  },
+  wsHeaderTitle: { fontSize: 20, fontWeight: '700', color: colors.textPrimary },
+  discardBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 10, backgroundColor: 'rgba(239,68,68,0.1)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.25)' },
+  discardBtnText: { color: colors.error, fontSize: 13, fontWeight: '600' },
+
+  wsScroll: { flex: 1 },
+  wsScrollContent: { padding: 16, gap: 12, paddingBottom: 20 },
+
+  projectChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    padding: 14, borderRadius: 14, backgroundColor: colors.bgSecondary,
     borderWidth: 1, borderColor: colors.border,
-    borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12,
-    fontSize: 16, color: colors.textPrimary,
   },
+  projectChipText: { flex: 1, color: colors.textTertiary, fontSize: 15 },
+  projectChipActive: { color: colors.textPrimary, fontWeight: '600' },
 
-  // Project picker modal
+  projectNotesBox: {
+    backgroundColor: colors.bgSecondary, borderRadius: 14,
+    borderWidth: 1, borderColor: colors.border, padding: 12, gap: 8,
+  },
+  projectNotesLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  projectNotesLabel: { color: colors.textTertiary, fontSize: 13, fontWeight: '500' },
+  projectNotesInput: { color: colors.textPrimary, fontSize: 14, minHeight: 72, textAlignVertical: 'top' },
+
+  sectionLabel: { fontSize: 13, fontWeight: '600', color: colors.textTertiary, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 },
+
+  photoRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 12,
+    backgroundColor: colors.bgSecondary, borderRadius: 14,
+    borderWidth: 1, borderColor: colors.border, padding: 12,
+  },
+  photoThumb: { width: 72, height: 72, borderRadius: 10 },
+  photoMeta: { flex: 1, gap: 6 },
+  photoField: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.cardBg, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
+  photoTitle: { flex: 1, color: colors.textPrimary, fontSize: 14, fontWeight: '600' },
+  photoNotes: { flex: 1, color: colors.textSecondary, fontSize: 13 },
+  photoNotesPlaceholder: { color: colors.textTertiary, fontStyle: 'italic' },
+  gpsBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', paddingVertical: 3, paddingHorizontal: 8, borderRadius: 8, backgroundColor: 'rgba(34,197,94,0.12)', borderWidth: 1, borderColor: 'rgba(34,197,94,0.3)' },
+  gpsBadgeText: { color: '#22c55e', fontSize: 11, fontWeight: '600' },
+  photoRemoveBtn: { padding: 2 },
+
+  addMoreRow: { flexDirection: 'row', gap: 10 },
+  addMoreBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, borderRadius: 12, backgroundColor: colors.bgSecondary, borderWidth: 1, borderColor: colors.border },
+  addMoreText: { color: colors.textSecondary, fontSize: 14, fontWeight: '500' },
+
+  uploadBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
+    margin: 16, paddingVertical: 16, borderRadius: 14, backgroundColor: colors.accent,
+    elevation: 4, shadowColor: colors.accent, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.35, shadowRadius: 8,
+  },
+  uploadBtnText: { color: 'white', fontSize: 17, fontWeight: '700' },
+
+  // ── Modals ────────────────────────────────────────────────────────────────
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: colors.bgPrimary, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70%', padding: 20 },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  newProjectRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
-  newProjectInput: {
-    flex: 1, backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.border,
-    borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10,
-    fontSize: 15, color: colors.textPrimary,
-  },
-  newProjectBtn: {
-    width: 42, height: 42, borderRadius: 10,
-    backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center',
-  },
+  modalSheet: { backgroundColor: colors.bgPrimary, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '80%', padding: 20 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
   modalTitle: { fontSize: 20, fontWeight: '700', color: colors.textPrimary },
-  pickerSearchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.bgTertiary || colors.cardBg,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    marginBottom: 12,
-    gap: 8,
-  },
-  pickerSearchInput: {
-    flex: 1,
-    color: colors.textPrimary,
-    fontSize: 14,
-    paddingVertical: 10,
-  },
-  pendingBadgeText: {
-    fontSize: 11,
-    color: '#f59e0b',
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  noProjectsHint: {
-    color: colors.textTertiary,
-    fontSize: 14,
-    textAlign: 'center',
-    paddingVertical: 24,
-  },
-  projectPickerList: { maxHeight: 400 },
-  projectPickerItem: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    padding: 14, borderRadius: 10, marginBottom: 6,
-    backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.border,
-  },
-  projectPickerItemActive: { borderColor: colors.accent, backgroundColor: 'rgba(59,130,246,0.1)' },
-  projectPickerColor: { width: 4, height: 28, borderRadius: 2 },
-  projectPickerText: { flex: 1, fontSize: 15, fontWeight: '500', color: colors.textPrimary },
-  projectPickerMeta: { fontSize: 12, color: colors.textTertiary },
+  newProjectRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  newProjectInput: { flex: 1, backgroundColor: colors.inputBg || colors.bgSecondary, borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15, color: colors.textPrimary },
+  newProjectBtn: { width: 42, height: 42, borderRadius: 10, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.bgSecondary, borderRadius: 10, paddingHorizontal: 12, marginBottom: 10 },
+  searchInput: { flex: 1, color: colors.textPrimary, fontSize: 14, paddingVertical: 10 },
+  pickerItem: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 10, marginBottom: 6, backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.border },
+  pickerItemActive: { borderColor: colors.accent, backgroundColor: 'rgba(59,130,246,0.1)' },
+  pickerDot: { width: 4, height: 28, borderRadius: 2 },
+  pickerItemText: { flex: 1, fontSize: 15, fontWeight: '500', color: colors.textPrimary },
+  pickerMeta: { fontSize: 12, color: colors.textTertiary },
+  pendingLabel: { fontSize: 11, color: '#f59e0b', fontWeight: '600', marginTop: 2 },
+  emptyHint: { color: colors.textTertiary, fontSize: 14, textAlign: 'center', paddingVertical: 20 },
 
-  // Toast notification
-  toastTouchArea: {
-    position: 'absolute',
-    top: 0, left: 0, right: 0,
-    paddingTop: 54,
-    paddingHorizontal: 20,
-    zIndex: 999,
+  notesFullScreen: { flex: 1, backgroundColor: colors.bgPrimary, paddingTop: Platform.OS === 'android' ? 40 : 60 },
+  notesHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.border },
+  notesTitle: { fontSize: 18, fontWeight: '700', color: colors.textPrimary },
+  notesInput: { flex: 1, padding: 20, fontSize: 16, color: colors.textPrimary, textAlignVertical: 'top' },
+
+  titleModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
+  titleModalSheet: { backgroundColor: colors.bgPrimary, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 40 },
+  titleModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  titleModalTitle: { fontSize: 18, fontWeight: '700', color: colors.textPrimary },
+  titleInput: { backgroundColor: colors.inputBg || colors.bgSecondary, borderWidth: 1, borderColor: colors.border, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, fontSize: 16, color: colors.textPrimary },
+
+  // ── Toast ─────────────────────────────────────────────────────────────────
+  toast: {
+    position: 'absolute', bottom: 100, alignSelf: 'center',
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: 'rgba(0,0,0,0.85)', paddingHorizontal: 18, paddingVertical: 12,
+    borderRadius: 12, borderWidth: 1, borderColor: 'rgba(59,130,246,0.3)',
   },
-  toastContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: 'rgba(0,0,0,0.85)',
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(59,130,246,0.3)',
-  },
-  toastText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '500',
-    flex: 1,
-  },
+  toastText: { color: 'white', fontSize: 14, fontWeight: '500' },
 });

@@ -38,10 +38,9 @@ const screenOptions = {
   headerTitleStyle: { fontWeight: '600' },
 };
 
-// Tab config with action tabs (Camera navigates to stack screen)
 const TAB_CONFIG = {
   Home: { icon: 'home', iconOutline: 'home-outline', label: 'Start' },
-  Camera: { icon: 'camera', iconOutline: 'camera-outline', label: 'Foto', isAction: true },
+  Camera: { icon: 'camera', iconOutline: 'camera-outline', label: 'Foto' },
   Projects: { icon: 'folder', iconOutline: 'folder-outline', label: 'Projekte' },
   Queue: { icon: 'cloud-upload', iconOutline: 'cloud-upload-outline', label: 'Upload' },
   Settings: { icon: 'settings', iconOutline: 'settings-outline', label: 'Einstellungen' },
@@ -79,13 +78,6 @@ function CustomTabBar({ state, descriptors, navigation }) {
           const showBadge = route.name === 'Queue' && queueCount > 0;
 
           const onPress = () => {
-            if (config.isAction) {
-              // Action tabs navigate to stack screens instead of switching tabs
-              if (route.name === 'Camera') {
-                navigation.navigate('CameraStack');
-              }
-              return;
-            }
             const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
             if (!event.defaultPrevented) {
               if (!isFocused) {
@@ -139,8 +131,6 @@ function CustomTabBar({ state, descriptors, navigation }) {
   );
 }
 
-// Dummy components for action tabs (they navigate away, these are never really shown)
-function DummyScreen() { return <View style={{ flex: 1, backgroundColor: colors.bgPrimary }} />; }
 
 function ProjectsStackScreen() {
   return (
@@ -224,7 +214,7 @@ function MainTabs({ navigation }) {
           headerTitleAlign: 'center',
         }}
       />
-      <Tab.Screen name="Camera" component={DummyScreen} options={{ tabBarLabel: 'Foto' }} />
+      <Tab.Screen name="Camera" component={CameraScreen} options={{ headerShown: false }} />
       <Tab.Screen
         name="Projects"
         component={ProjectsStackScreen}
@@ -287,11 +277,6 @@ function AppNavigator() {
             name="Main"
             component={MainTabs}
             options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="CameraStack"
-            component={CameraScreen}
-            options={{ headerShown: false, presentation: 'fullScreenModal' }}
           />
           <Stack.Screen
             name="ImageView"
