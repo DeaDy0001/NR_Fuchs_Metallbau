@@ -708,11 +708,15 @@ export const downloadAppUpdateApk = async (apkFileId, onProgress, onResumableCre
 };
 
 /**
- * Download the dev (unreleased) APK from NR_company_app_update/dev/app.apk.
+ * Download the dev (unreleased) APK directly from a shared Google Drive file.
+ * The file is publicly shared so it's accessible with the user's auth token.
+ * File: https://drive.google.com/file/d/1yPhgHM8z9_qvXfOeL6X7m-65U9gv95Li
  * @param {function} onProgress    - called with (percent 0-100)
  * @param {function} onResumableCreated - called with the DownloadResumable instance
  * @returns {string} local file URI of the downloaded APK
  */
+const DEV_APK_FILE_ID = '1yPhgHM8z9_qvXfOeL6X7m-65U9gv95Li';
+
 export const downloadDevApk = async (onProgress, onResumableCreated) => {
   const destPath = FileSystem.cacheDirectory + 'fuchs-dev.apk';
 
@@ -721,19 +725,11 @@ export const downloadDevApk = async (onProgress, onResumableCreated) => {
     if (info.exists) await FileSystem.deleteAsync(destPath, { idempotent: true });
   } catch (e) { console.log('[Fuchs] Dev APK cleanup error:', e.message); }
 
-  const updateFolder = await findFolder(PUBLIC_UPDATE_FOLDER_ID, 'NR_company_app_update');
-  if (!updateFolder) throw new Error('Update-Ordner nicht gefunden');
-  const devFolder = await findFolder(updateFolder.id, 'dev');
-  if (!devFolder) throw new Error('Dev-Ordner nicht gefunden');
-  const devFiles = await listFiles(devFolder.id, { fields: 'files(id,name)' });
-  const apkFile = devFiles.find(f => f.name === 'app.apk');
-  if (!apkFile) throw new Error('Dev-APK nicht gefunden');
-
   const token = await getAccessToken();
   if (!token) throw new Error('Nicht mit Google angemeldet');
 
   const dl = FileSystem.createDownloadResumable(
-    `${DRIVE_API}/files/${apkFile.id}?alt=media`,
+    `${DRIVE_API}/files/${DEV_APK_FILE_ID}?alt=media&supportsAllDrives=true`,
     destPath,
     { headers: { Authorization: `Bearer ${token}` } },
     (progress) => {
